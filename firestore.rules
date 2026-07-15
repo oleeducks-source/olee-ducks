@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Seuls les utilisateurs authentifiés (même anonymement) peuvent lire
+    // et écrire. L'authentification anonyme est activée automatiquement
+    // par l'application (voir js/firebase-config.js) : les 3 personnes
+    // de la ferme n'ont pas d'écran de connexion à remplir, mais un
+    // inconnu qui tomberait sur le lien sans jamais ouvrir l'app ne
+    // pourra pas lire ni modifier les données.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

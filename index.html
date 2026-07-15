@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Olee Ducks — Gestion de ferme</title>
+<meta name="theme-color" content="#0E2E2C">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="2"/><path d="M6 17c0 2 2 3 6 3s6-1 6-3"/></svg>
+      Olee Ducks
+    </div>
+    <div class="status">
+      <button id="userChip" class="user-chip">👤 <span id="userChipLabel">…</span></button>
+      <span id="syncDot" class="sync-dot"></span>
+      <span id="syncLabel">Connexion…</span>
+    </div>
+  </div>
+
+  <div id="errorBanner" class="hidden" style="background:#F8DFDA; color:#8A2E1E; padding:10px 16px; font-size:12.5px; line-height:1.5;"></div>
+
+  <!-- ===================== DASHBOARD ===================== -->
+  <section id="page-dashboard" class="page">
+    <div class="section-title">
+      <div>
+        <span class="eyebrow">Aujourd'hui</span>
+        <h2 id="dashDate">Tableau de bord</h2>
+      </div>
+    </div>
+
+    <div class="balance-banner">
+      <div class="kpi-label">Balance commerciale</div>
+      <div class="amount" id="kpiBalance">—</div>
+      <div class="breakdown">
+        <div>Recettes <b id="kpiRecettes">—</b></div>
+        <div>Dépenses <b id="kpiDepenses">—</b></div>
+      </div>
+    </div>
+
+    <div class="spacer-m"></div>
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-label">Canards au total</div>
+        <div class="kpi-value" id="kpiTotalCanards">—</div>
+        <div class="kpi-sub" id="kpiCanardsSub">—</div>
+      </div>
+      <div class="kpi yolk">
+        <div class="kpi-label">Œufs dans les nids</div>
+        <div class="kpi-value" id="kpiOeufsNids">—</div>
+        <div class="kpi-sub" id="kpiNidsOccupesSub">—</div>
+      </div>
+      <div class="kpi alt">
+        <div class="kpi-label">Taux d'éclosion moyen</div>
+        <div class="kpi-value" id="kpiTauxEclosion">—</div>
+        <div class="kpi-sub">30 derniers cycles</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Alertes stock</div>
+        <div class="kpi-value" id="kpiAlertesStock">—</div>
+        <div class="kpi-sub">sous le seuil</div>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <div><span class="eyebrow">Salle des nids</span><h2>Occupation en direct</h2></div>
+      <span class="subtle" id="nestsQuickCount">—</span>
+    </div>
+    <div class="card">
+      <div id="miniNestGrid" class="nest-grid"></div>
+      <div class="legend">
+        <span><i style="background:var(--sage-100); border:1px solid var(--line)"></i> Libre</span>
+        <span><i style="background:var(--yolk-500)"></i> Ponte en cours</span>
+        <span><i style="background:var(--pond-400)"></i> Couvaison</span>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <div><span class="eyebrow">Répartition</span><h2>Inventaire des canards</h2></div>
+    </div>
+    <div class="card" id="dashInventaireBreakdown"></div>
+
+    <div class="section-title">
+      <div><span class="eyebrow">Dernier mouvement</span><h2>Activité récente</h2></div>
+    </div>
+    <div class="card" id="dashRecentActivity"></div>
+  </section>
+
+  <!-- ===================== INVENTAIRE ===================== -->
+  <section id="page-inventaire" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">Élevage</span><h2>Inventaire des canards</h2></div>
+    </div>
+    <div class="kpi-grid" id="invKpis"></div>
+    <div class="spacer-m"></div>
+    <div class="segmented" id="invFilterType">
+      <button data-v="all" class="active">Tous</button>
+      <button data-v="caneton">Canetons</button>
+      <button data-v="canard">Canards</button>
+      <button data-v="reproducteur_male">Mâles</button>
+      <button data-v="reproducteur_femelle">Femelles</button>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="segmented" id="invFilterStatut">
+      <button data-v="actif" class="active">Actifs</button>
+      <button data-v="all">Tous statuts</button>
+      <button data-v="vendu">Vendus</button>
+      <button data-v="mort">Décédés</button>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
+  </section>
+
+  <!-- ===================== NIDS ===================== -->
+  <section id="page-nids" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">100 nids numérotés</span><h2>Suivi des nids</h2></div>
+    </div>
+    <div class="segmented" id="nidsView">
+      <button data-v="grille" class="active">Grille</button>
+      <button data-v="encours">En cours</button>
+      <button data-v="stats">Statistiques</button>
+      <button data-v="archives">Archives</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="nidsGrilleWrap">
+      <div class="card">
+        <div id="fullNestGrid" class="nest-grid"></div>
+        <div class="legend">
+          <span><i style="background:var(--sage-100); border:1px solid var(--line)"></i> Libre</span>
+          <span><i style="background:var(--yolk-500)"></i> Ponte en cours</span>
+          <span><i style="background:var(--pond-400)"></i> Couvaison</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="nidsEnCoursWrap" class="hidden">
+      <div class="card"><div id="nidsEnCoursList"></div></div>
+    </div>
+
+    <div id="nidsStatsWrap" class="hidden">
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Nids les plus productifs</h3>
+        <div id="topNestsList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Taux d'éclosion global</h3>
+        <div id="globalHatchStats"></div>
+      </div>
+    </div>
+
+    <div id="nidsArchivesWrap" class="hidden">
+      <div class="card"><div id="nidsArchivesList"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================== FINANCES ===================== -->
+  <section id="page-finances" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">Recettes & dépenses</span><h2>Finances</h2></div>
+    </div>
+    <div class="balance-banner">
+      <div class="kpi-label">Balance période</div>
+      <div class="amount" id="finBalance">—</div>
+      <div class="breakdown">
+        <div>Recettes <b id="finRecettes">—</b></div>
+        <div>Dépenses <b id="finDepenses">—</b></div>
+      </div>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="segmented" id="finFilterPeriode">
+      <button data-v="7">7 jours</button>
+      <button data-v="30" class="active">30 jours</button>
+      <button data-v="365">1 an</button>
+      <button data-v="all">Tout</button>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="segmented" id="finFilterType">
+      <button data-v="all" class="active">Tout</button>
+      <button data-v="recette">Recettes</button>
+      <button data-v="depense">Dépenses</button>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="card"><div id="finList"><div class="empty-state"><div class="glyph">💰</div><p>Aucune transaction sur cette période.</p></div></div></div>
+  </section>
+
+  <!-- ===================== STOCKS ===================== -->
+  <section id="page-stocks" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">Aliments & vétérinaire</span><h2>Stocks</h2></div>
+    </div>
+    <div class="segmented" id="stockFilterType">
+      <button data-v="all" class="active">Tout</button>
+      <button data-v="aliment">Aliments</button>
+      <button data-v="veterinaire">Vétérinaire</button>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="card" id="stockAlertsCard"></div>
+    <div class="spacer-m"></div>
+    <div class="card"><div id="stockList"></div></div>
+  </section>
+
+  <!-- Bottom nav -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-page="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg>
+      Accueil
+    </button>
+    <button class="nav-item" data-page="inventaire">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg>
+      Canards
+    </button>
+    <button class="nav-item" data-page="nids">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      Nids
+    </button>
+    <button class="nav-item" data-page="finances">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg>
+      Finances
+    </button>
+    <button class="nav-item" data-page="stocks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>
+      Stocks
+    </button>
+  </nav>
+
+  <button class="fab" id="fabAdd">+</button>
+</div>
+
+<div id="modalRoot"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

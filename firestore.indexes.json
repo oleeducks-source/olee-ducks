@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "nest_cycles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "statut", "order": "ASCENDING" },
+        { "fieldPath": "date_fin", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
