@@ -19,7 +19,7 @@ let filterPeriode = "30";
 let filterType = "all";
 
 const CATS_RECETTE = { vente_canards: "Vente de canards", vente_oeufs: "Vente d'œufs", vente_canetons: "Vente de canetons", autre: "Autre recette" };
-const CATS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", autre: "Autre dépense" };
+const CATS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", achat_animaux: "Achat d'animaux", autre: "Autre dépense" };
 
 export function initFinances() {
   onSnapshot(query(finCol, orderBy("date", "desc")), (snap) => {
