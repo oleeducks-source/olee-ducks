@@ -10,12 +10,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDdAY-PREUAooxQI2X8lPhPIc_v8kBqVNc",
-  authDomain: "olee-ducks-app.firebaseapp.com",
-  projectId: "olee-ducks-app",
-  storageBucket: "olee-ducks-app.firebasestorage.app",
-  messagingSenderId: "677951903814",
-  appId: "1:677951903814:web:a7e86660e97755efda9247"
+  apiKey: "AIzaSyB9Rj7DNOncLmqpr9thR0HKG8D4sOl31Fc",
+  authDomain: "olee-ducks-f6752.firebaseapp.com",
+  projectId: "olee-ducks-f6752",
+  storageBucket: "olee-ducks-f6752.firebasestorage.app",
+  messagingSenderId: "943030289981",
+  appId: "1:943030289981:web:0e9b1024a21f2ffd7c8c54"
 };
 
 export const firebaseApp = initializeApp(firebaseConfig);
