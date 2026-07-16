@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import comptabilité — Olee Ducks</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body{max-width:900px; margin:0 auto; padding:20px;}
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th, td{padding:8px 6px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle;}
+  th{font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-600);}
+  input[type=date], input[type=number], input[type=text], select{
+    border:1.5px solid var(--line); border-radius:6px; padding:5px 7px; font-size:12.5px; width:100%;
+  }
+  tr.review{background:#FCEBD9;}
+  tr.excluded{opacity:.4;}
+  .summary{position:sticky; top:0; background:var(--sage-50); padding:14px 0; z-index:5; border-bottom:2px solid var(--pond-950);}
+  .summary-row{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;}
+  #importLog{font-family:var(--font-mono); font-size:12px; white-space:pre-wrap; background:var(--ink-900); color:#B8E6B0; padding:14px; border-radius:8px; max-height:260px; overflow-y:auto; margin-top:14px;}
+  .badge-review{background:var(--yolk-500); color:var(--pond-950); font-size:10px; padding:1px 6px; border-radius:10px; font-weight:700; margin-left:6px;}
+</style>
+</head>
+<body>
+
+<h1 style="font-family:var(--font-display); color:var(--pond-950);">📥 Import de la comptabilité historique</h1>
+<p class="subtle">87 dépenses extraites de votre fichier Excel (12/11/2025 → 08/07/2026). Vérifiez et corrigez si besoin avant de lancer l'import — chaque ligne s'écrira dans Firestore comme une vraie transaction de dépense, exactement comme si vous l'aviez saisie dans l'appli.</p>
+
+<div class="card" style="background:#FCEBD9; border:none;">
+  <strong>⚠️ 6 lignes surlignées en orange</strong> ont une date qui restait ambiguë après correction automatique (jour/mois inversés par Excel). Vérifiez-les avant d'importer — cliquez directement dans la case date pour corriger si besoin.
+</div>
+
+<div class="summary">
+  <div class="summary-row">
+    <div><strong id="countLabel">87</strong> ligne(s) sélectionnée(s) — <strong id="totalLabel">0</strong> FCFA</div>
+    <button class="btn yolk" id="importBtn" style="width:auto; padding:10px 20px;">Importer maintenant dans Firebase</button>
+  </div>
+  <div id="statusLabel" class="subtle" style="margin-top:6px;">Connexion à Firebase…</div>
+</div>
+
+<table id="dataTable">
+  <thead>
+    <tr>
+      <th style="width:26px;"></th>
+      <th>Réf.</th>
+      <th>Date</th>
+      <th>Catégorie</th>
+      <th>Description</th>
+      <th style="width:100px;">Montant (FCFA)</th>
+    </tr>
+  </thead>
+  <tbody id="tableBody"></tbody>
+</table>
+
+<div id="importLog" class="hidden"></div>
+
+<script type="module">
+import { db, authReady } from "./js/firebase-config.js";
+import {
+  collection, addDoc, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+const CATS = {
+  salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité",
+  materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires",
+  achat_animaux: "Achat d'animaux", autre: "Autre dépense"
+};
+
+const DATA = [
+  {op:'OP001',date:'2025-11-12',categorie:'achat_animaux',libelle:'Achat canetons',montant:250000,description:'Fournisseur : François — Achat 105 Canetons',needsReview:false},
+  {op:'OP002',date:'2025-11-12',categorie:'achat_animaux',libelle:'Achat 2 Femelles+1Mâle Muscovy',montant:60000,description:'Fournisseur : François — Reproducteurs 6mois',needsReview:false},
+  {op:'OP003',date:'2025-11-12',categorie:'materiel',libelle:'Intervention Ablo',montant:15000,description:'Fournisseur : Ablo — Travaux préparation site',needsReview:false},
+  {op:'OP004',date:'2025-11-12',categorie:'aliments',libelle:'Achat 8 femelles+aliments',montant:125000,description:'Fournisseur : Koudjis — Femelles + aliments démarrage/ponte',needsReview:false},
+  {op:'OP005',date:'2025-11-13',categorie:'materiel',libelle:'Achat copeaux',montant:8000,description:'Fournisseur : Local — Matière litière',needsReview:false},
+  {op:'OP006',date:'2025-11-13',categorie:'materiel',libelle:'Intervention électrique',montant:17000,description:'Fournisseur : Électricien — Installation électrification',needsReview:false},
+  {op:'OP007',date:'2025-11-14',categorie:'aliments',libelle:'Achat nourriture au kg',montant:2000,description:'Fournisseur : Seydou — Aliments vrac',needsReview:false},
+  {op:'OP008',date:'2025-11-14',categorie:'materiel',libelle:'Abreuvoir 15L',montant:5000,description:'Fournisseur : Local — Petit matériel',needsReview:false},
+  {op:'OP009',date:'2025-11-14',categorie:'aliments',libelle:'Nourriture démarrage',montant:25000,description:'Fournisseur : Seydou — Aliments jeunes canards',needsReview:false},
+  {op:'OP010',date:'2025-11-15',categorie:'aliments',libelle:'Aliments ponte',montant:14500,description:'Fournisseur : Local — Aliments reproducteurs',needsReview:false},
+  {op:'OP011',date:'2025-11-15',categorie:'aliments',libelle:'Aliments croissance',montant:16300,description:'Fournisseur : Local — Aliments croissance',needsReview:false},
+  {op:'OP012',date:'2025-11-20',categorie:'aliments',libelle:'Achat 50 canetons+aliments',montant:100000,description:'Fournisseur : François — 50 canetons + nourriture',needsReview:false},
+  {op:'OP013',date:'2025-11-20',categorie:'aliments',libelle:'Aliments (part François)',montant:20000,description:'Fournisseur : François — Aliments inclus achat',needsReview:false},
+  {op:'OP014',date:'2025-11-22',categorie:'materiel',libelle:'Achat lampe solaire+visseuse',montant:33000,description:'Fournisseur : Local — Équipements',needsReview:false},
+  {op:'OP015',date:'2025-11-25',categorie:'aliments',libelle:'Achat 3 sacs Ivograin',montant:42000,description:'Fournisseur : Ivograin — Aliments sacs',needsReview:false},
+  {op:'OP016',date:'2025-11-25',categorie:'materiel',libelle:'Abreuvoir supplémentaire',montant:41000,description:'Fournisseur : Local — Abreuvoirs',needsReview:false},
+  {op:'OP017',date:'2025-11-26',categorie:'materiel',libelle:'Achat bassine',montant:7000,description:'Fournisseur : Local — Accessoires',needsReview:false},
+  {op:'OP018',date:'2025-11-28',categorie:'aliments',libelle:'Achat nourriture démarrage',montant:19500,description:'Fournisseur : Local — Aliments démarrage',needsReview:false},
+  {op:'OP019',date:'2025-11-28',categorie:'aliments',libelle:'Achat nourriture croissance',montant:18500,description:'Fournisseur : Local — Aliments croissance',needsReview:false},
+  {op:'OP020',date:'2025-11-28',categorie:'aliments',libelle:'Achat nourriture ponte',montant:15500,description:'Fournisseur : Local — Aliments ponte',needsReview:false},
+  {op:'OP021',date:'2025-12-01',categorie:'materiel',libelle:'Achat assiettes+mangeoire',montant:8100,description:'Fournisseur : Local — Petit matériel',needsReview:false},
+  {op:'OP022',date:'2025-12-06',categorie:'achat_animaux',libelle:'Achat 50 canetons',montant:100000,description:'Fournisseur : François — Lot 3 canetons',needsReview:false},
+  {op:'OP023',date:'2026-01-03',categorie:'achat_animaux',libelle:'Achat 50 canetons',montant:100000,description:'Fournisseur : François — Lot 4 canetons',needsReview:false},
+  {op:'OP024',date:'2026-01-19',categorie:'achat_animaux',libelle:'Achat 85 canetons',montant:160000,description:'Fournisseur : François — Lot 5 canetons',needsReview:false},
+  {op:'OP025',date:'2026-01-20',categorie:'veterinaire',libelle:'Achat vitamines et déparasitants',montant:15000,description:'Fournisseur : Pharmacie Bingerville — Pharmacies val doise et du palais',needsReview:false},
+  {op:'OP026',date:'2026-01-21',categorie:'materiel',libelle:'Achat 2 Caisses de Transport',montant:40000,description:'Fournisseur : Poule Poule — Jules Vernes',needsReview:false},
+  {op:'OP027',date:'2026-01-21',categorie:'materiel',libelle:'Achat de materiels Fillet et 2 Mangeoires',montant:76300,description:'Fournisseur : AbouK Filets — Livré',needsReview:false},
+  {op:'OP028',date:'2026-01-21',categorie:'materiel',libelle:'Construction Abri Nouveau',montant:1000000,description:'Fournisseur : Roger et Alex Menusier — Bâtiment construit',needsReview:false},
+  {op:'OP029',date:'2026-01-21',categorie:'materiel',libelle:'Bois Supplémentaire 6/8',montant:55200,description:'Fournisseur : Seydou Bois — Bois livré',needsReview:false},
+  {op:'OP030',date:'2026-01-30',categorie:'aliments',libelle:'Achat nourriture ponte',montant:14500,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP031',date:'2026-01-30',categorie:'aliments',libelle:'Achat nourriture Ponte-Croissance',montant:16300,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP032',date:'2026-01-30',categorie:'aliments',libelle:'Achat nourriture Ponte-Croissance',montant:16300,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP033',date:'2026-01-31',categorie:'aliments',libelle:'Achat nourriture Croissance chair',montant:19500,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP034',date:'2026-02-02',categorie:'aliments',libelle:'Achat nourriture démarrage',montant:20500,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:true},
+  {op:'OP035',date:'2026-02-04',categorie:'salaire',libelle:'Paiement Salaire Janvier 2025',montant:50000,description:'Fournisseur : Salaire Seydou — Salaire payé',needsReview:false},
+  {op:'OP036',date:'2026-02-06',categorie:'achat_animaux',libelle:'Achat 30 canetons de 1mois',montant:82500,description:'Fournisseur : François — Lot 6 canetons',needsReview:false},
+  {op:'OP037',date:'2026-02-14',categorie:'aliments',libelle:'Achat nourriture ponte',montant:14500,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP038',date:'2026-02-14',categorie:'aliments',libelle:'Achat nourriture Ponte-Croissance',montant:16300,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP039',date:'2026-02-14',categorie:'aliments',libelle:'Achat nourriture Ponte-Croissance',montant:16300,description:'Fournisseur : FACI Bingerville — Sac livré',needsReview:false},
+  {op:'OP040',date:'2026-02-19',categorie:'aliments',libelle:'Achat 100Kg larves mouche noir',montant:55500,description:'Fournisseur : Bioani — Sac livré Abobo Belleville',needsReview:false},
+  {op:'OP041',date:'2026-02-20',categorie:'aliments',libelle:'Achat Formulation SAMBA 550KG',montant:153975,description:'Fournisseur : SAMBA — Sac livré Alépé',needsReview:false},
+  {op:'OP042',date:'2026-03-04',categorie:'salaire',libelle:'Paiement Salaire Fevrier 2025',montant:50000,description:'Fournisseur : Salaire Seydou — Salaire payé',needsReview:false},
+  {op:'OP043',date:'2026-03-06',categorie:'veterinaire',libelle:'Achat vitamines et déparasitants',montant:17000,description:'Fournisseur : Pharmacie zone 4 — Zone 4 Kenty',needsReview:false},
+  {op:'OP044',date:'2026-03-15',categorie:'materiel',libelle:'Achat anneaux Volailles',montant:33200,description:'Fournisseur : Jumia CI — Jumia MarketPlace',needsReview:false},
+  {op:'OP045',date:'2026-03-24',categorie:'aliments',libelle:'Achat Formulation SAMBA 300KG',montant:130000,description:'Fournisseur : SAMBA — Sac livré Alépé',needsReview:false},
+  {op:'OP046',date:'2026-03-24',categorie:'achat_animaux',libelle:'Achat 155 Canetons',montant:260000,description:'Fournisseur : François — Livré',needsReview:false},
+  {op:'OP047',date:'2026-03-24',categorie:'achat_animaux',libelle:'Frais de livraison 155 Canetons',montant:20000,description:'Fournisseur : Ablo — Livré',needsReview:false},
+  {op:'OP048',date:'2026-03-24',categorie:'veterinaire',libelle:'Achat Panteryl antistress',montant:7600,description:'Fournisseur : Pharmacie Bingerville — Livré',needsReview:false},
+  {op:'OP049',date:'2026-03-24',categorie:'materiel',libelle:'Achat balance',montant:21000,description:'Fournisseur : China Mall — Livré',needsReview:false},
+  {op:'OP050',date:'2026-03-24',categorie:'materiel',libelle:'Achat 2 Bassines pour plumage',montant:5500,description:'Fournisseur : Marché arecas — Livré',needsReview:false},
+  {op:'OP051',date:'2026-03-24',categorie:'materiel',libelle:'Achat 3 couteaux pour abattage',montant:3000,description:'Fournisseur : Marché arecas — Livré',needsReview:false},
+  {op:'OP052',date:'2026-03-24',categorie:'materiel',libelle:'Main d\'oeuvre plumage',montant:7000,description:'Fournisseur : Bingerville Djangon — Livré',needsReview:false},
+  {op:'OP053',date:'2026-03-24',categorie:'veterinaire',libelle:'Achat Maxi Layer',montant:2840,description:'Fournisseur : Pharmacie Bingerville — Livré',needsReview:false},
+  {op:'OP054',date:'2026-03-24',categorie:'aliments',libelle:'Achat 2 sacs de 50kg chez M.Poule Aliment Ponte',montant:31000,description:'Fournisseur : M.Poule Poule — Livré',needsReview:false},
+  {op:'OP055',date:'2026-03-24',categorie:'aliments',libelle:'Achat 2 sacs de 50kg chez M.Poule Aliment démarrage',montant:39000,description:'Fournisseur : M.Poule Poule — Livré',needsReview:false},
+  {op:'OP056',date:'2026-03-24',categorie:'aliments',libelle:'Achat 4 Plateaux de démarrage',montant:6000,description:'Fournisseur : M.Poule Poule — Livré',needsReview:false},
+  {op:'OP057',date:'2026-03-24',categorie:'materiel',libelle:'Achat 5 abreuvoirs de 4L',montant:10000,description:'Fournisseur : M.Poule Poule — Livré',needsReview:false},
+  {op:'OP058',date:'2026-03-24',categorie:'materiel',libelle:'Achat 5 mangeoires de controles 20 trous',montant:10000,description:'Fournisseur : M.Poule Poule — Livré',needsReview:false},
+  {op:'OP059',date:'2026-03-24',categorie:'veterinaire',libelle:'Achat vitamine et déparasiatants',montant:6500,description:'Fournisseur : Pharmacie zone 4 — Livré',needsReview:false},
+  {op:'OP060',date:'2026-03-25',categorie:'materiel',libelle:'Achat Congelateurs Nasco',montant:90000,description:'Fournisseur : Jumia CI — Livré',needsReview:false},
+  {op:'OP061',date:'2026-04-08',categorie:'aliments',libelle:'Achat 3 Sacs de ponte 2 de 50 Kg chez Koudjis',montant:45900,description:'Fournisseur : Koudjis Bingerville — Livré',needsReview:false},
+  {op:'OP062',date:'2026-04-08',categorie:'veterinaire',libelle:'Ahat Vitalac sac',montant:28625,description:'Fournisseur : Vitalac Bingerville — Livré',needsReview:false},
+  {op:'OP063',date:'2026-04-09',categorie:'salaire',libelle:'Paiement salaire Mars 2026 Seydou',montant:50000,description:'Fournisseur : Seydou — Payé',needsReview:false},
+  {op:'OP064',date:'2026-04-11',categorie:'aliments',libelle:'Formulation SAMBA',montant:162500,description:'Fournisseur : SAMBA — Payé',needsReview:false},
+  {op:'OP065',date:'2026-04-11',categorie:'aliments',libelle:'Maïs katiola 6 sacs',montant:48000,description:'Fournisseur : katiola — Payé',needsReview:false},
+  {op:'OP066',date:'2026-04-11',categorie:'veterinaire',libelle:'Vitalac croissance',montant:29000,description:'Fournisseur : Bingerville vitalac — Payé',needsReview:false},
+  {op:'OP067',date:'2026-04-11',categorie:'aliments',libelle:'FACI démarrage 2 sacs',montant:41400,description:'Fournisseur : FACI Bingerville — Payé',needsReview:false},
+  {op:'OP068',date:'2026-04-11',categorie:'aliments',libelle:'FACI Croissance 1 sac',montant:17200,description:'Fournisseur : FACI Bingerville — Payé',needsReview:false},
+  {op:'OP069',date:'2026-04-18',categorie:'aliments',libelle:'60kg Larves BIOANI',montant:18000,description:'Fournisseur : Bioani — Payé',needsReview:false},
+  {op:'OP070',date:'2026-04-25',categorie:'aliments',libelle:'1 sac ponte et 1 sac chair',montant:37269,description:'Fournisseur : FACI Bingerville — Payé ',needsReview:false},
+  {op:'OP071',date:'2026-05-05',categorie:'salaire',libelle:'Paiement salaire avril 2026 Seydou',montant:50000,description:'Fournisseur : Seydou — payé ',needsReview:true},
+  {op:'OP072',date:'2026-05-05',categorie:'materiel',libelle:'Construction cage engraissement Timite',montant:260000,description:'Fournisseur : Timite — payé ',needsReview:true},
+  {op:'OP073',date:'2026-05-12',categorie:'aliments',libelle:'Formulation SAMBA 500Kg',montant:149000,description:'Fournisseur : samba — Payé',needsReview:true},
+  {op:'OP074',date:'2026-05-16',categorie:'aliments',libelle:'Achat Sac Koudjis Demarrage',montant:23000,description:'Fournisseur : Koudjis — Payé',needsReview:false},
+  {op:'OP075',date:'2026-05-16',categorie:'achat_animaux',libelle:'Achat 35 Canards  Adultes chez Ismael',montant:315000,description:'Fournisseur : Ismael Azaguie — Payé',needsReview:false},
+  {op:'OP076',date:'2026-05-23',categorie:'materiel',libelle:'Construction Niche',montant:20000,description:'Fournisseur : Souley Maçon — Payé',needsReview:false},
+  {op:'OP077',date:'2026-05-23',categorie:'materiel',libelle:'Construction piscine ( Main d\'œuvre 20.000 et matériel 62000)',montant:82000,description:'Fournisseur : Souley Maçon — Payé',needsReview:false},
+  {op:'OP078',date:'2026-05-23',categorie:'materiel',libelle:'Achat matériel construction cage en bois',montant:102000,description:'Fournisseur : Divers Magasin — Payé',needsReview:false},
+  {op:'OP079',date:'2026-05-24',categorie:'aliments',libelle:'Formulation moulin bingerville',montant:260000,description:'Fournisseur : Bingerville — Payé',needsReview:false},
+  {op:'OP080',date:'2026-05-30',categorie:'aliments',libelle:'Achat sac FACI demarrage',montant:20710,description:'Fournisseur : FACI Bingerville — Payé',needsReview:false},
+  {op:'OP081',date:'2026-06-13',categorie:'aliments',libelle:'Achat sac FACI demarrage',montant:20710,description:'Fournisseur : FACI Bingerville — Payé',needsReview:false},
+  {op:'OP082',date:'2026-06-13',categorie:'aliments',libelle:'Achat sac FACI Chair croissance 2',montant:17800,description:'Fournisseur : FACI Bingerville — Payé',needsReview:false},
+  {op:'OP083',date:'2026-06-26',categorie:'aliments',libelle:'Formulation moulin bingerville',montant:260000,description:'Fournisseur : Bingerville — Payé',needsReview:false},
+  {op:'OP084',date:'2026-06-27',categorie:'aliments',libelle:'Achat sac FACI Chair croissance 2',montant:17700,description:'Fournisseur : Bingerville — Payé',needsReview:false},
+  {op:'OP085',date:'2026-06-28',categorie:'aliments',libelle:'Achat sac FACI Chair Demarrage',montant:20100,description:'Fournisseur : Bingerville — Payé',needsReview:false},
+  {op:'OP086',date:'2026-07-08',categorie:'materiel',libelle:'Achat copeaux 25 SACS',montant:35000,description:'Fournisseur : Bingerville — Payé',needsReview:true},
+  {op:'OP087',date:'2026-07-09',categorie:'salaire',libelle:'Paiement Salaire Seydou Mai et Juin',montant:100000,description:'Fournisseur : Bingerville — Payé',needsReview:true}
+];
+
+const tbody = document.getElementById("tableBody");
+DATA.forEach((row, i) => {
+  const tr = document.createElement("tr");
+  tr.className = row.needsReview ? "review" : "";
+  tr.dataset.idx = i;
+  tr.innerHTML = `
+    <td><input type="checkbox" class="chk" checked></td>
+    <td class="mono">${row.op}${row.needsReview ? '<span class="badge-review">Date ?</span>' : ""}</td>
+    <td><input type="date" class="f-date" value="${row.date}"></td>
+    <td><select class="f-cat">${Object.entries(CATS).map(([k,v]) => `<option value="${k}" ${k===row.categorie?"selected":""}>${v}</option>`).join("")}</select></td>
+    <td><input type="text" class="f-desc" value="${row.libelle.replace(/"/g,'&quot;')}"></td>
+    <td><input type="number" class="f-montant" value="${row.montant}"></td>
+  `;
+  tbody.appendChild(tr);
+});
+
+function recompute() {
+  let count = 0, total = 0;
+  tbody.querySelectorAll("tr").forEach(tr => {
+    const checked = tr.querySelector(".chk").checked;
+    tr.classList.toggle("excluded", !checked);
+    if (checked) {
+      count++;
+      total += Number(tr.querySelector(".f-montant").value) || 0;
+    }
+  });
+  document.getElementById("countLabel").textContent = count;
+  document.getElementById("totalLabel").textContent = total.toLocaleString("fr-FR");
+}
+tbody.addEventListener("input", recompute);
+tbody.addEventListener("change", recompute);
+recompute();
+
+const statusEl = document.getElementById("statusLabel");
+const importBtn = document.getElementById("importBtn");
+const logEl = document.getElementById("importLog");
+
+authReady.then(() => {
+  statusEl.textContent = "✅ Connecté à Firebase — prêt à importer.";
+}).catch((e) => {
+  statusEl.textContent = "❌ Connexion Firebase impossible : " + (e.code || e.message) + ". Corrigez la configuration avant d'importer.";
+  importBtn.disabled = true;
+});
+
+const ALREADY_DONE_KEY = "oleeducks_import_comptabilite_2026_07_12";
+
+importBtn.addEventListener("click", async () => {
+  if (localStorage.getItem(ALREADY_DONE_KEY)) {
+    if (!confirm("Cet import a déjà été marqué comme terminé sur cet appareil. Voulez-vous vraiment recommencer et risquer des doublons ?")) return;
+  }
+  if (!confirm("Confirmer l'import ? Cette action écrit les lignes sélectionnées directement dans votre base Firebase en production.")) return;
+
+  importBtn.disabled = true;
+  logEl.classList.remove("hidden");
+  const finCol = collection(db, "finance_transactions");
+  const rows = Array.from(tbody.querySelectorAll("tr")).filter(tr => tr.querySelector(".chk").checked);
+  let done = 0, errors = 0;
+  for (const tr of rows) {
+    const cat = tr.querySelector(".f-cat").value;
+    const dateVal = tr.querySelector(".f-date").value;
+    const desc = tr.querySelector(".f-desc").value;
+    const montant = Number(tr.querySelector(".f-montant").value) || 0;
+    try {
+      await addDoc(finCol, {
+        type: "depense",
+        categorie: cat,
+        montant,
+        date: new Date(dateVal),
+        description: desc,
+        cree_par: "Import comptabilité Excel",
+        createdAt: serverTimestamp()
+      });
+      done++;
+      logEl.textContent += `✓ ${tr.querySelector(".mono").textContent.replace("Date ?","")} — ${desc} — ${montant} FCFA\n`;
+    } catch (e) {
+      errors++;
+      logEl.textContent += `✗ ERREUR sur ${tr.querySelector(".mono").textContent} : ${e.message}\n`;
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  localStorage.setItem(ALREADY_DONE_KEY, "1");
+  statusEl.textContent = `Import terminé : ${done} réussie(s), ${errors} erreur(s).`;
+  importBtn.textContent = "Import terminé ✓";
+});
+</script>
+</body>
+</html>
