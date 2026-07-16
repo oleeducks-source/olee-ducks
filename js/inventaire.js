@@ -173,9 +173,35 @@ export function openAddDuckModal() {
 }
 
 function openEditModal(d) {
+  const isActif = d.statut === "actif";
   const body = `
+    <div class="row"><div class="row-main"><span class="row-title">Quantité actuelle</span></div><span class="row-value">${d.quantite || 1}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span></div>
+
+    ${isActif && (d.quantite || 1) > 0 ? `
+    <div class="spacer-m"></div>
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <h3 style="font-size:14px; margin-bottom:2px;">Retirer du cheptel</h3>
+      <p class="subtle" style="margin:0 0 10px;">Vente, décès ou réforme d'une partie ou de la totalité de ce lot. Le reste actif n'est pas affecté.</p>
+      <div class="field-row">
+        <div class="field"><label>Quantité à retirer</label><input type="number" id="fWithdrawQte" min="1" max="${d.quantite || 1}" value="1"></div>
+        <div class="field"><label>Motif</label>
+          <select id="fWithdrawMotif">
+            <option value="vendu">Vendu</option>
+            <option value="mort">Décédé</option>
+            <option value="reforme">Réformé</option>
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>Note (optionnel)</label><input type="text" id="fWithdrawNote" placeholder="ex : vendu au marché de Bingerville"></div>
+      <button class="btn yolk" id="fWithdrawSave">Enregistrer le retrait</button>
+    </div>
+    ` : ""}
+
+    <div class="spacer-m"></div>
+    <h3 style="font-size:14px; margin-bottom:8px;">Corriger cet enregistrement</h3>
     <div class="field">
-      <label>Statut</label>
+      <label>Statut de l'ensemble du lot</label>
       <select id="eDuckStatut">
         <option value="actif" ${d.statut === "actif" ? "selected" : ""}>Actif</option>
         <option value="vendu" ${d.statut === "vendu" ? "selected" : ""}>Vendu</option>
@@ -183,15 +209,61 @@ function openEditModal(d) {
         <option value="reforme" ${d.statut === "reforme" ? "selected" : ""}>Réformé</option>
       </select>
     </div>
-    <div class="field"><label>Quantité</label><input type="number" id="eDuckQte" value="${d.quantite || 1}" min="1"></div>
+    <div class="field"><label>Corriger la quantité (erreur de saisie uniquement)</label><input type="number" id="eDuckQte" value="${d.quantite || 1}" min="1"></div>
     <div class="field"><label>Motif de sortie (si vendu/décédé)</label><input type="text" id="eDuckMotif" value="${escapeHtml(d.motif_sortie || "")}"></div>
     <div class="field"><label>Notes</label><textarea id="eDuckNotes" rows="2">${escapeHtml(d.notes || "")}</textarea></div>
-    <button class="btn yolk" id="eDuckSave">Mettre à jour</button>
+    <button class="btn secondary" id="eDuckSave">Enregistrer la correction</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="eDuckDelete">Supprimer l'enregistrement</button>
   `;
   openModal(`${TYPE_LABELS[d.type] || d.type}`, body, {
     onMount: () => {
+      const withdrawBtn = document.getElementById("fWithdrawSave");
+      if (withdrawBtn) withdrawBtn.addEventListener("click", async () => {
+        const qte = Number(document.getElementById("fWithdrawQte").value) || 0;
+        const currentQte = Number(d.quantite) || 1;
+        if (qte <= 0 || qte > currentQte) { toast(`Indiquez une quantité entre 1 et ${currentQte}`); return; }
+        const motif = document.getElementById("fWithdrawMotif").value;
+        const note = document.getElementById("fWithdrawNote").value.trim() || null;
+        try {
+          if (qte === currentQte) {
+            // Le lot entier part : on met simplement à jour ce document
+            await updateDoc(doc(db, "ducks", d.id), {
+              statut: motif,
+              date_sortie: new Date(),
+              motif_sortie: note,
+              modifie_par: getUserName() || "Inconnu",
+              modifie_le: serverTimestamp()
+            });
+          } else {
+            // Retrait partiel : on réduit le lot d'origine et on crée un
+            // enregistrement séparé pour la partie sortie, pour garder une
+            // trace complète sans jamais perdre le compte.
+            await updateDoc(doc(db, "ducks", d.id), {
+              quantite: currentQte - qte,
+              modifie_par: getUserName() || "Inconnu",
+              modifie_le: serverTimestamp()
+            });
+            await addDoc(ducksCol, {
+              type: d.type,
+              quantite: qte,
+              date_entree: d.date_entree || new Date(),
+              bague_couleur: d.bague_couleur || null,
+              numero_bague: d.numero_bague || null,
+              notes: null,
+              statut: motif,
+              date_sortie: new Date(),
+              motif_sortie: note,
+              issu_du_lot: d.id,
+              cree_par: getUserName() || "Inconnu",
+              createdAt: serverTimestamp()
+            });
+          }
+          toast("Retrait enregistré ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+
       document.getElementById("eDuckSave").addEventListener("click", async () => {
         const statut = document.getElementById("eDuckStatut").value;
         try {
