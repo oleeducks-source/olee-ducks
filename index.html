@@ -173,6 +173,7 @@
   <section id="page-finances" class="page hidden">
     <div class="section-title">
       <div><span class="eyebrow">Recettes & dépenses</span><h2>Finances</h2></div>
+      <button class="btn secondary small" id="openComptaBtn">Comptabilité OHADA →</button>
     </div>
     <div class="balance-banner">
       <div class="kpi-label">Balance période</div>
@@ -213,6 +214,80 @@
     <div class="card" id="stockAlertsCard"></div>
     <div class="spacer-m"></div>
     <div class="card"><div id="stockList"></div></div>
+  </section>
+
+  <!-- ===================== COMPTABILITÉ OHADA ===================== -->
+  <section id="page-compta" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">SYSCOHADA révisé</span><h2>Comptabilité</h2></div>
+      <button class="btn secondary small" id="backToFinancesBtn">← Retour</button>
+    </div>
+
+    <div class="card" id="exerciceCard"></div>
+    <div class="spacer-m"></div>
+
+    <div class="segmented" id="comptaView">
+      <button data-v="brouillons" class="active">À valider</button>
+      <button data-v="comptes">Plan de comptes</button>
+      <button data-v="journal">Journal</button>
+      <button data-v="etats">États financiers</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="comptaBrouillonsWrap">
+      <div class="card"><div id="brouillonsList"></div></div>
+    </div>
+
+    <div id="comptaComptesWrap" class="hidden">
+      <div class="card">
+        <h3 style="font-size:14px; margin-bottom:10px;">Ajouter un compte</h3>
+        <div class="field-row">
+          <div class="field"><label>Numéro</label><input type="text" id="fCompteNum" placeholder="ex: 606"></div>
+          <div class="field"><label>Classe</label>
+            <select id="fCompteClasse">
+              <option value="1">1 — Capitaux</option>
+              <option value="2">2 — Immobilisations</option>
+              <option value="3">3 — Stocks</option>
+              <option value="4">4 — Tiers</option>
+              <option value="5">5 — Trésorerie</option>
+              <option value="6">6 — Charges</option>
+              <option value="7">7 — Produits</option>
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>Libellé</label><input type="text" id="fCompteLibelle" placeholder="ex: Achats d'emballages"></div>
+        <div class="field"><label>Nature</label>
+          <select id="fCompteNature">
+            <option value="actif">Actif</option>
+            <option value="passif">Passif</option>
+            <option value="charge">Charge</option>
+            <option value="produit">Produit</option>
+          </select>
+        </div>
+        <button class="btn yolk" id="fCompteSave">Ajouter au plan de comptes</button>
+      </div>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="comptesList"></div></div>
+    </div>
+
+    <div id="comptaJournalWrap" class="hidden">
+      <div class="card"><div id="journalList"></div></div>
+    </div>
+
+    <div id="comptaEtatsWrap" class="hidden">
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Balance des comptes</h3>
+        <div id="balanceList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Compte de résultat</h3>
+        <div id="resultatList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Bilan</h3>
+        <div id="bilanList"></div>
+      </div>
+    </div>
   </section>
 
   <!-- Bottom nav -->
