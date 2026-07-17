@@ -8,6 +8,7 @@ import { initInventaire, openAddDuckModal } from "./inventaire.js";
 import { initNests } from "./nids.js";
 import { initFinances, openAddFinanceModal } from "./finances.js";
 import { initStocks, openAddStockItemModal } from "./stocks.js";
+import { initComptabilite } from "./comptabilite.js";
 
 const PAGES = ["dashboard", "inventaire", "nids", "finances", "stocks"];
 let currentPage = "dashboard";
@@ -17,6 +18,7 @@ function setPage(page) {
   PAGES.forEach(p => {
     document.getElementById(`page-${p}`).classList.toggle("hidden", p !== page);
   });
+  document.getElementById("page-compta").classList.add("hidden");
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === page);
   });
@@ -124,6 +126,7 @@ async function boot() {
   initNests();
   initFinances();
   initStocks();
+  initComptabilite();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker non enregistré :", err));
