@@ -174,9 +174,20 @@ export function openAddDuckModal() {
 
 function openEditModal(d) {
   const isActif = d.statut === "actif";
+  const isCaneton = d.type === "caneton";
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Quantité actuelle</span></div><span class="row-value">${d.quantite || 1}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span></div>
+
+    ${isActif && isCaneton && (d.quantite || 1) > 0 ? `
+    <div class="spacer-m"></div>
+    <div class="card" style="background:#FCEBD9; border:none;">
+      <h3 style="font-size:14px; margin-bottom:2px;">Requalifier en canard</h3>
+      <p class="subtle" style="margin:0 0 10px;">Les canetons devenus adultes basculent dans le lot des canards, avec traçabilité (date, par qui).</p>
+      <div class="field"><label>Quantité devenue adulte</label><input type="number" id="fRequalQte" min="1" max="${d.quantite || 1}" value="${d.quantite || 1}"></div>
+      <button class="btn yolk" id="fRequalSave">Requalifier</button>
+    </div>
+    ` : ""}
 
     ${isActif && (d.quantite || 1) > 0 ? `
     <div class="spacer-m"></div>
@@ -218,6 +229,46 @@ function openEditModal(d) {
   `;
   openModal(`${TYPE_LABELS[d.type] || d.type}`, body, {
     onMount: () => {
+      const requalBtn = document.getElementById("fRequalSave");
+      if (requalBtn) requalBtn.addEventListener("click", async () => {
+        const qte = Number(document.getElementById("fRequalQte").value) || 0;
+        const currentQte = Number(d.quantite) || 1;
+        if (qte <= 0 || qte > currentQte) { toast(`Indiquez une quantité entre 1 et ${currentQte}`); return; }
+        try {
+          if (qte === currentQte) {
+            await updateDoc(doc(db, "ducks", d.id), {
+              type: "canard",
+              requalifie_par: getUserName() || "Inconnu",
+              requalifie_le: serverTimestamp()
+            });
+          } else {
+            await updateDoc(doc(db, "ducks", d.id), {
+              quantite: currentQte - qte,
+              modifie_par: getUserName() || "Inconnu",
+              modifie_le: serverTimestamp()
+            });
+            await addDoc(ducksCol, {
+              type: "canard",
+              quantite: qte,
+              date_entree: d.date_entree || new Date(),
+              bague_couleur: d.bague_couleur || null,
+              numero_bague: d.numero_bague || null,
+              notes: null,
+              statut: "actif",
+              date_sortie: null,
+              motif_sortie: null,
+              issu_du_lot: d.id,
+              requalifie_par: getUserName() || "Inconnu",
+              requalifie_le: serverTimestamp(),
+              cree_par: getUserName() || "Inconnu",
+              createdAt: serverTimestamp()
+            });
+          }
+          toast(`${qte} caneton(s) requalifié(s) en canard ✓`);
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+
       const withdrawBtn = document.getElementById("fWithdrawSave");
       if (withdrawBtn) withdrawBtn.addEventListener("click", async () => {
         const qte = Number(document.getElementById("fWithdrawQte").value) || 0;
