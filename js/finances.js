@@ -8,10 +8,12 @@
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
-  collection, addDoc, deleteDoc, doc, onSnapshot,
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { reverserEcriture } from "./comptabilite.js";
+import { attacherRecu, retirerRecu } from "./pieces-jointes.js";
 
 const finCol = collection(db, "finance_transactions");
 let allTx = [];
@@ -188,22 +190,119 @@ export function openAddFinanceModal(defaultType = "recette") {
 
 function openTxDetail(t) {
   const cats = t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE;
+  const estValidee = t.statut_comptable === "valide";
   openModal(cats[t.categorie] || t.categorie, `
     <div class="row"><div class="row-main"><span class="row-title">Montant</span></div><span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Date</span></div><span class="row-value">${formatDate(t.date)}</span></div>
     ${t.cree_par ? `<div class="row"><div class="row-main"><span class="row-title">Enregistré par</span></div><span class="row-value">${escapeHtml(t.cree_par)}</span></div>` : ""}
+    <div class="row"><div class="row-main"><span class="row-title">Statut comptable</span></div><span class="tag ${estValidee ? 'ok' : 'warn'}">${estValidee ? 'Validée' : 'À valider'}</span></div>
     ${t.quantite ? `<div class="row"><div class="row-main"><span class="row-title">Quantité</span></div><span class="row-value">${t.quantite}</span></div>` : ""}
     ${t.prix_unitaire ? `<div class="row"><div class="row-main"><span class="row-title">Prix unitaire</span></div><span class="row-value">${formatFCFA(t.prix_unitaire)}</span></div>` : ""}
     ${t.description ? `<p class="subtle" style="margin-top:10px;">${escapeHtml(t.description)}</p>` : ""}
     <div class="spacer-m"></div>
+    <div id="pieceJointeZone">
+      ${t.piece_jointe_url ? `
+        <a href="${t.piece_jointe_url}" target="_blank" rel="noopener" class="btn secondary" style="margin-bottom:8px; text-decoration:none;">📎 Voir le reçu — ${escapeHtml(t.piece_jointe_nom || "")}</a>
+        <button class="btn danger small" id="fRecuRemove">Retirer la pièce jointe</button>
+      ` : `
+        <label class="btn secondary" style="display:block; text-align:center; cursor:pointer;">
+          📎 Joindre un reçu (photo ou PDF)
+          <input type="file" id="fRecuInput" accept="image/*,application/pdf" style="display:none;">
+        </label>
+      `}
+    </div>
+    <div class="spacer-m"></div>
+    <button class="btn secondary" id="fTxEdit">✏️ Modifier cette transaction</button>
+    <div class="spacer-s"></div>
     <button class="btn danger" id="fTxDelete">Supprimer cette transaction</button>
   `, {
     onMount: () => {
+      const recuInput = document.getElementById("fRecuInput");
+      if (recuInput) recuInput.addEventListener("change", async () => {
+        const file = recuInput.files[0];
+        if (!file) return;
+        try {
+          await attacherRecu(t.id, file);
+          toast("Reçu attaché ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+      const recuRemove = document.getElementById("fRecuRemove");
+      if (recuRemove) recuRemove.addEventListener("click", async () => {
+        if (!confirm("Retirer cette pièce jointe ? (le fichier restera sur Google Drive, seul le lien est retiré ici)")) return;
+        try {
+          await retirerRecu(t.id);
+          toast("Pièce jointe retirée");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+      document.getElementById("fTxEdit").addEventListener("click", () => openEditTxModal(t));
       document.getElementById("fTxDelete").addEventListener("click", async () => {
         if (!confirm("Supprimer définitivement cette transaction ?")) return;
         try {
           await deleteDoc(doc(db, "finance_transactions", t.id));
           toast("Transaction supprimée");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+    }
+  });
+}
+
+function openEditTxModal(t) {
+  const estValidee = t.statut_comptable === "valide";
+  const cats = t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE;
+  openModal("Modifier la transaction", `
+    ${estValidee ? `<div class="card" style="background:#FCEBD9; border:none; margin-bottom:12px;">
+      <p class="subtle" style="margin:0;">⚠️ Cette transaction est déjà validée comptablement. Enregistrer une modification créera automatiquement une <strong>écriture d'annulation</strong> (contre-passation) pour l'écriture existante — rien n'est supprimé, tout reste traçable. Vous devrez ensuite revalider la transaction corrigée dans Comptabilité → À valider.</p>
+    </div>` : ""}
+    <div class="segmented" id="eTxType">
+      <button data-v="recette" class="${t.type === 'recette' ? 'active' : ''}">Recette</button>
+      <button data-v="depense" class="${t.type === 'depense' ? 'active' : ''}">Dépense</button>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="field"><label>Catégorie</label><select id="eTxCat"></select></div>
+    <div class="field-row">
+      <div class="field"><label>Montant (FCFA)</label><input type="number" id="eTxMontant" min="0" value="${t.montant}"></div>
+      <div class="field"><label>Date</label><input type="date" id="eTxDate" value="${(t.date?.toDate ? t.date.toDate() : new Date(t.date)).toISOString().slice(0, 10)}"></div>
+    </div>
+    <div class="field"><label>Description</label><input type="text" id="eTxDesc" value="${escapeHtml(t.description || "")}"></div>
+    <button class="btn yolk" id="eTxSave">Enregistrer les modifications</button>
+  `, {
+    onMount: () => {
+      let currentType = t.type;
+      const catSel = document.getElementById("eTxCat");
+      const fillCats = () => {
+        const c = currentType === "recette" ? CATS_RECETTE : CATS_DEPENSE;
+        catSel.innerHTML = Object.entries(c).map(([k, v]) => `<option value="${k}" ${k === t.categorie ? "selected" : ""}>${v}</option>`).join("");
+      };
+      fillCats();
+      document.querySelectorAll("#eTxType button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("#eTxType button").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          currentType = btn.dataset.v;
+          fillCats();
+        });
+      });
+
+      document.getElementById("eTxSave").addEventListener("click", async () => {
+        const montant = Number(document.getElementById("eTxMontant").value);
+        if (!montant || montant <= 0) { toast("Indiquez un montant valide"); return; }
+        try {
+          if (estValidee && t.ecriture_id) {
+            await reverserEcriture(t.ecriture_id);
+          }
+          await updateDoc(doc(db, "finance_transactions", t.id), {
+            type: currentType,
+            categorie: catSel.value,
+            montant,
+            date: new Date(document.getElementById("eTxDate").value),
+            description: document.getElementById("eTxDesc").value.trim() || null,
+            modifie_par: getUserName() || "Inconnu",
+            modifie_le: serverTimestamp()
+          });
+          toast(estValidee ? "Modifié — écriture annulée, à revalider ✓" : "Modifié ✓");
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
