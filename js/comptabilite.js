@@ -1,17 +1,18 @@
 // =====================================================================
 // MODULE : COMPTABILITÉ OHADA (SYSCOHADA révisé)
 // - "accounts" : plan de comptes (numéro, libellé, classe 1-7, nature)
-// - "exercises" : exercices comptables (statut ouvert/clôturé)
-// - "journal_ecritures" : écritures validées, en partie double, chacune
-//   avec un tableau "lines" (compte, débit, crédit). Seule cette
-//   collection sert de base aux états financiers — jamais les brouillons.
-// - "finance_transactions" (existante) : chaque saisie y reste un
-//   "brouillon" tant qu'elle n'a pas été transformée en écriture ici.
-//   Rien de ce module ne modifie la façon dont l'équipe saisit une
-//   recette ou une dépense au quotidien.
+// - "exercises" : exercices comptables (un par année, statut ouvert/clôturé)
+// - "journal_ecritures" : écritures validées, en partie double (tableau
+//   "lines"). Une correction ne modifie JAMAIS une écriture existante :
+//   elle crée une écriture de CONTRE-PASSATION (inverse) qui l'annule,
+//   pour garder une trace complète (règle professionnelle de base).
+// - "finance_transactions" (existante) : reste "brouillon" tant qu'elle
+//   n'a pas été transformée en écriture.
 //
 // Validation 100% côté application (pas de Cloud Functions, reste
 // gratuit) : équilibre Débit=Crédit, comptes existants, exercice ouvert.
+// Chaque écriture est rattachée à l'exercice correspondant à LA DATE
+// RÉELLE de la transaction (pas à un exercice "par défaut").
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
@@ -27,7 +28,7 @@ const finCol = collection(db, "finance_transactions");
 
 let allAccounts = [];
 let allExercises = [];
-let currentExercise = null;
+let selectedExerciceId = null; // exercice affiché dans l'onglet États financiers
 let allJournal = [];
 let allBrouillons = [];
 let currentComptaView = "brouillons";
@@ -106,9 +107,16 @@ export function validerEcriture(lines, exerciceStatut, comptesExistants) {
   return erreurs;
 }
 
+function exerciceForYear(year) {
+  return allExercises.find(e => e.annee === year) || null;
+}
+function exerciceForDate(dateVal) {
+  const d = dateVal?.toDate ? dateVal.toDate() : new Date(dateVal);
+  return exerciceForYear(d.getFullYear());
+}
+
 export function initComptabilite() {
   ensureDefaultAccounts().catch(e => console.error("Erreur init plan de comptes :", e));
-  ensureCurrentExercise().catch(e => console.error("Erreur init exercice :", e));
 
   onSnapshot(query(accountsCol, orderBy("numero")), snap => {
     allAccounts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -118,8 +126,11 @@ export function initComptabilite() {
 
   onSnapshot(query(exercisesCol, orderBy("annee", "desc")), snap => {
     allExercises = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    currentExercise = allExercises.find(e => e.statut === "ouvert") || allExercises[0] || null;
-    renderExerciceCard();
+    if (!selectedExerciceId || !allExercises.some(e => e.id === selectedExerciceId)) {
+      const ouvert = allExercises.find(e => e.statut === "ouvert");
+      selectedExerciceId = (ouvert || allExercises[0] || {}).id || null;
+    }
+    renderExercicesCard();
     renderEtatsFinanciers();
   }, err => console.error("Erreur lecture exercices :", err));
 
@@ -133,6 +144,7 @@ export function initComptabilite() {
     allBrouillons = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(t => t.statut_comptable !== "valide");
+    ensureExercisesExist(snap.docs.map(d => d.data().date)).catch(e => console.error("Erreur init exercices :", e));
     renderBrouillonsList();
   }, err => console.error("Erreur lecture transactions :", err));
 
@@ -172,6 +184,11 @@ export function initComptabilite() {
       document.getElementById("fCompteLibelle").value = "";
     } catch (e) { toast("Erreur : " + e.message); }
   });
+
+  document.getElementById("exportFecBtn")?.addEventListener("click", exporterFEC);
+  document.getElementById("exportExcelBtn")?.addEventListener("click", exporterExcel);
+  document.getElementById("shareEtatsBtn")?.addEventListener("click", partagerEtatsPDF);
+  document.getElementById("exerciceSelector")?.addEventListener("change", (e) => selectExercice(e.target.value));
 }
 
 function showComptaView() {
@@ -182,7 +199,9 @@ function showComptaView() {
 }
 
 // ---------------------------------------------------------------------
-// Initialisation idempotente (plan de comptes par défaut + exercice)
+// Initialisation idempotente : plan de comptes + un exercice par année
+// où il existe déjà des transactions (pour ne perdre aucune donnée
+// historique importée), plus l'année en cours.
 // ---------------------------------------------------------------------
 async function ensureDefaultAccounts() {
   const snap = await getDocs(query(accountsCol));
@@ -194,49 +213,69 @@ async function ensureDefaultAccounts() {
   await batch.commit();
 }
 
-async function ensureCurrentExercise() {
-  const snap = await getDocs(query(exercisesCol));
-  if (!snap.empty) return;
-  const year = new Date().getFullYear();
-  await setDoc(doc(db, "exercises", String(year)), {
-    annee: year,
-    date_debut: new Date(year, 0, 1),
-    date_fin: new Date(year, 11, 31),
-    statut: "ouvert",
-    nb_ecritures: 0,
-    createdAt: new Date()
+let exercisesEnsured = new Set();
+async function ensureExercisesExist(transactionDates) {
+  const years = new Set([new Date().getFullYear()]);
+  transactionDates.forEach(dt => {
+    if (!dt) return;
+    const d = dt.toDate ? dt.toDate() : new Date(dt);
+    if (!isNaN(d.getTime())) years.add(d.getFullYear());
   });
+  const missing = [...years].filter(y => !exercisesEnsured.has(y) && !allExercises.some(e => e.annee === y));
+  if (!missing.length) return;
+  const batch = writeBatch(db);
+  missing.forEach(year => {
+    batch.set(doc(db, "exercises", String(year)), {
+      annee: year,
+      date_debut: new Date(year, 0, 1),
+      date_fin: new Date(year, 11, 31),
+      statut: "ouvert",
+      nb_ecritures: 0,
+      createdAt: new Date()
+    }, { merge: true });
+    exercisesEnsured.add(year);
+  });
+  await batch.commit();
 }
 
 // ---------------------------------------------------------------------
-// Rendu : carte exercice en cours
+// Rendu : liste des exercices comptables
 // ---------------------------------------------------------------------
-function renderExerciceCard() {
+function renderExercicesCard() {
   const el = document.getElementById("exerciceCard");
-  if (!el || !currentExercise) return;
-  el.innerHTML = `
+  if (!el) return;
+  if (!allExercises.length) {
+    el.innerHTML = `<p class="subtle">Initialisation des exercices…</p>`;
+    return;
+  }
+  el.innerHTML = allExercises.map(ex => `
     <div class="row">
-      <div class="row-main"><span class="row-title">Exercice ${currentExercise.annee}</span><span class="row-sub">${formatDate(currentExercise.date_debut)} → ${formatDate(currentExercise.date_fin)}</span></div>
-      <span class="tag ${currentExercise.statut === 'ouvert' ? 'ok' : 'danger'}">${currentExercise.statut === 'ouvert' ? 'Ouvert' : 'Clôturé'}</span>
+      <div class="row-main"><span class="row-title">Exercice ${ex.annee}</span><span class="row-sub">${formatDate(ex.date_debut)} → ${formatDate(ex.date_fin)}</span></div>
+      <span class="tag ${ex.statut === 'ouvert' ? 'ok' : 'danger'}">${ex.statut === 'ouvert' ? 'Ouvert' : 'Clôturé'}</span>
     </div>
-    ${currentExercise.statut === "ouvert" ? `<button class="btn danger small" id="closeExerciceBtn" style="margin-top:8px;">Clôturer cet exercice</button>` : ""}
-  `;
-  const closeBtn = document.getElementById("closeExerciceBtn");
-  if (closeBtn) closeBtn.addEventListener("click", async () => {
-    if (!confirm(`Clôturer l'exercice ${currentExercise.annee} ? Plus aucune écriture ne pourra y être ajoutée. Un nouvel exercice ${currentExercise.annee + 1} sera créé automatiquement.`)) return;
-    try {
-      await updateDoc(doc(db, "exercises", currentExercise.id), {
-        statut: "cloture", cloture_par: getUserName() || "Inconnu", cloture_le: serverTimestamp()
-      });
-      const nextYear = currentExercise.annee + 1;
-      await setDoc(doc(db, "exercises", String(nextYear)), {
-        annee: nextYear,
-        date_debut: new Date(nextYear, 0, 1),
-        date_fin: new Date(nextYear, 11, 31),
-        statut: "ouvert", nb_ecritures: 0, createdAt: new Date()
-      });
-      toast(`Exercice ${currentExercise.annee} clôturé, ${nextYear} ouvert ✓`);
-    } catch (e) { toast("Erreur : " + e.message); }
+    ${ex.statut === "ouvert" ? `<button class="btn danger small closeExerciceBtn" data-id="${ex.id}" style="margin:6px 0 10px;">Clôturer ${ex.annee}</button>` : ""}
+  `).join("");
+  el.querySelectorAll(".closeExerciceBtn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const ex = allExercises.find(e => e.id === btn.dataset.id);
+      if (!ex) return;
+      if (!confirm(`Clôturer l'exercice ${ex.annee} ? Plus aucune écriture ne pourra y être ajoutée. L'exercice ${ex.annee + 1} sera ouvert automatiquement s'il n'existe pas déjà.`)) return;
+      try {
+        await updateDoc(doc(db, "exercises", ex.id), {
+          statut: "cloture", cloture_par: getUserName() || "Inconnu", cloture_le: serverTimestamp()
+        });
+        const nextYear = ex.annee + 1;
+        if (!allExercises.some(e => e.annee === nextYear)) {
+          await setDoc(doc(db, "exercises", String(nextYear)), {
+            annee: nextYear,
+            date_debut: new Date(nextYear, 0, 1),
+            date_fin: new Date(nextYear, 11, 31),
+            statut: "ouvert", nb_ecritures: 0, createdAt: new Date()
+          });
+        }
+        toast(`Exercice ${ex.annee} clôturé ✓`);
+      } catch (e) { toast("Erreur : " + e.message); }
+    });
   });
 }
 
@@ -282,8 +321,10 @@ function renderBrouillonsList() {
 function openValidationModal(t) {
   const suggestion = MAPPING_COMPTABLE[t.categorie] || { debit: null, credit: null };
   const options = allAccounts.map(a => `<option value="${a.numero}">${a.numero} — ${a.libelle}</option>`).join("");
+  const exercice = exerciceForDate(t.date);
   openModal("Valider l'écriture", `
-    <div class="row"><div class="row-main"><span class="row-title">${CATS_LABELS[t.categorie] || t.categorie}</span><span class="row-sub">${formatDate(t.date)}</span></div><span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">${CATS_LABELS[t.categorie] || t.categorie}</span><span class="row-sub">${formatDate(t.date)}${exercice ? " · Exercice " + exercice.annee : ""}</span></div><span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span></div>
+    ${!exercice ? `<p class="subtle" style="color:var(--clay-500)">Aucun exercice comptable ne couvre cette date. Rechargez la page.</p>` : ""}
     <div class="spacer-m"></div>
     <div class="field"><label>Compte à débiter</label><select id="fCompteDebit"><option value="">— Choisir —</option>${options}</select></div>
     <div class="field"><label>Compte à créditer</label><select id="fCompteCredit"><option value="">— Choisir —</option>${options}</select></div>
@@ -296,7 +337,8 @@ function openValidationModal(t) {
       if (suggestion.credit) document.getElementById("fCompteCredit").value = suggestion.credit;
 
       document.getElementById("fValiderBtn").addEventListener("click", async () => {
-        if (!currentExercise) { toast("Aucun exercice comptable disponible"); return; }
+        const ex = exerciceForDate(t.date);
+        if (!ex) { toast("Aucun exercice comptable pour cette date"); return; }
         const compteDebit = document.getElementById("fCompteDebit").value;
         const compteCredit = document.getElementById("fCompteCredit").value;
         const libelle = document.getElementById("fEcritureLibelle").value.trim();
@@ -306,25 +348,26 @@ function openValidationModal(t) {
           { compte: compteCredit, libelle, debit: 0, credit: montant }
         ];
         const comptesExistants = new Set(allAccounts.map(a => a.numero));
-        const erreurs = validerEcriture(lines, currentExercise.statut, comptesExistants);
+        const erreurs = validerEcriture(lines, ex.statut, comptesExistants);
         if (erreurs.length) {
           document.getElementById("fValidErrors").textContent = erreurs.join(" ");
           return;
         }
         try {
-          const numeroPiece = `EC-${currentExercise.annee}-${String((currentExercise.nb_ecritures || 0) + 1).padStart(4, "0")}`;
+          const numeroPiece = `EC-${ex.annee}-${String((ex.nb_ecritures || 0) + 1).padStart(4, "0")}`;
           const ecritureRef = await addDoc(journalCol, {
             numero_piece: numeroPiece,
             date: t.date,
             libelle,
-            exercice_id: currentExercise.id,
+            exercice_id: ex.id,
             lines,
             source_transaction_id: t.id,
+            annulee: false,
             valide_par: getUserName() || "Inconnu",
             valide_le: serverTimestamp(),
             createdAt: serverTimestamp()
           });
-          await updateDoc(doc(db, "exercises", currentExercise.id), { nb_ecritures: increment(1) });
+          await updateDoc(doc(db, "exercises", ex.id), { nb_ecritures: increment(1) });
           await updateDoc(doc(db, "finance_transactions", t.id), {
             statut_comptable: "valide", ecriture_id: ecritureRef.id
           });
@@ -337,7 +380,52 @@ function openValidationModal(t) {
 }
 
 // ---------------------------------------------------------------------
-// Rendu : journal des écritures validées
+// Correction d'une écriture par CONTRE-PASSATION (jamais d'édition
+// directe d'une écriture postée — traçabilité intégrale conservée).
+// ---------------------------------------------------------------------
+export async function reverserEcriture(ecritureId) {
+  const ecriture = allJournal.find(e => e.id === ecritureId);
+  if (!ecriture) throw new Error("Écriture introuvable");
+  if (ecriture.annulee) throw new Error("Cette écriture est déjà annulée");
+  if (ecriture.contre_passation_de) throw new Error("Une écriture de contre-passation ne peut pas être annulée elle-même");
+
+  const ex = allExercises.find(e => e.id === ecriture.exercice_id);
+  if (!ex || ex.statut !== "ouvert") {
+    throw new Error(`L'exercice ${ex ? ex.annee : ""} est clôturé — correction impossible.`);
+  }
+
+  const lignesInversees = (ecriture.lines || []).map(l => ({
+    compte: l.compte, libelle: "ANNULATION — " + (l.libelle || ecriture.libelle),
+    debit: Number(l.credit) || 0, credit: Number(l.debit) || 0
+  }));
+  const numeroPiece = `EC-${ex.annee}-${String((ex.nb_ecritures || 0) + 1).padStart(4, "0")}`;
+
+  const reversalRef = await addDoc(journalCol, {
+    numero_piece: numeroPiece,
+    date: new Date(),
+    libelle: "ANNULATION — " + ecriture.libelle,
+    exercice_id: ecriture.exercice_id,
+    lines: lignesInversees,
+    source_transaction_id: ecriture.source_transaction_id,
+    contre_passation_de: ecriture.id,
+    annulee: false,
+    valide_par: getUserName() || "Inconnu",
+    valide_le: serverTimestamp(),
+    createdAt: serverTimestamp()
+  });
+  await updateDoc(doc(db, "exercises", ex.id), { nb_ecritures: increment(1) });
+  await updateDoc(doc(db, "journal_ecritures", ecriture.id), { annulee: true, annulee_par_ecriture_id: reversalRef.id });
+
+  if (ecriture.source_transaction_id) {
+    await updateDoc(doc(db, "finance_transactions", ecriture.source_transaction_id), {
+      statut_comptable: "brouillon", ecriture_id: null
+    });
+  }
+  return reversalRef.id;
+}
+
+// ---------------------------------------------------------------------
+// Rendu : journal des écritures
 // ---------------------------------------------------------------------
 function renderJournalList() {
   const el = document.getElementById("journalList");
@@ -349,7 +437,8 @@ function renderJournalList() {
   el.innerHTML = allJournal.map(e => `
     <div class="row" style="flex-direction:column; align-items:stretch;">
       <div class="row" style="border:none; padding-bottom:4px;">
-        <div class="row-main"><span class="row-title mono">${e.numero_piece}</span><span class="row-sub">${escapeHtml(e.libelle)} · ${formatDate(e.date)}${e.valide_par ? " · par " + escapeHtml(e.valide_par) : ""}</span></div>
+        <div class="row-main"><span class="row-title mono">${e.numero_piece}${e.annulee ? ' <span class="tag danger">ANNULÉE</span>' : ""}${e.contre_passation_de ? ' <span class="tag warn">Correction</span>' : ""}</span><span class="row-sub">${escapeHtml(e.libelle)} · ${formatDate(e.date)}${e.valide_par ? " · par " + escapeHtml(e.valide_par) : ""}</span></div>
+        ${(!e.annulee && !e.contre_passation_de) ? `<button class="btn secondary small correctBtn" data-id="${e.id}">↺ Corriger</button>` : ""}
       </div>
       ${(e.lines || []).map(l => `
         <div class="row" style="border:none; padding:2px 0 2px 14px;">
@@ -359,19 +448,24 @@ function renderJournalList() {
       `).join("")}
     </div>
   `).join("");
+  el.querySelectorAll(".correctBtn").forEach(btn => {
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!confirm("Corriger cette écriture ? Une écriture d'annulation sera créée (rien n'est supprimé), et la transaction d'origine repassera en 'À valider' pour être ressaisie correctement.")) return;
+      try {
+        await reverserEcriture(btn.dataset.id);
+        toast("Écriture annulée — transaction renvoyée dans 'À valider' ✓");
+      } catch (e) { toast("Erreur : " + e.message); }
+    });
+  });
 }
 
 // ---------------------------------------------------------------------
-// États financiers : Balance, Compte de Résultat, Bilan
+// États financiers : Balance, Compte de Résultat, Bilan, Tableau de bord
 // ---------------------------------------------------------------------
-function renderEtatsFinanciers() {
-  const balanceEl = document.getElementById("balanceList");
-  const resultatEl = document.getElementById("resultatList");
-  const bilanEl = document.getElementById("bilanList");
-  if (!balanceEl || !currentExercise) return;
-
-  const entriesExercice = allJournal.filter(e => e.exercice_id === currentExercise.id);
-  const soldes = {}; // numero -> { debit, credit }
+function currentSoldes() {
+  const entriesExercice = allJournal.filter(e => e.exercice_id === selectedExerciceId);
+  const soldes = {};
   entriesExercice.forEach(e => {
     (e.lines || []).forEach(l => {
       soldes[l.compte] = soldes[l.compte] || { debit: 0, credit: 0 };
@@ -379,11 +473,31 @@ function renderEtatsFinanciers() {
       soldes[l.compte].credit += Number(l.credit) || 0;
     });
   });
+  return soldes;
+}
 
-  // --- Balance ---
+function renderEtatsFinanciers() {
+  const balanceEl = document.getElementById("balanceList");
+  const resultatEl = document.getElementById("resultatList");
+  const bilanEl = document.getElementById("bilanList");
+  const selectorEl = document.getElementById("exerciceSelector");
+  const dashboardEl = document.getElementById("tableauBordCompta");
+  if (!balanceEl) return;
+
+  if (selectorEl) {
+    selectorEl.innerHTML = allExercises.map(ex => `<option value="${ex.id}" ${ex.id === selectedExerciceId ? "selected" : ""}>Exercice ${ex.annee} (${ex.statut === "ouvert" ? "ouvert" : "clôturé"})</option>`).join("");
+  }
+
+  if (!selectedExerciceId) {
+    balanceEl.innerHTML = `<p class="subtle">Aucun exercice disponible.</p>`;
+    return;
+  }
+  const exercice = allExercises.find(e => e.id === selectedExerciceId);
+  const soldes = currentSoldes();
   const comptesUtilises = Object.keys(soldes);
+
   if (!comptesUtilises.length) {
-    balanceEl.innerHTML = `<p class="subtle">Aucune écriture validée sur l'exercice ${currentExercise.annee}.</p>`;
+    balanceEl.innerHTML = `<p class="subtle">Aucune écriture validée sur cet exercice.</p>`;
   } else {
     balanceEl.innerHTML = comptesUtilises.sort().map(num => {
       const acc = allAccounts.find(a => a.numero === num);
@@ -397,14 +511,18 @@ function renderEtatsFinanciers() {
     }).join("");
   }
 
-  // --- Compte de résultat (classe 7 - classe 6) ---
   let totalProduits = 0, totalCharges = 0;
+  const chargesParCompte = [];
   comptesUtilises.forEach(num => {
     const acc = allAccounts.find(a => a.numero === num);
     if (!acc) return;
     const s = soldes[num];
     if (acc.classe === 7) totalProduits += (s.credit - s.debit);
-    if (acc.classe === 6) totalCharges += (s.debit - s.credit);
+    if (acc.classe === 6) {
+      const montant = s.debit - s.credit;
+      totalCharges += montant;
+      chargesParCompte.push({ libelle: acc.libelle, montant });
+    }
   });
   const resultatNet = totalProduits - totalCharges;
   resultatEl.innerHTML = `
@@ -413,7 +531,6 @@ function renderEtatsFinanciers() {
     <div class="row"><div class="row-main"><span class="row-title">Résultat net</span></div><span class="row-value ${resultatNet >= 0 ? 'pos' : 'neg'}">${formatFCFA(resultatNet)}</span></div>
   `;
 
-  // --- Bilan (Actif / Passif) ---
   let totalActif = 0, totalPassif = 0;
   comptesUtilises.forEach(num => {
     const acc = allAccounts.find(a => a.numero === num);
@@ -422,7 +539,7 @@ function renderEtatsFinanciers() {
     if (acc.nature === "actif") totalActif += (s.debit - s.credit);
     if (acc.nature === "passif") totalPassif += (s.credit - s.debit);
   });
-  totalPassif += resultatNet; // le résultat net vient augmenter/diminuer les capitaux propres
+  totalPassif += resultatNet;
   const equilibre = Math.round(totalActif * 100) === Math.round(totalPassif * 100);
   bilanEl.innerHTML = `
     <div class="row"><div class="row-main"><span class="row-title">Total ACTIF</span></div><span class="row-value">${formatFCFA(totalActif)}</span></div>
@@ -430,4 +547,142 @@ function renderEtatsFinanciers() {
     <div class="spacer-s"></div>
     <span class="tag ${equilibre ? 'ok' : 'danger'}">${equilibre ? "Bilan équilibré ✓" : "⚠️ Déséquilibre — vérifiez vos écritures"}</span>
   `;
+
+  // --- Tableau de bord (ratios) ---
+  if (dashboardEl) {
+    const ratioCharges = totalProduits ? Math.round((totalCharges / totalProduits) * 100) : 0;
+    const margeNette = totalProduits ? Math.round((resultatNet / totalProduits) * 100) : 0;
+    const topCharges = chargesParCompte.sort((a, b) => b.montant - a.montant).slice(0, 3);
+    dashboardEl.innerHTML = `
+      <div class="row"><div class="row-main"><span class="row-title">Charges / Produits</span></div><span class="row-value">${ratioCharges}%</span></div>
+      <div class="row"><div class="row-main"><span class="row-title">Marge nette</span></div><span class="row-value ${margeNette >= 0 ? 'pos' : 'neg'}">${margeNette}%</span></div>
+      ${topCharges.length ? `<div class="spacer-s"></div><p class="subtle" style="margin-bottom:6px;">Principaux postes de charges :</p>` + topCharges.map(c => `
+        <div class="row"><div class="row-main"><span class="row-title">${escapeHtml(c.libelle)}</span></div><span class="row-value neg">${formatFCFA(c.montant)}</span></div>
+      `).join("") : ""}
+    `;
+  }
+
+  window.__oleeducksEtatsCache = { exercice, soldes, totalProduits, totalCharges, resultatNet, totalActif, totalPassif, comptesUtilises, allAccounts };
+}
+
+export function selectExercice(id) {
+  selectedExerciceId = id;
+  renderEtatsFinanciers();
+}
+
+// ---------------------------------------------------------------------
+// Export FEC (Fichier des Écritures Comptables) — format standard
+// pour audit / administration fiscale.
+// ---------------------------------------------------------------------
+function exporterFEC() {
+  const entries = allJournal.filter(e => e.exercice_id === selectedExerciceId);
+  if (!entries.length) { toast("Aucune écriture à exporter sur cet exercice"); return; }
+  const header = ["JournalCode", "JournalLib", "EcritureNum", "EcritureDate", "CompteNum", "CompteLib", "PieceRef", "PieceDate", "EcritureLib", "Debit", "Credit", "ValidDate"];
+  const lines = [header.join("\t")];
+  entries.forEach(e => {
+    const dateStr = (e.date?.toDate ? e.date.toDate() : new Date(e.date)).toISOString().slice(0, 10).replace(/-/g, "");
+    (e.lines || []).forEach(l => {
+      const acc = allAccounts.find(a => a.numero === l.compte);
+      lines.push([
+        "OD", "Opérations diverses", e.numero_piece, dateStr, l.compte,
+        acc ? acc.libelle.replace(/\t/g, " ") : "", e.numero_piece, dateStr,
+        (e.libelle || "").replace(/\t/g, " "), (l.debit || 0).toFixed(2), (l.credit || 0).toFixed(2), dateStr
+      ].join("\t"));
+    });
+  });
+  downloadBlob(lines.join("\n"), `FEC_OleeDucks_${new Date().getFullYear()}.txt`, "text/plain;charset=utf-8");
+  toast("Export FEC généré ✓");
+}
+
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------
+// Export Excel (Balance + Grand Livre) via SheetJS (chargé en CDN)
+// ---------------------------------------------------------------------
+function exporterExcel() {
+  if (typeof XLSX === "undefined") { toast("Bibliothèque Excel non chargée — vérifiez votre connexion"); return; }
+  const cache = window.__oleeducksEtatsCache;
+  if (!cache) { toast("Aucune donnée à exporter"); return; }
+
+  const balanceRows = [["Compte", "Libellé", "Débit", "Crédit", "Solde", "Sens"]];
+  cache.comptesUtilises.sort().forEach(num => {
+    const acc = cache.allAccounts.find(a => a.numero === num);
+    const s = cache.soldes[num];
+    const solde = s.debit - s.credit;
+    balanceRows.push([num, acc ? acc.libelle : "?", s.debit, s.credit, Math.abs(solde), solde >= 0 ? "Débiteur" : "Créditeur"]);
+  });
+
+  const grandLivreRows = [["Pièce", "Date", "Compte", "Libellé", "Débit", "Crédit"]];
+  allJournal.filter(e => e.exercice_id === selectedExerciceId).forEach(e => {
+    const dateStr = formatDate(e.date);
+    (e.lines || []).forEach(l => {
+      grandLivreRows.push([e.numero_piece, dateStr, l.compte, e.libelle, l.debit || 0, l.credit || 0]);
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(balanceRows), "Balance");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(grandLivreRows), "Grand Livre");
+  XLSX.writeFile(wb, `Comptabilite_OleeDucks_${cache.exercice ? cache.exercice.annee : ""}.xlsx`);
+  toast("Export Excel généré ✓");
+}
+
+// ---------------------------------------------------------------------
+// Partage / impression des états financiers en PDF (jsPDF, via CDN)
+// ---------------------------------------------------------------------
+async function partagerEtatsPDF() {
+  if (typeof window.jspdf === "undefined") { toast("Bibliothèque PDF non chargée — vérifiez votre connexion"); return; }
+  const cache = window.__oleeducksEtatsCache;
+  if (!cache) { toast("Aucune donnée à partager"); return; }
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF();
+  let y = 18;
+  pdf.setFontSize(16); pdf.text("Olee Ducks — États financiers", 14, y); y += 8;
+  pdf.setFontSize(10); pdf.text(`Exercice ${cache.exercice ? cache.exercice.annee : ""} — généré le ${new Date().toLocaleDateString("fr-FR")}`, 14, y); y += 10;
+
+  pdf.setFontSize(13); pdf.text("Compte de résultat", 14, y); y += 7;
+  pdf.setFontSize(10);
+  pdf.text(`Total produits : ${formatFCFA(cache.totalProduits)}`, 14, y); y += 6;
+  pdf.text(`Total charges : ${formatFCFA(cache.totalCharges)}`, 14, y); y += 6;
+  pdf.text(`Résultat net : ${formatFCFA(cache.resultatNet)}`, 14, y); y += 10;
+
+  pdf.setFontSize(13); pdf.text("Bilan", 14, y); y += 7;
+  pdf.setFontSize(10);
+  pdf.text(`Total Actif : ${formatFCFA(cache.totalActif)}`, 14, y); y += 6;
+  pdf.text(`Total Passif (dont résultat) : ${formatFCFA(cache.totalPassif)}`, 14, y); y += 10;
+
+  pdf.setFontSize(13); pdf.text("Balance des comptes", 14, y); y += 7;
+  pdf.setFontSize(9);
+  cache.comptesUtilises.sort().forEach(num => {
+    if (y > 280) { pdf.addPage(); y = 18; }
+    const acc = cache.allAccounts.find(a => a.numero === num);
+    const s = cache.soldes[num];
+    const solde = s.debit - s.credit;
+    pdf.text(`${num} — ${acc ? acc.libelle : "?"} : ${formatFCFA(Math.abs(solde))} (${solde >= 0 ? "Débiteur" : "Créditeur"})`, 14, y);
+    y += 5.5;
+  });
+
+  const fileName = `Etats_financiers_OleeDucks_${cache.exercice ? cache.exercice.annee : ""}.pdf`;
+  const blob = pdf.output("blob");
+
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], fileName, { type: "application/pdf" })] })) {
+    try {
+      await navigator.share({ files: [new File([blob], fileName, { type: "application/pdf" })], title: "États financiers Olee Ducks" });
+      return;
+    } catch (e) { /* l'utilisateur a peut-être annulé, on retombe sur le téléchargement */ }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("PDF téléchargé ✓");
 }
