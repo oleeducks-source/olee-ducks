@@ -276,6 +276,18 @@
 
     <div id="comptaEtatsWrap" class="hidden">
       <div class="card">
+        <div class="field"><label>Exercice affiché</label><select id="exerciceSelector"></select></div>
+        <div class="field-row">
+          <button class="btn secondary small" id="exportFecBtn" style="flex:1;">Export FEC</button>
+          <button class="btn secondary small" id="exportExcelBtn" style="flex:1;">Export Excel</button>
+        </div>
+        <button class="btn yolk small" id="shareEtatsBtn" style="margin-top:8px;">📤 Partager en PDF</button>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Tableau de bord</h3>
+        <div id="tableauBordCompta"></div>
+      </div>
+      <div class="card">
         <h3 style="font-size:15px; margin-bottom:10px;">Balance des comptes</h3>
         <div id="balanceList"></div>
       </div>
@@ -319,6 +331,9 @@
 
 <div id="modalRoot"></div>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
