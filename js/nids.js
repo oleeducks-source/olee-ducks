@@ -54,7 +54,12 @@ export function initNests() {
     archivedCycles = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderArchives();
     renderStats();
-  }, err => console.error("Erreur lecture archives :", err));
+  }, err => {
+    console.error("Erreur lecture archives :", err);
+    const el = document.getElementById("nidsArchivesList");
+    if (el) el.innerHTML = `<div class="empty-state"><div class="glyph">⚠️</div><p>Erreur de chargement des archives : ${err.code || err.message}.<br>Si le message mentionne un "index", ouvrez la console (F12), un lien pour le créer automatiquement doit y apparaître.</p></div>`;
+    toast("Erreur de chargement des archives (voir console)");
+  });
 
   onSnapshot(query(pontesCol, orderBy("date", "asc")), (snap) => {
     pontesLog = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -261,17 +266,19 @@ function openNestModal(n) {
     openModal(`Nid n° ${n}`, `
       <p class="subtle">Ce nid est libre. Démarrez un nouveau cycle de ponte.</p>
       <div class="spacer-s"></div>
-      <div class="field"><label>Œufs pondus aujourd'hui</label><input type="number" id="fOeufs" value="1" min="1"></div>
+      <div class="field"><label>Date de début de ponte</label><input type="date" id="fPonteDate" value="${todayInputValue()}"></div>
+      <div class="field"><label>Œufs pondus à ce jour</label><input type="number" id="fOeufs" value="1" min="1"></div>
       <button class="btn yolk" id="fStart">Démarrer la ponte</button>
     `, {
       onMount: () => {
         document.getElementById("fStart").addEventListener("click", async () => {
           const initialQte = Number(document.getElementById("fOeufs").value) || 0;
+          const dateDebut = new Date(document.getElementById("fPonteDate").value);
           try {
             const cRef = await addDoc(cyclesCol, {
               nid_numero: n,
               statut: "ponte",
-              date_debut: new Date(),
+              date_debut: dateDebut,
               nombre_oeufs: initialQte,
               date_debut_couvaison: null,
               date_fin: null,
@@ -281,7 +288,7 @@ function openNestModal(n) {
             });
             await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "occupe", cycle_actuel_id: cRef.id });
             await addDoc(pontesCol, {
-              nid_numero: n, cycle_id: cRef.id, date: new Date(),
+              nid_numero: n, cycle_id: cRef.id, date: dateDebut,
               quantite: initialQte, motif: "ponte_initiale",
               par: getUserName() || "Inconnu", createdAt: serverTimestamp()
             });
@@ -306,9 +313,10 @@ function openNestModal(n) {
 
     ${cycle.statut === "ponte" ? `
     <div class="field-row">
-      <div class="field"><label>Ajouter des œufs (relevé du jour)</label><input type="number" id="fAddOeufs" value="1" min="1"></div>
-      <div class="field"><label>Retirer des œufs (correction)</label><input type="number" id="fRemoveOeufs" value="1" min="1" max="${cycle.nombre_oeufs || 0}"></div>
+      <div class="field"><label>Date du relevé</label><input type="date" id="fAddDate" value="${todayInputValue()}"></div>
+      <div class="field"><label>Ajouter des œufs</label><input type="number" id="fAddOeufs" value="1" min="1"></div>
     </div>
+    <div class="field"><label>Retirer des œufs (correction)</label><input type="number" id="fRemoveOeufs" value="1" min="1" max="${cycle.nombre_oeufs || 0}"></div>
     <div class="field-row">
       <button class="btn secondary" id="fAddBtn">Enregistrer la ponte du jour</button>
       <button class="btn secondary" id="fRemoveBtn">Retirer (erreur de saisie)</button>
@@ -328,11 +336,12 @@ function openNestModal(n) {
       const addBtn = document.getElementById("fAddBtn");
       if (addBtn) addBtn.addEventListener("click", async () => {
         const q = Number(document.getElementById("fAddOeufs").value) || 0;
+        const dateReleve = new Date(document.getElementById("fAddDate").value);
         try {
           const cRef = doc(db, "nest_cycles", cycle.id);
           await updateDoc(cRef, { nombre_oeufs: increment(q) });
           await addDoc(pontesCol, {
-            nid_numero: n, cycle_id: cycle.id, date: new Date(),
+            nid_numero: n, cycle_id: cycle.id, date: dateReleve,
             quantite: q, motif: "releve_quotidien",
             par: getUserName() || "Inconnu", createdAt: serverTimestamp()
           });
