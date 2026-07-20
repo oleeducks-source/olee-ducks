@@ -146,6 +146,7 @@ export function initComptabilite() {
       .filter(t => t.statut_comptable !== "valide");
     ensureExercisesExist(snap.docs.map(d => d.data().date)).catch(e => console.error("Erreur init exercices :", e));
     renderBrouillonsList();
+    renderNettoyageCard();
   }, err => console.error("Erreur lecture transactions :", err));
 
   document.getElementById("openComptaBtn").addEventListener("click", () => {
@@ -425,9 +426,62 @@ export async function reverserEcriture(ecritureId) {
 }
 
 // ---------------------------------------------------------------------
+// Nettoyage des paires annulée/correction issues du bug historique de
+// rattachement d'exercice (corrigé) — supprime uniquement les paires
+// dont la transaction source a depuis été revalidée proprement ailleurs
+// (donc ces paires ne servent plus à rien, juste du bruit visuel).
+// ---------------------------------------------------------------------
+function pairesNettoyables() {
+  const paires = [];
+  allJournal.forEach(e => {
+    if (!e.contre_passation_de) return; // e = écriture de correction
+    const original = allJournal.find(o => o.id === e.contre_passation_de);
+    if (!original) return;
+    let transactionRevalideeAilleurs = true;
+    if (e.source_transaction_id) {
+      const tx = allBrouillons.find(b => b.id === e.source_transaction_id);
+      // Si la transaction est encore en brouillon (pas revalidée), on ne
+      // touche pas à la paire : elle reste l'unique trace de l'historique.
+      if (tx) transactionRevalideeAilleurs = false;
+    }
+    paires.push({ original, correction: e, transactionRevalideeAilleurs });
+  });
+  return paires;
+}
+
+function renderNettoyageCard() {
+  const el = document.getElementById("nettoyageCard");
+  if (!el) return;
+  const paires = pairesNettoyables();
+  const nettoyables = paires.filter(p => p.transactionRevalideeAilleurs);
+  if (!paires.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <h3 style="font-size:14px; margin-bottom:6px;">🧹 Nettoyage</h3>
+    <p class="subtle" style="margin:0 0 10px;">
+      ${paires.length} paire(s) "annulée / correction" détectée(s), dont <strong>${nettoyables.length}</strong> déjà revalidée(s) proprement ailleurs — elles ne servent plus qu'à encombrer le journal.
+    </p>
+    ${nettoyables.length ? `<button class="btn danger small" id="nettoyerBtn">Supprimer définitivement ces ${nettoyables.length} paire(s)</button>` : `<p class="subtle">Aucune paire nettoyable pour l'instant (les autres sont encore la seule trace d'une transaction non revalidée).</p>`}
+  `;
+  const btn = document.getElementById("nettoyerBtn");
+  if (btn) btn.addEventListener("click", async () => {
+    if (!confirm(`Supprimer définitivement ${nettoyables.length} paire(s) d'écritures "annulée/correction" ? Cette action est irréversible. Les transactions elles-mêmes ne sont pas touchées — seules ces écritures devenues inutiles disparaissent du journal.`)) return;
+    try {
+      const batch = writeBatch(db);
+      nettoyables.forEach(p => {
+        batch.delete(doc(db, "journal_ecritures", p.original.id));
+        batch.delete(doc(db, "journal_ecritures", p.correction.id));
+      });
+      await batch.commit();
+      toast(`${nettoyables.length} paire(s) supprimée(s) ✓`);
+    } catch (e) { toast("Erreur : " + e.message); }
+  });
+}
+
+// ---------------------------------------------------------------------
 // Rendu : journal des écritures
 // ---------------------------------------------------------------------
 function renderJournalList() {
+  renderNettoyageCard();
   const el = document.getElementById("journalList");
   if (!el) return;
   if (!allJournal.length) {
