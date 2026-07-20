@@ -311,17 +311,18 @@ function openNestModal(n) {
     ${cycle.statut === "couvaison" ? `<div class="row"><div class="row-main"><span class="row-title">Couvaison depuis</span></div><span class="row-value">${joursDepuisCouvaison} j / ${DUREE_INCUBATION_JOURS} j</span></div>` : ""}
     <div class="spacer-m"></div>
 
-    ${cycle.statut === "ponte" ? `
     <div class="field-row">
       <div class="field"><label>Date du relevé</label><input type="date" id="fAddDate" value="${todayInputValue()}"></div>
       <div class="field"><label>Ajouter des œufs</label><input type="number" id="fAddOeufs" value="1" min="1"></div>
     </div>
-    <div class="field"><label>Retirer des œufs (correction)</label><input type="number" id="fRemoveOeufs" value="1" min="1" max="${cycle.nombre_oeufs || 0}"></div>
+    <div class="field"><label>Retirer des œufs (correction, même pendant la couvaison)</label><input type="number" id="fRemoveOeufs" value="1" min="1" max="${cycle.nombre_oeufs || 0}"></div>
     <div class="field-row">
-      <button class="btn secondary" id="fAddBtn">Enregistrer la ponte du jour</button>
+      <button class="btn secondary" id="fAddBtn">Enregistrer un ajout</button>
       <button class="btn secondary" id="fRemoveBtn">Retirer (erreur de saisie)</button>
     </div>
     <div class="spacer-s"></div>
+
+    ${cycle.statut === "ponte" ? `
     <button class="btn yolk" id="fToCouvaison">Démarrer la couvaison</button>
     ` : `
     <div class="field"><label>Nombre de canetons éclos</label><input type="number" id="fEclos" value="0" min="0"></div>
