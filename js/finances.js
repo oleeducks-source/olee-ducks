@@ -188,6 +188,45 @@ export function openAddFinanceModal(defaultType = "recette") {
   });
 }
 
+function renderPieceJointeZone(transactionId, url, nom) {
+  const zone = document.getElementById("pieceJointeZone");
+  if (!zone) return;
+  if (url) {
+    zone.innerHTML = `
+      <a href="${url}" target="_blank" rel="noopener" class="btn secondary" style="margin-bottom:8px; text-decoration:none; display:block; text-align:center;">📎 Voir le reçu — ${escapeHtml(nom || "")}</a>
+      <button class="btn danger small" id="fRecuRemove">Retirer la pièce jointe</button>
+    `;
+    document.getElementById("fRecuRemove").addEventListener("click", async () => {
+      if (!confirm("Retirer cette pièce jointe ? (le fichier restera sur Google Drive, seul le lien est retiré ici)")) return;
+      try {
+        await retirerRecu(transactionId);
+        toast("Pièce jointe retirée");
+        renderPieceJointeZone(transactionId, null, null);
+      } catch (e) { toast("Erreur : " + e.message); }
+    });
+  } else {
+    zone.innerHTML = `
+      <label class="btn secondary" style="display:block; text-align:center; cursor:pointer;">
+        📎 Joindre un reçu (photo ou PDF)
+        <input type="file" id="fRecuInput" accept="image/*,application/pdf" style="display:none;">
+      </label>
+    `;
+    document.getElementById("fRecuInput").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      zone.innerHTML = `<p class="subtle">⏳ Envoi en cours…</p>`;
+      try {
+        const uploadedUrl = await attacherRecu(transactionId, file);
+        toast("Reçu attaché ✓");
+        renderPieceJointeZone(transactionId, uploadedUrl, file.name);
+      } catch (err) {
+        toast("Erreur : " + err.message);
+        renderPieceJointeZone(transactionId, null, null);
+      }
+    });
+  }
+}
+
 function openTxDetail(t) {
   const cats = t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE;
   const estValidee = t.statut_comptable === "valide";
@@ -200,42 +239,14 @@ function openTxDetail(t) {
     ${t.prix_unitaire ? `<div class="row"><div class="row-main"><span class="row-title">Prix unitaire</span></div><span class="row-value">${formatFCFA(t.prix_unitaire)}</span></div>` : ""}
     ${t.description ? `<p class="subtle" style="margin-top:10px;">${escapeHtml(t.description)}</p>` : ""}
     <div class="spacer-m"></div>
-    <div id="pieceJointeZone">
-      ${t.piece_jointe_url ? `
-        <a href="${t.piece_jointe_url}" target="_blank" rel="noopener" class="btn secondary" style="margin-bottom:8px; text-decoration:none;">📎 Voir le reçu — ${escapeHtml(t.piece_jointe_nom || "")}</a>
-        <button class="btn danger small" id="fRecuRemove">Retirer la pièce jointe</button>
-      ` : `
-        <label class="btn secondary" style="display:block; text-align:center; cursor:pointer;">
-          📎 Joindre un reçu (photo ou PDF)
-          <input type="file" id="fRecuInput" accept="image/*,application/pdf" style="display:none;">
-        </label>
-      `}
-    </div>
+    <div id="pieceJointeZone"></div>
     <div class="spacer-m"></div>
     <button class="btn secondary" id="fTxEdit">✏️ Modifier cette transaction</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="fTxDelete">Supprimer cette transaction</button>
   `, {
     onMount: () => {
-      const recuInput = document.getElementById("fRecuInput");
-      if (recuInput) recuInput.addEventListener("change", async () => {
-        const file = recuInput.files[0];
-        if (!file) return;
-        try {
-          await attacherRecu(t.id, file);
-          toast("Reçu attaché ✓");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-      const recuRemove = document.getElementById("fRecuRemove");
-      if (recuRemove) recuRemove.addEventListener("click", async () => {
-        if (!confirm("Retirer cette pièce jointe ? (le fichier restera sur Google Drive, seul le lien est retiré ici)")) return;
-        try {
-          await retirerRecu(t.id);
-          toast("Pièce jointe retirée");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
+      renderPieceJointeZone(t.id, t.piece_jointe_url, t.piece_jointe_nom);
       document.getElementById("fTxEdit").addEventListener("click", () => openEditTxModal(t));
       document.getElementById("fTxDelete").addEventListener("click", async () => {
         if (!confirm("Supprimer définitivement cette transaction ?")) return;
