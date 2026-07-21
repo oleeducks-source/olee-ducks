@@ -1,181 +1,112 @@
 // =====================================================================
-// MODULE : PIÈCES JOINTES (reçus/factures) via Google Drive
+// MODULE : PIÈCES JOINTES (reçus/factures)
 // =====================================================================
-// Pourquoi Google Drive et pas Firebase Storage : depuis février 2026,
-// Firebase Storage exige le plan payant Blaze (carte bancaire liée),
-// même si l'usage réel reste gratuit. Google Drive offre 15 Go gratuits
-// par compte Google, sans configuration payante, via l'API Drive
-// standard (indépendante de Firebase). Firestore ne stocke que le lien
-// vers le fichier, jamais le fichier lui-même — impact quasi nul sur
-// le quota gratuit Firestore (1 Go).
+// Stockage 100% gratuit et sans dépendance externe : la photo du reçu
+// est compressée dans le navigateur (redimensionnée + réencodée en
+// JPEG), convertie en base64, puis enregistrée directement dans le
+// document de la transaction concernée (collection Firestore
+// "finance_transactions"). Il n'y a plus de fichier séparé, plus de
+// compte Google à connecter, plus de fenêtre popup qui peut être
+// bloquée par le navigateur.
 //
-// Fonctionnement : connexion Google (OAuth, via Google Identity
-// Services) déclenchée uniquement au moment d'un envoi de reçu. Le
-// jeton d'accès est valable ~1h ; au-delà, une reconnexion (silencieuse
-// la plupart du temps) est redemandée automatiquement.
+// Pourquoi pas Firebase Storage : depuis février 2026, Storage exige le
+// plan payant Blaze (carte bancaire liée). Pourquoi pas Google Drive
+// (ancienne version) : nécessitait une connexion OAuth par popup,
+// souvent bloquée sur mobile ("La connexion Google n'a pas abouti").
+//
+// Limite technique : un document Firestore ne peut pas dépasser 1 Mo.
+// On vise donc une image compressée de 700 Ko maximum une fois encodée
+// en base64 (largement suffisant pour une photo de reçu lisible), ce
+// qui laisse une confortable marge. Une ferme avec quelques dizaines de
+// reçus par mois reste très loin du 1 Go gratuit du plan Spark.
 // =====================================================================
 import { db } from "./firebase-config.js";
 import { doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { GOOGLE_DRIVE_CLIENT_ID } from "./drive-config.js";
-import { toast } from "./utils.js";
 
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
-const FOLDER_NAME = "Olee Ducks - Reçus";
+const MAX_DATA_URL_BYTES = 700 * 1024; // marge de sécurité sous la limite de 1 Mo/document Firestore
+const START_DIMENSION = 1280; // plus grand côté, en pixels
 
-let tokenClient = null;
-let cachedToken = null; // { access_token, expiresAt }
-let cachedFolderId = localStorage.getItem("oleeducks_drive_folder_id") || null;
-let gisReadyPromise = null;
-
-function ensureGisLoaded() {
-  if (gisReadyPromise) return gisReadyPromise;
-  gisReadyPromise = new Promise((resolve, reject) => {
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-      resolve();
-      return;
-    }
-    const check = setInterval(() => {
-      if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-        clearInterval(check);
-        resolve();
-      }
-    }, 100);
-    setTimeout(() => { clearInterval(check); gisReadyPromise = null; reject(new Error("Google Identity Services non chargé (vérifiez votre connexion)")); }, 8000);
-  });
-  return gisReadyPromise;
-}
-
-// Précharge GIS et initialise le client OAuth dès le démarrage de l'appli
-// (pas au moment du clic) : les navigateurs bloquent silencieusement la
-// fenêtre de connexion Google si elle ne s'ouvre pas quasi instantanément
-// après une action de l'utilisateur — attendre le chargement de GIS à ce
-// moment-là ratait souvent cette fenêtre. En préchargeant, la demande de
-// connexion part immédiatement au clic.
-ensureGisLoaded()
-  .then(() => {
-    if (!GOOGLE_DRIVE_CLIENT_ID.startsWith("REMPLACER") && !tokenClient) {
-      tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_DRIVE_CLIENT_ID,
-        scope: DRIVE_SCOPE,
-        callback: () => {}
-      });
-    }
-  })
-  .catch(() => { /* échec silencieux ici : l'erreur réelle sera montrée au moment du clic si besoin */ });
-
-async function getAccessToken() {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 30000) {
-    return cachedToken.access_token;
-  }
-  if (GOOGLE_DRIVE_CLIENT_ID.startsWith("REMPLACER")) {
-    throw new Error("Google Drive n'est pas configuré (js/drive-config.js contient encore une valeur REMPLACER_...)");
-  }
-  await ensureGisLoaded();
-  if (!tokenClient) {
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_DRIVE_CLIENT_ID,
-      scope: DRIVE_SCOPE,
-      callback: () => {}
-    });
-  }
+function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error("La connexion Google n'a pas abouti après 20s. La fenêtre de connexion a peut-être été bloquée par le navigateur — vérifiez qu'aucun bloqueur de popup n'est actif pour ce site, puis réessayez."));
-    }, 20000);
-    tokenClient.callback = (resp) => {
-      clearTimeout(timeout);
-      if (resp.error) { reject(new Error("Connexion Google refusée ou annulée : " + resp.error)); return; }
-      cachedToken = { access_token: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3500) * 1000 };
-      resolve(resp.access_token);
-    };
-    try {
-      tokenClient.requestAccessToken({ prompt: cachedToken ? "" : "consent" });
-    } catch (e) {
-      clearTimeout(timeout);
-      reject(new Error("Impossible d'ouvrir la fenêtre de connexion Google : " + e.message));
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Lecture du fichier impossible"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Image illisible ou corrompue"));
+    img.src = dataUrl;
+  });
+}
+
+// Redimensionne et compresse une photo en JPEG jusqu'à tenir sous la
+// limite de taille : réduit d'abord la qualité, puis les dimensions si
+// nécessaire, en plusieurs passes.
+async function compressImage(file) {
+  const original = await readFileAsDataUrl(file);
+  const img = await loadImage(original);
+
+  let dimension = START_DIMENSION;
+  for (let pass = 0; pass < 6; pass++) {
+    const scale = Math.min(1, dimension / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+
+    for (let quality = 0.75; quality >= 0.3; quality -= 0.15) {
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrl.length <= MAX_DATA_URL_BYTES) return dataUrl;
     }
-  });
-}
-
-async function driveFetch(url, token, options = {}) {
-  const res = await fetch(url, {
-    ...options,
-    headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Erreur Google Drive (${res.status}) : ${body.slice(0, 200)}`);
+    dimension = Math.round(dimension * 0.7); // image encore trop lourde : on réessaie plus petit
   }
-  return res.json();
-}
-
-async function ensureFolder(token) {
-  if (cachedFolderId) return cachedFolderId;
-  const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const search = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, token);
-  if (search.files && search.files.length) {
-    cachedFolderId = search.files[0].id;
-  } else {
-    const created = await driveFetch("https://www.googleapis.com/drive/v3/files", token, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: FOLDER_NAME, mimeType: "application/vnd.google-apps.folder" })
-    });
-    cachedFolderId = created.id;
-  }
-  localStorage.setItem("oleeducks_drive_folder_id", cachedFolderId);
-  return cachedFolderId;
-}
-
-async function uploadFileToDrive(token, folderId, file) {
-  const metadata = { name: `${Date.now()}_${file.name}`, parents: [folderId] };
-  const boundary = "oleeducks_boundary_" + Math.random().toString(36).slice(2);
-  const fileBytes = await file.arrayBuffer();
-
-  const encoder = new TextEncoder();
-  const preamble = encoder.encode(
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-    `--${boundary}\r\nContent-Type: ${file.type || "application/octet-stream"}\r\n\r\n`
-  );
-  const closing = encoder.encode(`\r\n--${boundary}--`);
-  const body = new Blob([preamble, fileBytes, closing]);
-
-  const created = await driveFetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink",
-    token,
-    { method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body }
-  );
-
-  // Rend le fichier consultable par toute l'équipe via le lien (pas besoin
-  // que chaque personne ait ses propres droits Drive).
-  await driveFetch(`https://www.googleapis.com/drive/v3/files/${created.id}/permissions`, token, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "reader", type: "anyone" })
-  }).catch(() => { /* si ça échoue, le fichier reste privé au compte connecté — non bloquant */ });
-
-  return created;
+  throw new Error("Impossible de compresser cette photo sous la taille limite (1 Mo). Essayez une photo moins détaillée.");
 }
 
 // ---------------------------------------------------------------------
 // API publique utilisée par finances.js
 // ---------------------------------------------------------------------
 export async function attacherRecu(transactionId, file) {
-  if (file.size > 15 * 1024 * 1024) throw new Error("Fichier trop volumineux (limite 15 Mo)");
-  toast("Connexion à Google Drive…");
-  const token = await getAccessToken();
-  const folderId = await ensureFolder(token);
-  toast("Envoi du reçu…");
-  const uploaded = await uploadFileToDrive(token, folderId, file);
-  const url = uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`;
+  if (file.size > 25 * 1024 * 1024) throw new Error("Fichier trop volumineux (limite 25 Mo en entrée)");
+
+  const type = file.type || "application/octet-stream";
+  let dataUrl;
+
+  if (type.startsWith("image/")) {
+    dataUrl = await compressImage(file);
+  } else if (type === "application/pdf") {
+    if (file.size > MAX_DATA_URL_BYTES) {
+      throw new Error("Ce PDF est trop volumineux pour être enregistré (limite ~700 Ko). Préférez une photo du reçu plutôt qu'un PDF scanné.");
+    }
+    dataUrl = await readFileAsDataUrl(file);
+  } else {
+    throw new Error("Format non pris en charge — utilisez une photo (JPEG/PNG) ou un PDF");
+  }
+
   await updateDoc(doc(db, "finance_transactions", transactionId), {
-    piece_jointe_url: url, piece_jointe_nom: file.name, piece_jointe_id: uploaded.id
+    piece_jointe_data: dataUrl,
+    piece_jointe_nom: file.name,
+    piece_jointe_type: type,
+    // Champs de l'ancien système (Google Drive), effacés lors d'un nouvel envoi.
+    piece_jointe_url: null,
+    piece_jointe_id: null
   });
-  return url;
+  return dataUrl;
 }
 
 export async function retirerRecu(transactionId) {
   await updateDoc(doc(db, "finance_transactions", transactionId), {
-    piece_jointe_url: null, piece_jointe_nom: null, piece_jointe_id: null
+    piece_jointe_data: null,
+    piece_jointe_nom: null,
+    piece_jointe_type: null,
+    piece_jointe_url: null,
+    piece_jointe_id: null
   });
 }
