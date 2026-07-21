@@ -7,6 +7,15 @@ export function formatFCFA(n) {
   return v.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " FCFA";
 }
 
+// Variante pour les PDF (jsPDF) : toLocaleString("fr-FR") insère une
+// espace fine insécable (U+202F) comme séparateur de milliers. Les
+// polices standard de jsPDF (Helvetica, encodage WinAnsi) ne savent pas
+// afficher ce caractère et produisent un texte corrompu ("&2&9 /&0&0&0&
+// &F&C&F&A" au lieu de "29 000 FCFA"). On utilise ici une espace normale.
+export function formatFCFAPdf(n) {
+  return formatFCFA(n).replace(/[\u202F\u00A0]/g, " ");
+}
+
 export function formatDate(d) {
   if (!d) return "—";
   const date = d.toDate ? d.toDate() : new Date(d);
