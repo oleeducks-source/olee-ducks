@@ -19,6 +19,7 @@ const finCol = collection(db, "finance_transactions");
 let allTx = [];
 let filterPeriode = "30";
 let filterType = "all";
+let searchQuery = "";
 
 const CATS_RECETTE = { vente_canards: "Vente de canards", vente_oeufs: "Vente d'œufs", vente_canetons: "Vente de canetons", autre: "Autre recette" };
 const CATS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", achat_animaux: "Achat d'animaux", autre: "Autre dépense" };
@@ -45,6 +46,10 @@ export function initFinances() {
       renderAll();
     });
   });
+  document.getElementById("finSearch")?.addEventListener("input", (e) => {
+    searchQuery = e.target.value.trim().toLowerCase();
+    renderAll();
+  });
 }
 
 function filteredTx() {
@@ -58,6 +63,13 @@ function filteredTx() {
     });
   }
   if (filterType !== "all") items = items.filter(t => t.type === filterType);
+  if (searchQuery) {
+    items = items.filter(t => {
+      const cats = t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE;
+      const haystack = [cats[t.categorie] || t.categorie, t.description, t.cree_par, String(t.montant)].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }
   return items;
 }
 
