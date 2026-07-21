@@ -12,7 +12,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query, increment
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
 
 const itemsCol = collection(db, "stock_items");
 const movCol = collection(db, "stock_mouvements");
@@ -277,28 +277,57 @@ function renderFormulationsList() {
 
 let formRowCounter = 0;
 
-function formulationRowHtml(idx) {
+function formulationRowHtml(idx, prefill = null) {
+  const nom = prefill ? escapeHtml(prefill.ingredient || "") : "";
+  const pu = prefill ? Number(prefill.prix_unitaire) || 0 : 0;
+  const qte = prefill ? Number(prefill.quantite_kg) || 0 : 0;
   return `
     <div class="row" style="border:none; padding:6px 0; align-items:flex-end; gap:6px;" data-row="${idx}">
-      <div class="field" style="flex:2; margin-bottom:0;"><label style="font-size:11px;">${idx === 0 ? "Ingrédient" : ""}</label><input type="text" class="fLigneNom" placeholder="ex : Maïs concassé"></div>
-      <div class="field" style="flex:1; margin-bottom:0;"><label style="font-size:11px;">${idx === 0 ? "FCFA/kg" : ""}</label><input type="number" class="fLignePu" min="0" value="0"></div>
-      <div class="field" style="flex:1; margin-bottom:0;"><label style="font-size:11px;">${idx === 0 ? "Kg" : ""}</label><input type="number" class="fLigneQte" min="0" value="0"></div>
+      <div class="field" style="flex:2; margin-bottom:0;"><label style="font-size:11px;">${idx === 0 ? "Ingrédient" : ""}</label><input type="text" class="fLigneNom" placeholder="ex : Maïs concassé" value="${nom}"></div>
+      <div class="field" style="flex:1; margin-bottom:0;"><label style="font-size:11px;">${idx === 0 ? "FCFA/kg" : ""}</label><input type="number" class="fLignePu" min="0" value="${pu}"></div>
+      <div class="field" style="flex:1; margin-bottom:0;"><label style="font-size:11px;">${idx === 0 ? "Kg" : ""}</label><input type="number" class="fLigneQte" min="0" value="${qte}"></div>
       <button class="btn danger small fLigneDel" type="button" style="margin-bottom:1px;">✕</button>
     </div>
     <div class="row-sub fLigneInfo" style="padding:0 0 6px; text-align:right;">—</div>
   `;
 }
 
-function openFormulationModal() {
+function dateToInputValue(d) {
+  const date = d?.toDate ? d.toDate() : new Date(d);
+  const off = date.getTimezoneOffset();
+  return new Date(date.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+// mode: "new" (par défaut), "edit" (modifie le document existant, ne
+// touche jamais aux dépenses/mouvements de stock déjà créés lors de
+// l'enregistrement initial) ou "duplicate" (préremplit un nouveau
+// formulaire à partir d'une formulation existante, sans écraser celle-ci).
+function openFormulationModal(existing = null, mode = "new") {
   formRowCounter = 0;
+  const isEdit = mode === "edit";
+  const isDuplicate = mode === "duplicate";
+  const titre = isEdit ? "Modifier la formulation" : isDuplicate ? "Dupliquer la formulation" : "Nouvelle formulation";
+  const nomDefaut = isDuplicate ? `${existing.nom} (copie)` : (existing ? existing.nom : "");
+  const dateDefaut = existing && isEdit ? dateToInputValue(existing.date) : todayInputValue();
+  const mainOeuvreDefaut = existing ? Number(existing.main_oeuvre) || 0 : 0;
+
+  const optionsHtml = isEdit ? `
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <p class="subtle" style="margin:0;">ℹ️ Modifier une formulation ne recrée pas la dépense ni le mouvement de stock déjà enregistrés lors de sa création initiale.</p>
+    </div>
+  ` : `
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkFinance" style="width:auto;" checked><label style="margin:0;">Enregistrer aussi la dépense correspondante dans Finances</label></div>
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkStock" style="width:auto;" checked><label style="margin:0;">Ajouter la quantité produite au stock d'aliments</label></div>
+  `;
+
   const body = `
-    <div class="field"><label>Nom de la formulation</label><input type="text" id="fFormNom" placeholder="ex : Formule Croissance"></div>
-    <div class="field"><label>Date</label><input type="date" id="fFormDate" value="${todayInputValue()}"></div>
+    <div class="field"><label>Nom de la formulation</label><input type="text" id="fFormNom" placeholder="ex : Formule Croissance" value="${escapeHtml(nomDefaut)}"></div>
+    <div class="field"><label>Date</label><input type="date" id="fFormDate" value="${dateDefaut}"></div>
     <div class="spacer-s"></div>
     <div id="fFormLignes"></div>
     <button class="btn secondary small" id="fFormAddLigne" type="button">+ Ajouter un ingrédient</button>
     <div class="spacer-m"></div>
-    <div class="field"><label>Main d'œuvre (fabrication/mélange, FCFA)</label><input type="number" id="fFormMainOeuvre" min="0" value="0"></div>
+    <div class="field"><label>Main d'œuvre (fabrication/mélange, FCFA)</label><input type="number" id="fFormMainOeuvre" min="0" value="${mainOeuvreDefaut}"></div>
     <div class="spacer-m"></div>
     <div class="card" style="background:var(--sage-100); border:none;">
       <div class="row"><div class="row-main"><span class="row-title">Total matières premières</span></div><span class="row-value" id="fFormTotalMatieres">0 FCFA</span></div>
@@ -307,17 +336,16 @@ function openFormulationModal() {
       <div class="row"><div class="row-main"><span class="row-title">Prix de revient / kg</span></div><span class="row-value pos" id="fFormPrixKg">0 FCFA</span></div>
     </div>
     <div class="spacer-m"></div>
-    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkFinance" style="width:auto;" checked><label style="margin:0;">Enregistrer aussi la dépense correspondante dans Finances</label></div>
-    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkStock" style="width:auto;" checked><label style="margin:0;">Ajouter la quantité produite au stock d'aliments</label></div>
-    <button class="btn yolk" id="fFormSave">Enregistrer la formulation</button>
+    ${optionsHtml}
+    <button class="btn yolk" id="fFormSave">${isEdit ? "Enregistrer les modifications" : "Enregistrer la formulation"}</button>
   `;
-  openModal("Nouvelle formulation", body, {
+  openModal(titre, body, {
     onMount: () => {
       const lignesEl = document.getElementById("fFormLignes");
-      const addRow = () => {
+      const addRow = (prefill = null) => {
         const idx = formRowCounter++;
         const div = document.createElement("div");
-        div.innerHTML = formulationRowHtml(idx);
+        div.innerHTML = formulationRowHtml(idx, prefill);
         while (div.firstChild) lignesEl.appendChild(div.firstChild);
         recalcFormulation();
       };
@@ -332,8 +360,14 @@ function openFormulationModal() {
       });
       lignesEl.addEventListener("input", recalcFormulation);
       document.getElementById("fFormMainOeuvre").addEventListener("input", recalcFormulation);
-      document.getElementById("fFormAddLigne").addEventListener("click", addRow);
-      addRow(); addRow(); addRow();
+      document.getElementById("fFormAddLigne").addEventListener("click", () => addRow());
+
+      if (existing && (existing.lignes || []).length) {
+        existing.lignes.forEach(l => addRow(l));
+      } else {
+        addRow(); addRow(); addRow();
+      }
+      recalcFormulation();
 
       document.getElementById("fFormSave").addEventListener("click", async () => {
         const nom = document.getElementById("fFormNom").value.trim();
@@ -346,6 +380,18 @@ function openFormulationModal() {
         const dateVal = new Date(document.getElementById("fFormDate").value);
 
         try {
+          if (isEdit) {
+            await updateDoc(doc(db, "formulations", existing.id), {
+              nom, date: dateVal, lignes, main_oeuvre: mainOeuvre,
+              total_matieres: totalMatieres, total_kg: totalKg,
+              total_general: totalGeneral, prix_revient_kg: prixRevientKg,
+              modifie_par: getUserName() || "Inconnu", modifie_le: serverTimestamp()
+            });
+            toast("Formulation modifiée ✓");
+            closeModal();
+            return;
+          }
+
           await addDoc(formulationsCol, {
             nom, date: dateVal, lignes, main_oeuvre: mainOeuvre,
             total_matieres: totalMatieres, total_kg: totalKg,
@@ -362,14 +408,14 @@ function openFormulationModal() {
           }
 
           if (document.getElementById("fFormLinkStock").checked) {
-            const existing = allItems.find(i => i.nom.toLowerCase() === nom.toLowerCase());
-            if (existing) {
+            const existingItem = allItems.find(i => i.nom.toLowerCase() === nom.toLowerCase());
+            if (existingItem) {
               await addDoc(movCol, {
-                item_id: existing.id, type_mouvement: "entree", quantite: totalKg, date: dateVal,
+                item_id: existingItem.id, type_mouvement: "entree", quantite: totalKg, date: dateVal,
                 motif: "formulation", cout_total: totalGeneral,
                 cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
               });
-              await updateDoc(doc(db, "stock_items", existing.id), {
+              await updateDoc(doc(db, "stock_items", existingItem.id), {
                 quantite_actuelle: increment(totalKg),
                 cout_unitaire_moyen: Math.round(prixRevientKg)
               });
@@ -435,28 +481,41 @@ function recalcFormulation() {
 }
 
 function openFormulationDetail(f) {
+  const totalKg = f.total_kg || 0;
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Date</span></div><span class="row-value">${formatDate(f.date)}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Total kg</span></div><span class="row-value">${(f.total_kg || 0).toFixed(1)} kg</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">Total kg</span></div><span class="row-value">${totalKg.toFixed(1)} kg</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Main d'œuvre</span></div><span class="row-value">${formatFCFA(f.main_oeuvre)}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Total général</span></div><span class="row-value">${formatFCFA(f.total_general)}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Prix de revient / kg</span></div><span class="row-value pos">${formatFCFA(Math.round(f.prix_revient_kg))}</span></div>
     <div class="spacer-m"></div>
     <h3 style="font-size:13.5px; margin-bottom:6px;">Ingrédients</h3>
-    ${(f.lignes || []).map(l => `
+    ${(f.lignes || []).map(l => {
+      const pct = totalKg ? (Number(l.quantite_kg) / totalKg) * 100 : 0;
+      return `
       <div class="row">
-        <div class="row-main"><span class="row-title">${escapeHtml(l.ingredient)}</span><span class="row-sub">${l.quantite_kg} kg × ${formatFCFA(l.prix_unitaire)}</span></div>
+        <div class="row-main"><span class="row-title">${escapeHtml(l.ingredient)}</span><span class="row-sub">${l.quantite_kg} kg × ${formatFCFA(l.prix_unitaire)} · ${pct.toFixed(1)}% du mélange</span></div>
         <span class="row-value">${formatFCFA(l.cout_total)}</span>
-      </div>
-    `).join("")}
+      </div>`;
+    }).join("")}
+    <div class="row" style="border-top:2px solid var(--line); margin-top:2px; padding-top:12px;">
+      <div class="row-main"><span class="row-title">Total (${totalKg.toFixed(1)} kg · 100%)</span></div>
+      <span class="row-value" style="font-weight:700;">${formatFCFA(f.total_matieres)}</span>
+    </div>
     <div class="spacer-m"></div>
     <button class="btn secondary" id="fFormPdf">📤 Exporter en PDF</button>
+    <div class="spacer-s"></div>
+    <button class="btn secondary" id="fFormEdit">✏️ Modifier</button>
+    <div class="spacer-s"></div>
+    <button class="btn secondary" id="fFormDuplicate">📄 Dupliquer</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="fFormDelete">Supprimer cette formulation</button>
   `;
   openModal(f.nom, body, {
     onMount: () => {
       document.getElementById("fFormPdf").addEventListener("click", () => exporterFormulationPDF(f));
+      document.getElementById("fFormEdit").addEventListener("click", () => openFormulationModal(f, "edit"));
+      document.getElementById("fFormDuplicate").addEventListener("click", () => openFormulationModal(f, "duplicate"));
       document.getElementById("fFormDelete").addEventListener("click", async () => {
         if (!confirm("Supprimer définitivement cette formulation ?")) return;
         try {
@@ -473,35 +532,136 @@ function exporterFormulationPDF(f) {
   if (typeof window.jspdf === "undefined") { toast("Bibliothèque PDF non chargée — vérifiez votre connexion"); return; }
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
-  let y = 18;
-  pdf.setFontSize(16); pdf.text("FACTURE DE FORMULATION ALIMENTAIRE", 14, y); y += 6;
-  pdf.setFontSize(11); pdf.text(f.nom, 14, y); y += 10;
-  pdf.setFontSize(10);
-  pdf.text(`Date : ${formatDate(f.date)}`, 14, y);
-  pdf.text(`Client : Olee Ferme`, 110, y); y += 10;
 
-  pdf.setFontSize(9);
-  pdf.text("Ingrédient", 14, y); pdf.text("PU", 90, y); pdf.text("Qté (kg)", 115, y); pdf.text("%", 145, y); pdf.text("Total", 165, y);
-  y += 3; pdf.line(14, y, 196, y); y += 5;
+  // Palette identique à celle de l'application (voir css/style.css)
+  const pond950 = [14, 46, 44];
+  const yolk500 = [232, 169, 58];
+  const sage100 = [234, 240, 230];
+  const ink900 = [19, 35, 32];
+  const inkMuted = [107, 122, 117];
+  const line = [216, 226, 217];
+
+  const fcfa = formatFCFAPdf;
+  const pageW = 210, marginX = 14;
+  const contentW = pageW - marginX * 2;
+  const rightEdge = marginX + contentW;
   const totalKg = f.total_kg || 1;
-  (f.lignes || []).forEach(l => {
-    if (y > 270) { pdf.addPage(); y = 18; }
-    const pct = (l.quantite_kg / totalKg) * 100;
-    pdf.text(String(l.ingredient).slice(0, 30), 14, y);
-    pdf.text(formatFCFA(l.prix_unitaire), 90, y);
-    pdf.text(String(l.quantite_kg), 115, y);
-    pdf.text(pct.toFixed(1) + "%", 145, y);
-    pdf.text(formatFCFA(l.cout_total), 165, y);
-    y += 6;
+
+  // Colonnes du tableau (bords droits de chaque colonne numérique)
+  const colIng = marginX + 2;
+  const colPuEnd = marginX + 112;
+  const colQteEnd = marginX + 138;
+  const colPctEnd = marginX + 160;
+
+  // ---------- En-tête ----------
+  pdf.setFillColor(...pond950);
+  pdf.rect(0, 0, pageW, 34, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8.5);
+  pdf.text("OLEE DUCKS", marginX, 11);
+  pdf.setFontSize(17);
+  pdf.text("Facture de formulation alimentaire", marginX, 21);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(11);
+  pdf.text(f.nom, marginX, 29);
+
+  // ---------- Bloc informations ----------
+  let y = 44;
+  pdf.setFontSize(9.5);
+  const labelX1 = marginX, valX1 = marginX + 26;
+  const labelX2 = marginX + contentW / 2, valX2 = labelX2 + 26;
+
+  pdf.setFont("helvetica", "bold"); pdf.setTextColor(...inkMuted); pdf.text("DATE", labelX1, y);
+  pdf.setFont("helvetica", "normal"); pdf.setTextColor(...ink900); pdf.text(formatDate(f.date), valX1, y);
+  pdf.setFont("helvetica", "bold"); pdf.setTextColor(...inkMuted); pdf.text("CLIENT", labelX2, y);
+  pdf.setFont("helvetica", "normal"); pdf.setTextColor(...ink900); pdf.text("Olee Ferme", valX2, y);
+  y += 7;
+  pdf.setFont("helvetica", "bold"); pdf.setTextColor(...inkMuted); pdf.text("RÉFÉRENCE", labelX1, y);
+  pdf.setFont("helvetica", "normal"); pdf.setTextColor(...ink900); pdf.text(f.nom, valX1, y);
+  pdf.setFont("helvetica", "bold"); pdf.setTextColor(...inkMuted); pdf.text("POIDS TOTAL", labelX2, y);
+  pdf.setFont("helvetica", "normal"); pdf.setTextColor(...ink900); pdf.text(`${totalKg.toFixed(1)} kg`, valX2, y);
+  y += 9;
+  pdf.setDrawColor(...line);
+  pdf.line(marginX, y, rightEdge, y);
+  y += 8;
+
+  // ---------- Tableau des ingrédients ----------
+  const rowH = 8;
+  const drawTableHeader = () => {
+    pdf.setFillColor(...pond950);
+    pdf.rect(marginX, y, contentW, 9, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont("helvetica", "bold"); pdf.setFontSize(8.5);
+    pdf.text("INGRÉDIENT", colIng, y + 6);
+    pdf.text("PU/KG", colPuEnd, y + 6, { align: "right" });
+    pdf.text("QTÉ (KG)", colQteEnd, y + 6, { align: "right" });
+    pdf.text("PART", colPctEnd, y + 6, { align: "right" });
+    pdf.text("TOTAL", rightEdge - 2, y + 6, { align: "right" });
+    y += 9;
+  };
+  drawTableHeader();
+
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+  (f.lignes || []).forEach((l, i) => {
+    if (y > 262) { pdf.addPage(); y = 18; drawTableHeader(); pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); }
+    if (i % 2 === 1) { pdf.setFillColor(...sage100); pdf.rect(marginX, y, contentW, rowH, "F"); }
+    const pct = (Number(l.quantite_kg) / totalKg) * 100;
+    pdf.setTextColor(...ink900);
+    pdf.text(String(l.ingredient).slice(0, 32), colIng, y + 5.5);
+    pdf.text(fcfa(l.prix_unitaire), colPuEnd, y + 5.5, { align: "right" });
+    pdf.text(String(l.quantite_kg), colQteEnd, y + 5.5, { align: "right" });
+    pdf.text(pct.toFixed(1) + "%", colPctEnd, y + 5.5, { align: "right" });
+    pdf.text(fcfa(l.cout_total), rightEdge - 2, y + 5.5, { align: "right" });
+    y += rowH;
   });
-  y += 4; pdf.line(14, y, 196, y); y += 8;
-  pdf.setFontSize(10);
-  pdf.text(`Total matières premières : ${formatFCFA(f.total_matieres)}`, 14, y); y += 6;
-  pdf.text(`Main d'œuvre : ${formatFCFA(f.main_oeuvre)}`, 14, y); y += 6;
-  pdf.setFontSize(12);
-  pdf.text(`TOTAL GÉNÉRAL À PAYER : ${formatFCFA(f.total_general)}`, 14, y); y += 8;
-  pdf.setFontSize(10);
-  pdf.text(`Prix de revient moyen au kg : ${formatFCFA(Math.round(f.prix_revient_kg))} / kg`, 14, y);
+
+  // Ligne total matières premières (mise en avant)
+  pdf.setFillColor(...sage100);
+  pdf.rect(marginX, y, contentW, rowH + 1, "F");
+  pdf.setDrawColor(...pond950);
+  pdf.setLineWidth(0.4);
+  pdf.line(marginX, y, rightEdge, y);
+  pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(...pond950);
+  pdf.text("TOTAL MATIÈRES PREMIÈRES", colIng, y + 6);
+  pdf.text(`${totalKg.toFixed(1)} kg`, colQteEnd, y + 6, { align: "right" });
+  pdf.text("100%", colPctEnd, y + 6, { align: "right" });
+  pdf.text(fcfa(f.total_matieres), rightEdge - 2, y + 6, { align: "right" });
+  y += rowH + 14;
+
+  if (y > 250) { pdf.addPage(); y = 20; }
+
+  // ---------- Récapitulatif des coûts ----------
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(...ink900);
+  pdf.text("Total matières premières", marginX, y);
+  pdf.text(fcfa(f.total_matieres), rightEdge - 2, y, { align: "right" });
+  y += 7;
+  pdf.text("Main d'œuvre (fabrication & mélange)", marginX, y);
+  pdf.text(fcfa(f.main_oeuvre), rightEdge - 2, y, { align: "right" });
+  y += 9;
+
+  // Bandeau total général
+  pdf.setFillColor(...pond950);
+  pdf.rect(marginX, y, contentW, 13, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFont("helvetica", "bold"); pdf.setFontSize(11.5);
+  pdf.text("TOTAL GÉNÉRAL À PAYER", marginX + 4, y + 8.5);
+  pdf.text(fcfa(f.total_general), rightEdge - 4, y + 8.5, { align: "right" });
+  y += 13 + 6;
+
+  // Bandeau prix de revient (accent doré)
+  pdf.setFillColor(...yolk500);
+  pdf.rect(marginX, y, contentW, 12, "F");
+  pdf.setTextColor(...pond950);
+  pdf.setFont("helvetica", "bold"); pdf.setFontSize(10.5);
+  pdf.text("PRIX DE REVIENT MOYEN AU KILO", marginX + 4, y + 8);
+  pdf.text(`${fcfa(Math.round(f.prix_revient_kg))} / kg`, rightEdge - 4, y + 8, { align: "right" });
+  y += 22;
+
+  // ---------- Pied de page ----------
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(...inkMuted);
+  const genereLe = `Généré par Olee Ducks le ${new Date().toLocaleDateString("fr-FR")}${f.cree_par ? " · Enregistré par " + f.cree_par : ""}`;
+  pdf.text(genereLe, marginX, 287);
 
   const fileName = `Formulation_${f.nom.replace(/\s+/g, "_")}.pdf`;
   pdf.save(fileName);
