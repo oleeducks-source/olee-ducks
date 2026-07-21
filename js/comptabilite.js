@@ -190,6 +190,11 @@ export function initComptabilite() {
   document.getElementById("exportExcelBtn")?.addEventListener("click", exporterExcel);
   document.getElementById("shareEtatsBtn")?.addEventListener("click", partagerEtatsPDF);
   document.getElementById("exerciceSelector")?.addEventListener("change", (e) => selectExercice(e.target.value));
+  document.getElementById("journalSearch")?.addEventListener("input", (e) => {
+    journalSearchQuery = e.target.value.trim().toLowerCase();
+    renderJournalList();
+  });
+  document.getElementById("renumeroterBtn")?.addEventListener("click", renumeroterExercice);
 }
 
 function showComptaView() {
@@ -426,6 +431,48 @@ export async function reverserEcriture(ecritureId) {
 }
 
 // ---------------------------------------------------------------------
+// Renumérotation chronologique : réattribue EC-{année}-0001, 0002... en
+// suivant l'ordre des DATES des écritures (pas l'ordre dans lequel elles
+// ont été validées). Ne touche qu'aux écritures actives (non annulées) —
+// les paires annulée/correction gardent leur numéro d'origine tel quel,
+// ou peuvent être purgées via l'outil de nettoyage avant renumérotation.
+// ---------------------------------------------------------------------
+async function renumeroterExercice() {
+  const actives = allJournal.filter(e => !e.annulee);
+  const parExercice = {};
+  actives.forEach(e => {
+    parExercice[e.exercice_id] = parExercice[e.exercice_id] || [];
+    parExercice[e.exercice_id].push(e);
+  });
+  const total = actives.length;
+  if (!total) { toast("Aucune écriture active à renuméroter"); return; }
+  if (!confirm(`Renuméroter les ${total} écriture(s) active(s) par ordre chronologique de date, exercice par exercice ? Les paires annulée/correction ne sont pas renumérotées.`)) return;
+
+  try {
+    const batch = writeBatch(db);
+    Object.entries(parExercice).forEach(([exId, entries]) => {
+      const ex = allExercises.find(e => e.id === exId);
+      if (!ex) return;
+      entries
+        .slice()
+        .sort((a, b) => {
+          const da = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+          const db_ = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+          return da - db_;
+        })
+        .forEach((e, idx) => {
+          const nouveauNumero = `EC-${ex.annee}-${String(idx + 1).padStart(4, "0")}`;
+          if (nouveauNumero !== e.numero_piece) {
+            batch.update(doc(db, "journal_ecritures", e.id), { numero_piece: nouveauNumero });
+          }
+        });
+    });
+    await batch.commit();
+    toast("Renumérotation terminée ✓");
+  } catch (e) { toast("Erreur : " + e.message); }
+}
+
+// ---------------------------------------------------------------------
 // Nettoyage des paires annulée/correction issues du bug historique de
 // rattachement d'exercice (corrigé) — supprime uniquement les paires
 // dont la transaction source a depuis été revalidée proprement ailleurs
@@ -480,15 +527,26 @@ function renderNettoyageCard() {
 // ---------------------------------------------------------------------
 // Rendu : journal des écritures
 // ---------------------------------------------------------------------
+let journalSearchQuery = "";
+
+function journalFiltre() {
+  if (!journalSearchQuery) return allJournal;
+  return allJournal.filter(e => {
+    const haystack = [e.numero_piece, e.libelle, ...(e.lines || []).map(l => l.compte)].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(journalSearchQuery);
+  });
+}
+
 function renderJournalList() {
   renderNettoyageCard();
   const el = document.getElementById("journalList");
   if (!el) return;
-  if (!allJournal.length) {
-    el.innerHTML = `<div class="empty-state"><div class="glyph">📖</div><p>Aucune écriture validée pour le moment.</p></div>`;
+  const list = journalFiltre();
+  if (!list.length) {
+    el.innerHTML = `<div class="empty-state"><div class="glyph">📖</div><p>${journalSearchQuery ? "Aucun résultat pour cette recherche." : "Aucune écriture validée pour le moment."}</p></div>`;
     return;
   }
-  el.innerHTML = allJournal.map(e => `
+  el.innerHTML = list.map(e => `
     <div class="row" style="flex-direction:column; align-items:stretch;">
       <div class="row" style="border:none; padding-bottom:4px;">
         <div class="row-main"><span class="row-title mono">${e.numero_piece}${e.annulee ? ' <span class="tag danger">ANNULÉE</span>' : ""}${e.contre_passation_de ? ' <span class="tag warn">Correction</span>' : ""}</span><span class="row-sub">${escapeHtml(e.libelle)} · ${formatDate(e.date)}${e.valide_par ? " · par " + escapeHtml(e.valide_par) : ""}</span></div>
