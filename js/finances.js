@@ -200,20 +200,45 @@ export function openAddFinanceModal(defaultType = "recette") {
   });
 }
 
-function renderPieceJointeZone(transactionId, url, nom) {
+function renderPieceJointeZone(t) {
   const zone = document.getElementById("pieceJointeZone");
   if (!zone) return;
-  if (url) {
+  const data = t.piece_jointe_data;       // nouveau système : base64 stocké dans Firestore
+  const legacyUrl = t.piece_jointe_url;   // ancien système : lien Google Drive (avant migration), conservé en lecture seule
+  const nom = t.piece_jointe_nom;
+
+  if (data) {
+    const isImage = (t.piece_jointe_type || "").startsWith("image/");
+    zone.innerHTML = isImage ? `
+      <a href="${data}" download="${escapeHtml(nom || 'recu.jpg')}">
+        <img src="${data}" alt="Reçu" style="width:100%; border-radius:var(--radius-m); border:1px solid var(--line); display:block; margin-bottom:8px;">
+      </a>
+      <button class="btn danger small" id="fRecuRemove">Retirer la pièce jointe</button>
+    ` : `
+      <a href="${data}" download="${escapeHtml(nom || 'recu.pdf')}" class="btn secondary" style="margin-bottom:8px; text-decoration:none; display:block; text-align:center;">📎 Voir le reçu (PDF) — ${escapeHtml(nom || "")}</a>
+      <button class="btn danger small" id="fRecuRemove">Retirer la pièce jointe</button>
+    `;
+    document.getElementById("fRecuRemove").addEventListener("click", async () => {
+      if (!confirm("Retirer cette pièce jointe ?")) return;
+      try {
+        await retirerRecu(t.id);
+        toast("Pièce jointe retirée");
+        t.piece_jointe_data = null; t.piece_jointe_nom = null; t.piece_jointe_type = null;
+        renderPieceJointeZone(t);
+      } catch (e) { toast("Erreur : " + e.message); }
+    });
+  } else if (legacyUrl) {
     zone.innerHTML = `
-      <a href="${url}" target="_blank" rel="noopener" class="btn secondary" style="margin-bottom:8px; text-decoration:none; display:block; text-align:center;">📎 Voir le reçu — ${escapeHtml(nom || "")}</a>
+      <a href="${legacyUrl}" target="_blank" rel="noopener" class="btn secondary" style="margin-bottom:8px; text-decoration:none; display:block; text-align:center;">📎 Voir le reçu — ${escapeHtml(nom || "")}</a>
       <button class="btn danger small" id="fRecuRemove">Retirer la pièce jointe</button>
     `;
     document.getElementById("fRecuRemove").addEventListener("click", async () => {
       if (!confirm("Retirer cette pièce jointe ? (le fichier restera sur Google Drive, seul le lien est retiré ici)")) return;
       try {
-        await retirerRecu(transactionId);
+        await retirerRecu(t.id);
         toast("Pièce jointe retirée");
-        renderPieceJointeZone(transactionId, null, null);
+        t.piece_jointe_url = null;
+        renderPieceJointeZone(t);
       } catch (e) { toast("Erreur : " + e.message); }
     });
   } else {
@@ -222,18 +247,20 @@ function renderPieceJointeZone(transactionId, url, nom) {
         📎 Joindre un reçu (photo ou PDF)
         <input type="file" id="fRecuInput" accept="image/*,application/pdf" style="display:none;">
       </label>
+      <p class="subtle" style="margin-top:6px; text-align:center;">La photo est compressée et enregistrée directement dans l'application — aucune connexion externe requise.</p>
     `;
     document.getElementById("fRecuInput").addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      zone.innerHTML = `<p class="subtle">⏳ Envoi en cours…</p>`;
+      zone.innerHTML = `<p class="subtle">⏳ Compression et enregistrement…</p>`;
       try {
-        const uploadedUrl = await attacherRecu(transactionId, file);
+        const dataUrl = await attacherRecu(t.id, file);
         toast("Reçu attaché ✓");
-        renderPieceJointeZone(transactionId, uploadedUrl, file.name);
+        t.piece_jointe_data = dataUrl; t.piece_jointe_nom = file.name; t.piece_jointe_type = file.type;
+        renderPieceJointeZone(t);
       } catch (err) {
         toast("Erreur : " + err.message);
-        renderPieceJointeZone(transactionId, null, null);
+        renderPieceJointeZone(t);
       }
     });
   }
@@ -258,7 +285,7 @@ function openTxDetail(t) {
     <button class="btn danger" id="fTxDelete">Supprimer cette transaction</button>
   `, {
     onMount: () => {
-      renderPieceJointeZone(t.id, t.piece_jointe_url, t.piece_jointe_nom);
+      renderPieceJointeZone(t);
       document.getElementById("fTxEdit").addEventListener("click", () => openEditTxModal(t));
       document.getElementById("fTxDelete").addEventListener("click", async () => {
         if (!confirm("Supprimer définitivement cette transaction ?")) return;
