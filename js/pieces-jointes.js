@@ -25,9 +25,11 @@ const FOLDER_NAME = "Olee Ducks - Reçus";
 let tokenClient = null;
 let cachedToken = null; // { access_token, expiresAt }
 let cachedFolderId = localStorage.getItem("oleeducks_drive_folder_id") || null;
+let gisReadyPromise = null;
 
 function ensureGisLoaded() {
-  return new Promise((resolve, reject) => {
+  if (gisReadyPromise) return gisReadyPromise;
+  gisReadyPromise = new Promise((resolve, reject) => {
     if (window.google && window.google.accounts && window.google.accounts.oauth2) {
       resolve();
       return;
@@ -38,32 +40,60 @@ function ensureGisLoaded() {
         resolve();
       }
     }, 100);
-    setTimeout(() => { clearInterval(check); reject(new Error("Google Identity Services non chargé (vérifiez votre connexion)")); }, 8000);
+    setTimeout(() => { clearInterval(check); gisReadyPromise = null; reject(new Error("Google Identity Services non chargé (vérifiez votre connexion)")); }, 8000);
   });
+  return gisReadyPromise;
 }
+
+// Précharge GIS et initialise le client OAuth dès le démarrage de l'appli
+// (pas au moment du clic) : les navigateurs bloquent silencieusement la
+// fenêtre de connexion Google si elle ne s'ouvre pas quasi instantanément
+// après une action de l'utilisateur — attendre le chargement de GIS à ce
+// moment-là ratait souvent cette fenêtre. En préchargeant, la demande de
+// connexion part immédiatement au clic.
+ensureGisLoaded()
+  .then(() => {
+    if (!GOOGLE_DRIVE_CLIENT_ID.startsWith("REMPLACER") && !tokenClient) {
+      tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_DRIVE_CLIENT_ID,
+        scope: DRIVE_SCOPE,
+        callback: () => {}
+      });
+    }
+  })
+  .catch(() => { /* échec silencieux ici : l'erreur réelle sera montrée au moment du clic si besoin */ });
 
 async function getAccessToken() {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30000) {
     return cachedToken.access_token;
   }
-  await ensureGisLoaded();
   if (GOOGLE_DRIVE_CLIENT_ID.startsWith("REMPLACER")) {
     throw new Error("Google Drive n'est pas configuré (js/drive-config.js contient encore une valeur REMPLACER_...)");
   }
+  await ensureGisLoaded();
   if (!tokenClient) {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_DRIVE_CLIENT_ID,
       scope: DRIVE_SCOPE,
-      callback: () => {} // remplacé à chaque appel ci-dessous
+      callback: () => {}
     });
   }
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("La connexion Google n'a pas abouti après 20s. La fenêtre de connexion a peut-être été bloquée par le navigateur — vérifiez qu'aucun bloqueur de popup n'est actif pour ce site, puis réessayez."));
+    }, 20000);
     tokenClient.callback = (resp) => {
+      clearTimeout(timeout);
       if (resp.error) { reject(new Error("Connexion Google refusée ou annulée : " + resp.error)); return; }
       cachedToken = { access_token: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3500) * 1000 };
       resolve(resp.access_token);
     };
-    tokenClient.requestAccessToken({ prompt: cachedToken ? "" : "consent" });
+    try {
+      tokenClient.requestAccessToken({ prompt: cachedToken ? "" : "consent" });
+    } catch (e) {
+      clearTimeout(timeout);
+      reject(new Error("Impossible d'ouvrir la fenêtre de connexion Google : " + e.message));
+    }
   });
 }
 
