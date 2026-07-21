@@ -19,7 +19,7 @@ import {
   collection, doc, addDoc, updateDoc, setDoc, getDoc, getDocs, onSnapshot,
   serverTimestamp, query, where, orderBy, increment, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
 
 const accountsCol = collection(db, "accounts");
 const exercisesCol = collection(db, "exercises");
@@ -762,14 +762,14 @@ async function partagerEtatsPDF() {
 
   pdf.setFontSize(13); pdf.text("Compte de résultat", 14, y); y += 7;
   pdf.setFontSize(10);
-  pdf.text(`Total produits : ${formatFCFA(cache.totalProduits)}`, 14, y); y += 6;
-  pdf.text(`Total charges : ${formatFCFA(cache.totalCharges)}`, 14, y); y += 6;
-  pdf.text(`Résultat net : ${formatFCFA(cache.resultatNet)}`, 14, y); y += 10;
+  pdf.text(`Total produits : ${formatFCFAPdf(cache.totalProduits)}`, 14, y); y += 6;
+  pdf.text(`Total charges : ${formatFCFAPdf(cache.totalCharges)}`, 14, y); y += 6;
+  pdf.text(`Résultat net : ${formatFCFAPdf(cache.resultatNet)}`, 14, y); y += 10;
 
   pdf.setFontSize(13); pdf.text("Bilan", 14, y); y += 7;
   pdf.setFontSize(10);
-  pdf.text(`Total Actif : ${formatFCFA(cache.totalActif)}`, 14, y); y += 6;
-  pdf.text(`Total Passif (dont résultat) : ${formatFCFA(cache.totalPassif)}`, 14, y); y += 10;
+  pdf.text(`Total Actif : ${formatFCFAPdf(cache.totalActif)}`, 14, y); y += 6;
+  pdf.text(`Total Passif (dont résultat) : ${formatFCFAPdf(cache.totalPassif)}`, 14, y); y += 10;
 
   pdf.setFontSize(13); pdf.text("Balance des comptes", 14, y); y += 7;
   pdf.setFontSize(9);
@@ -778,7 +778,7 @@ async function partagerEtatsPDF() {
     const acc = cache.allAccounts.find(a => a.numero === num);
     const s = cache.soldes[num];
     const solde = s.debit - s.credit;
-    pdf.text(`${num} — ${acc ? acc.libelle : "?"} : ${formatFCFA(Math.abs(solde))} (${solde >= 0 ? "Débiteur" : "Créditeur"})`, 14, y);
+    pdf.text(`${num} — ${acc ? acc.libelle : "?"} : ${formatFCFAPdf(Math.abs(solde))} (${solde >= 0 ? "Débiteur" : "Créditeur"})`, 14, y);
     y += 5.5;
   });
 
