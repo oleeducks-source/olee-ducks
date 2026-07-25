@@ -75,6 +75,31 @@ function estimateDaysLeft(item) {
 
 function toMs(d) { return d?.toDate ? d.toDate().getTime() : new Date(d).getTime(); }
 
+// Jauge visuelle du sac : le remplissage est une estimation basée sur le
+// seuil d'alerte existant (pas de nouveau champ Firestore ajouté). Sans
+// seuil défini, on utilise une référence neutre pour éviter un sac toujours
+// plein ou toujours vide.
+function sackGaugeSvg(item) {
+  const qte = Number(item.quantite_actuelle) || 0;
+  const seuil = Number(item.seuil_alerte) || 0;
+  const reference = seuil > 0 ? seuil * 3 : Math.max(qte, 10);
+  const ratio = reference > 0 ? Math.max(0, Math.min(1, qte / reference)) : 0;
+  const low = seuil > 0 && qte <= seuil;
+  const color = low ? "var(--clay-500)" : (item.type === "aliment" ? "var(--yolk-600)" : "var(--pond-600)");
+  // Sac dessiné en trapèze (0..34 x 0..40) ; le remplissage est un rect
+  // clippé dont la hauteur suit le ratio, aligné en bas du sac.
+  const fillY = 6 + (34 * (1 - ratio));
+  const fillH = 34 * ratio;
+  const clipId = `sackClip_${item.id}`;
+  return `
+    <svg class="sack-gauge" viewBox="0 0 34 40">
+      <clipPath id="${clipId}"><path d="M4 6 L30 6 L26.5 38 L7.5 38 Z"/></clipPath>
+      <rect x="4" y="${fillY}" width="26" height="${Math.max(0, fillH)}" fill="${color}" clip-path="url(#${clipId})"/>
+      <path class="sack-outline" d="M4 6 L30 6 L26.5 38 L7.5 38 Z" stroke="${color}"/>
+      <path d="M11 6 Q17 1 23 6" fill="none" stroke="${color}" stroke-width="2"/>
+    </svg>`;
+}
+
 function renderList() {
   let items = allItems;
   if (filterType !== "all") items = items.filter(i => i.type === filterType);
@@ -85,7 +110,7 @@ function renderList() {
     alertsEl.innerHTML = `
       <h3 style="font-size:14px; margin-bottom:8px;">Alertes de réapprovisionnement</h3>
       ${alerts.length ? alerts.map(i => `
-        <div class="row"><div class="row-main"><span class="row-title">${escapeHtml(i.nom)}</span><span class="row-sub">Seuil ${i.seuil_alerte} ${i.unite}</span></div><span class="tag danger">${i.quantite_actuelle} ${i.unite}</span></div>
+        <div class="row with-icon">${sackGaugeSvg(i)}<div class="row-main"><span class="row-title">${escapeHtml(i.nom)}</span><span class="row-sub">Seuil ${i.seuil_alerte} ${i.unite}</span></div><span class="tag danger">${i.quantite_actuelle} ${i.unite}</span></div>
       `).join("") : `<p class="subtle">Aucun article sous le seuil d'alerte. ✓</p>`}
     `;
   }
@@ -101,7 +126,8 @@ function renderList() {
     const daysLeft = estimateDaysLeft(i);
     const low = Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0);
     return `
-    <div class="row">
+    <div class="row with-icon">
+      ${sackGaugeSvg(i)}
       <div class="row-main">
         <span class="row-title">${escapeHtml(i.nom)}</span>
         <span class="row-sub">${i.type === "aliment" ? "Aliment" : "Vétérinaire"} · ${formatFCFA(i.cout_unitaire_moyen)} / ${i.unite}${daysLeft !== null ? ` · ~${daysLeft} j restants` : ""}${i.cree_par ? " · ajouté par " + escapeHtml(i.cree_par) : ""}</span>
