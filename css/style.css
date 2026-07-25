@@ -285,3 +285,40 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 
 .subtle{color:var(--ink-600); font-size:12.5px;}
 .spacer-s{height:8px;} .spacer-m{height:16px;} .spacer-l{height:28px;}
+
+/* ---------- Icônes (badges circulaires réutilisés dans les listes) ---------- */
+.row-icon{
+  flex:none; width:38px; height:38px; border-radius:12px;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--sage-100); color:var(--pond-600);
+}
+.row-icon svg{width:21px; height:21px;}
+.row-icon.pos{background:#E1EFDC; color:var(--pond-600);}
+.row-icon.neg{background:#F8DFDA; color:var(--clay-500);}
+.row-icon.warn{background:#FCEBD9; color:var(--yolk-600);}
+.row-icon.dark{background:var(--pond-950); color:var(--yolk-500);}
+.row.with-icon{align-items:center;}
+
+/* ---------- Grille de nids : panier tressé, pas un simple chiffre ---------- */
+.nest-cell{
+  aspect-ratio:1;
+  border-radius:8px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+  background:var(--sage-100);
+  color:#AEBDAF;
+  border:1px solid var(--line);
+  cursor:pointer;
+  padding:2px 0;
+  transition:transform .1s ease;
+}
+.nest-cell:active{transform:scale(.93);}
+.nest-cell svg{width:60%; height:60%;}
+.nest-cell .nest-num{font-family:var(--font-mono); font-size:8px; opacity:.85;}
+.nest-cell.ponte{background:#FCEEDA; color:var(--yolk-600); border-color:#F0D19C;}
+.nest-cell.couvaison{background:var(--pond-600); color:var(--sage-50); border-color:var(--pond-800);}
+.nest-cell.couvaison .nest-num{opacity:.75;}
+
+/* ---------- Sacs de stock : jauge de remplissage réelle ---------- */
+.sack-gauge{flex:none; width:32px; height:40px;}
+.sack-gauge .sack-outline{fill:none; stroke-width:2;}
+.sack-gauge .sack-fill{transition:height .3s ease;}
