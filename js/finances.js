@@ -24,6 +24,13 @@ let searchQuery = "";
 const CATS_RECETTE = { vente_canards: "Vente de canards", vente_oeufs: "Vente d'œufs", vente_canetons: "Vente de canetons", autre: "Autre recette" };
 const CATS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", achat_animaux: "Achat d'animaux", autre: "Autre dépense" };
 
+const CATS_ICONS = {
+  vente_canards: "ic-duck-canard", vente_oeufs: "ic-nest-ponte", vente_canetons: "ic-duck-caneton", autre: "ic-cat-autre",
+  salaire: "ic-cat-salaire", eau: "ic-cat-eau", electricite: "ic-cat-elec", materiel: "ic-cat-materiel",
+  aliments: "ic-cat-aliment", veterinaire: "ic-cat-vet", achat_animaux: "ic-cat-animal"
+};
+function catIcon(t) { return CATS_ICONS[t.categorie] || (t.type === "recette" ? "ic-money-in" : "ic-money-out"); }
+
 export function initFinances() {
   onSnapshot(query(finCol, orderBy("date", "desc")), (snap) => {
     allTx = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -99,7 +106,8 @@ function renderAll() {
       listEl.innerHTML = `<div class="empty-state"><div class="glyph">💰</div><p>Aucune transaction sur cette période.</p></div>`;
     } else {
       listEl.innerHTML = items.map(t => `
-        <div class="row">
+        <div class="row with-icon">
+          <div class="row-icon ${t.type === 'recette' ? 'pos' : 'neg'}"><svg><use href="#${catIcon(t)}"/></svg></div>
           <div class="row-main">
             <span class="row-title">${(t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE)[t.categorie] || t.categorie}</span>
             <span class="row-sub">${formatDate(t.date)}${t.description ? " · " + escapeHtml(t.description) : ""}${t.cree_par ? " · par " + escapeHtml(t.cree_par) : ""}</span>
@@ -118,7 +126,8 @@ function renderAll() {
   if (activityEl) {
     const recent = allTx.slice(0, 4);
     activityEl.innerHTML = recent.length ? recent.map(t => `
-      <div class="row">
+      <div class="row with-icon">
+        <div class="row-icon ${t.type === 'recette' ? 'pos' : 'neg'}"><svg><use href="#${catIcon(t)}"/></svg></div>
         <div class="row-main"><span class="row-title">${(t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE)[t.categorie] || t.categorie}</span><span class="row-sub">${formatDate(t.date)}</span></div>
         <span class="row-value ${t.type === "recette" ? "pos" : "neg"}">${t.type === "recette" ? "+" : "−"}${formatFCFA(t.montant)}</span>
       </div>`).join("") : `<div class="empty-state"><div class="glyph">📋</div><p>Aucune activité récente.</p></div>`;
@@ -269,7 +278,7 @@ function renderPieceJointeZone(t) {
 function openTxDetail(t) {
   const cats = t.type === "recette" ? CATS_RECETTE : CATS_DEPENSE;
   const estValidee = t.statut_comptable === "valide";
-  openModal(cats[t.categorie] || t.categorie, `
+  openModal(`<span style="display:inline-flex; align-items:center; gap:8px;"><span class="row-icon ${t.type === 'recette' ? 'pos' : 'neg'}" style="width:28px; height:28px; border-radius:9px;"><svg style="width:16px;height:16px;"><use href="#${catIcon(t)}"/></svg></span>${cats[t.categorie] || t.categorie}</span>`, `
     <div class="row"><div class="row-main"><span class="row-title">Montant</span></div><span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Date</span></div><span class="row-value">${formatDate(t.date)}</span></div>
     ${t.cree_par ? `<div class="row"><div class="row-main"><span class="row-title">Enregistré par</span></div><span class="row-value">${escapeHtml(t.cree_par)}</span></div>` : ""}
