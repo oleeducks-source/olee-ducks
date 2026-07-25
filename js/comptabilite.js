@@ -615,8 +615,10 @@ function renderEtatsFinanciers() {
       const acc = allAccounts.find(a => a.numero === num);
       const s = soldes[num];
       const solde = s.debit - s.credit;
+      const classe = num.charAt(0);
       return `
-        <div class="row">
+        <div class="row with-icon">
+          <div class="row-icon"><svg><use href="#ic-cls-${classe}"/></svg></div>
           <div class="row-main"><span class="row-title mono">${num} — ${acc ? escapeHtml(acc.libelle) : "?"}</span><span class="row-sub">Débit ${formatFCFA(s.debit)} · Crédit ${formatFCFA(s.credit)}</span></div>
           <span class="row-value ${solde >= 0 ? 'pos' : 'neg'}">${formatFCFA(Math.abs(solde))} ${solde >= 0 ? "Débiteur" : "Créditeur"}</span>
         </div>`;
