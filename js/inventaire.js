@@ -21,6 +21,12 @@ const TYPE_LABELS = {
   reproducteur_male: "Reproducteur mâle",
   reproducteur_femelle: "Reproductrice femelle"
 };
+const TYPE_ICONS = {
+  caneton: "ic-duck-caneton",
+  canard: "ic-duck-canard",
+  reproducteur_male: "ic-duck-repro-m",
+  reproducteur_femelle: "ic-duck-repro-f"
+};
 const BAGUE_LABELS = { rouge: "Rouge", vert: "Vert", violet: "Violet", bleu: "Bleu" };
 const STATUT_LABELS = { actif: "Actif", vendu: "Vendu", mort: "Décédé", reforme: "Réformé" };
 
@@ -96,15 +102,19 @@ function renderList() {
     el.innerHTML = `<div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div>`;
     return;
   }
-  el.innerHTML = items.map(d => `
-    <div class="row">
+  el.innerHTML = items.map(d => {
+    const bagueColorVar = { rouge: "var(--clay-500)", vert: "var(--pond-600)", violet: "#8B5FBF", bleu: "#3D6FBF" }[d.bague_couleur] || "var(--pond-600)";
+    return `
+    <div class="row with-icon">
+      <div class="row-icon" style="color:${bagueColorVar}"><svg><use href="#${TYPE_ICONS[d.type] || 'ic-duck-canard'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}</span>
         <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · entrée ${formatDate(d.date_entree)}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
       </div>
       <span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   el.querySelectorAll(".row").forEach((rowEl, idx) => {
     rowEl.style.cursor = "pointer";
