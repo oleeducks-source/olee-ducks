@@ -108,8 +108,9 @@ function renderGrids() {
     let html = "";
     for (let n = 1; n <= 100; n++) {
       const c = cycleForNest(n);
-      const cls = c ? (c.statut === "couvaison" ? "couvaison" : "occupe") : "";
-      html += `<div class="nest-cell ${cls}" data-n="${n}">${n}</div>`;
+      const cls = c ? (c.statut === "couvaison" ? "couvaison" : "ponte") : "";
+      const icon = c ? (c.statut === "couvaison" ? "ic-nest-couvaison" : "ic-nest-ponte") : "ic-nest-libre";
+      html += `<div class="nest-cell ${cls}" data-n="${n}"><svg><use href="#${icon}"/></svg><span class="nest-num">${n}</span></div>`;
     }
     el.innerHTML = html;
     el.querySelectorAll(".nest-cell").forEach(cell => {
@@ -139,7 +140,8 @@ function renderEnCoursList() {
     return;
   }
   el.innerHTML = list.map(c => `
-    <div class="row">
+    <div class="row with-icon">
+      <div class="row-icon ${c.statut === 'couvaison' ? 'warn' : 'pos'}"><svg><use href="#${c.statut === 'couvaison' ? 'ic-nest-couvaison' : 'ic-nest-ponte'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">Nid n° ${c.nid_numero}</span>
         <span class="row-sub">${c.nombre_oeufs || 0} œuf(s) · depuis ${formatDate(c.date_debut)}${c.cree_par ? " · par " + escapeHtml(c.cree_par) : ""}</span>
@@ -162,13 +164,15 @@ function renderArchives() {
   }
   el.innerHTML = archivedCycles.map(c => {
     const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
+    const succes = c.statut === "eclos";
     return `
-    <div class="row">
+    <div class="row with-icon">
+      <div class="row-icon ${succes ? 'pos' : 'neg'}"><svg><use href="#${succes ? 'ic-nest-eclos' : 'ic-nest-echec'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">Nid n° ${c.nid_numero} — ${formatDate(c.date_fin)}</span>
         <span class="row-sub">${c.nombre_oeufs || 0} œufs → ${c.nombre_eclos || 0} éclos${c.archive_par ? " · par " + escapeHtml(c.archive_par) : ""}</span>
       </div>
-      <span class="tag ${c.statut === 'eclos' ? 'ok' : 'danger'}">${taux}%</span>
+      <span class="tag ${succes ? 'ok' : 'danger'}">${taux}%</span>
     </div>`;
   }).join("");
 }
@@ -238,7 +242,8 @@ function renderStats() {
     topEl.innerHTML = `<p class="subtle">Pas encore assez de cycles archivés pour établir un classement.</p>`;
   } else {
     topEl.innerHTML = ranked.map((r, i) => `
-      <div class="row">
+      <div class="row with-icon">
+        <div class="row-icon pos"><svg><use href="#ic-nest-eclos"/></svg></div>
         <div class="row-main"><span class="row-title">#${i + 1} — Nid n° ${r.n}</span><span class="row-sub">${r.cycles} cycle(s) · ${r.eclos}/${r.oeufs} œufs éclos</span></div>
         <span class="row-value pos">${Math.round(r.taux * 100)}%</span>
       </div>`).join("");
