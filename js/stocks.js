@@ -13,6 +13,7 @@ import {
   serverTimestamp, orderBy, query, increment
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { getActiveDuckCounts } from "./inventaire.js";
 
 const itemsCol = collection(db, "stock_items");
 const movCol = collection(db, "stock_mouvements");
@@ -73,6 +74,51 @@ function estimateDaysLeft(item) {
   return Math.round((Number(item.quantite_actuelle) || 0) / avgPerDay);
 }
 
+// ---------------------------------------------------------------------
+// Deuxième instrument de suivi : prévision basée sur le cheptel réel
+// (nombre de canetons / canards / reproducteurs actifs) et une ration
+// quotidienne par catégorie, renseignée une fois sur l'article de stock
+// (champ Firestore additif "prevision_kg_jour", ne remplace ni ne
+// supprime aucune donnée existante). Totalement indépendant de
+// l'historique des sorties utilisé par estimateDaysLeft ci-dessus : les
+// deux méthodes peuvent être consultées côte à côte.
+// ---------------------------------------------------------------------
+function estimateDaysLeftCheptel(item) {
+  const rations = item.prevision_kg_jour;
+  if (!rations) return null;
+  const counts = getActiveDuckCounts();
+  // Les 3 groupes nutritionnels de la ferme (besoins identiques au sein
+  // d'un groupe), calés sur le cycle de vie réel des canards (voir
+  // js/inventaire.js) :
+  //  - Catégorie 1 : caneton (0-3 sem.)
+  //  - Catégorie 2 : canardeau (4-8 sem.)
+  //  - Catégorie 3 : canard adulte (8 sem. et +) — regroupe les canards
+  //    de type "canard" ET les reproducteurs mâles/femelles, qui ont les
+  //    mêmes besoins alimentaires une fois adultes.
+  // Un article ne "concerne" un groupe que si sa ration a été
+  // explicitement renseignée (voir openPrevisionModal) — sinon ce groupe
+  // est ignoré du calcul, ce qui permet à un stock de ne toucher qu'un
+  // ou deux groupes sur les trois, jamais forcément les trois.
+  const consoParJourKg =
+    (Number(rations.caneton) || 0) * counts.caneton +
+    (Number(rations.canardeau) || 0) * counts.canardeau +
+    (Number(rations.adulte) || 0) * (counts.canard + counts.reproducteur_male + counts.reproducteur_femelle);
+  if (consoParJourKg <= 0) return null;
+
+  // La ration est toujours saisie en kg/jour ; si l'article est stocké
+  // dans une autre unité (sac, litre…), on convertit via le poids moyen
+  // d'une unité (renseigné une fois, champ additif "poids_unite_kg").
+  let quantiteKg;
+  if (item.unite === "kg") {
+    quantiteKg = Number(item.quantite_actuelle) || 0;
+  } else if (item.poids_unite_kg) {
+    quantiteKg = (Number(item.quantite_actuelle) || 0) * Number(item.poids_unite_kg);
+  } else {
+    return { jours: null, consoParJourKg, counts, needsConversion: true };
+  }
+  return { jours: Math.round(quantiteKg / consoParJourKg), consoParJourKg, counts, needsConversion: false };
+}
+
 function toMs(d) { return d?.toDate ? d.toDate().getTime() : new Date(d).getTime(); }
 
 // Jauge visuelle du sac : le remplissage est une estimation basée sur le
@@ -124,13 +170,15 @@ function renderList() {
   }
   listEl.innerHTML = items.map(i => {
     const daysLeft = estimateDaysLeft(i);
+    const prevision = estimateDaysLeftCheptel(i);
+    const joursAffiches = (prevision && prevision.jours !== null) ? prevision.jours : daysLeft;
     const low = Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0);
     return `
     <div class="row with-icon">
       ${sackGaugeSvg(i)}
       <div class="row-main">
         <span class="row-title">${escapeHtml(i.nom)}</span>
-        <span class="row-sub">${i.type === "aliment" ? "Aliment" : "Vétérinaire"} · ${formatFCFA(i.cout_unitaire_moyen)} / ${i.unite}${daysLeft !== null ? ` · ~${daysLeft} j restants` : ""}${i.cree_par ? " · ajouté par " + escapeHtml(i.cree_par) : ""}</span>
+        <span class="row-sub">${i.type === "aliment" ? "Aliment" : "Vétérinaire"} · ${formatFCFA(i.cout_unitaire_moyen)} / ${i.unite}${joursAffiches !== null ? ` · ~${joursAffiches} j restants` : ""}${i.cree_par ? " · ajouté par " + escapeHtml(i.cree_par) : ""}</span>
       </div>
       <span class="tag ${low ? "danger" : "ok"}">${i.quantite_actuelle} ${i.unite}</span>
     </div>`;
@@ -189,16 +237,24 @@ export function openAddStockItemModal() {
 
 function openItemDetail(item) {
   const daysLeft = estimateDaysLeft(item);
+  const prevision = estimateDaysLeftCheptel(item);
   const history = allMovements.filter(m => m.item_id === item.id).slice(0, 8);
   openModal(item.nom, `
     <div class="row"><div class="row-main"><span class="row-title">Quantité actuelle</span></div><span class="row-value">${item.quantite_actuelle} ${item.unite}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Coût unitaire moyen</span></div><span class="row-value">${formatFCFA(item.cout_unitaire_moyen)}</span></div>
     ${item.date_peremption ? `<div class="row"><div class="row-main"><span class="row-title">Péremption</span></div><span class="row-value">${formatDate(item.date_peremption)}</span></div>` : ""}
-    ${daysLeft !== null ? `<div class="row"><div class="row-main"><span class="row-title">Autonomie estimée</span></div><span class="row-value">${daysLeft} jours</span></div>` : ""}
+    ${daysLeft !== null ? `<div class="row"><div class="row-main"><span class="row-title">Autonomie (historique des sorties)</span></div><span class="row-value">${daysLeft} jours</span></div>` : ""}
+    ${prevision && prevision.jours !== null ? `<div class="row"><div class="row-main"><span class="row-title">Autonomie prévisionnelle (cheptel)</span></div><span class="row-value pos">${prevision.jours} jours</span></div>` : ""}
+    ${prevision && prevision.needsConversion ? `<div class="row"><div class="row-main"><span class="row-title">Autonomie prévisionnelle (cheptel)</span><span class="row-sub">Renseignez le poids d'un ${item.unite} pour activer ce calcul</span></div></div>` : ""}
     <div class="spacer-m"></div>
     <div class="field-row">
       <button class="btn secondary small" id="fMovEntree" style="flex:1;">+ Entrée (achat)</button>
       <button class="btn secondary small" id="fMovSortie" style="flex:1;">− Sortie (usage)</button>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="field-row">
+      <button class="btn secondary small" id="fItEdit" style="flex:1;">✏️ Modifier l'article</button>
+      <button class="btn secondary small" id="fItPrevision" style="flex:1;">🦆 Prévision (cheptel)</button>
     </div>
     <div class="spacer-m"></div>
     <h3 style="font-size:13.5px; margin-bottom:6px;">Historique récent</h3>
@@ -209,6 +265,149 @@ function openItemDetail(item) {
     onMount: () => {
       document.getElementById("fMovEntree").addEventListener("click", () => openMovementModal(item, "entree"));
       document.getElementById("fMovSortie").addEventListener("click", () => openMovementModal(item, "sortie"));
+      document.getElementById("fItEdit").addEventListener("click", () => openEditStockItemModal(item));
+      document.getElementById("fItPrevision").addEventListener("click", () => openPrevisionModal(item));
+    }
+  });
+}
+
+function openEditStockItemModal(item) {
+  const body = `
+    <div class="field">
+      <label>Type</label>
+      <select id="eItType">
+        <option value="aliment" ${item.type === "aliment" ? "selected" : ""}>Aliment</option>
+        <option value="veterinaire" ${item.type === "veterinaire" ? "selected" : ""}>Produit vétérinaire</option>
+      </select>
+    </div>
+    <div class="field"><label>Nom</label><input type="text" id="eItNom" value="${escapeHtml(item.nom)}"></div>
+    <div class="field-row">
+      <div class="field"><label>Unité</label>
+        <select id="eItUnite">
+          ${["kg", "sac", "litre", "unite"].map(u => `<option value="${u}" ${item.unite === u ? "selected" : ""}>${u}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Quantité actuelle</label><input type="number" id="eItQte" min="0" value="${item.quantite_actuelle}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Seuil d'alerte</label><input type="number" id="eItSeuil" min="0" value="${item.seuil_alerte || 0}"></div>
+      <div class="field"><label>Coût unitaire (FCFA)</label><input type="number" id="eItCout" min="0" value="${item.cout_unitaire_moyen || 0}"></div>
+    </div>
+    <div class="field"><label>Date de péremption (optionnel)</label><input type="date" id="eItPeremption" value="${item.date_peremption ? formatInputDate(item.date_peremption) : ""}"></div>
+    <p class="subtle" style="margin:2px 0 12px;">La correction de la quantité ou du coût ici ne crée pas de mouvement d'entrée/sortie — utilisez les boutons dédiés pour un achat ou un usage réel. Ce formulaire sert uniquement à corriger une erreur de saisie.</p>
+    <button class="btn yolk" id="eItSave">Enregistrer les modifications</button>
+  `;
+  openModal("Modifier l'article", body, {
+    onMount: () => {
+      document.getElementById("eItSave").addEventListener("click", async () => {
+        const nom = document.getElementById("eItNom").value.trim();
+        if (!nom) { toast("Le nom est requis"); return; }
+        try {
+          await updateDoc(doc(db, "stock_items", item.id), {
+            nom, type: document.getElementById("eItType").value,
+            unite: document.getElementById("eItUnite").value,
+            quantite_actuelle: Number(document.getElementById("eItQte").value) || 0,
+            seuil_alerte: Number(document.getElementById("eItSeuil").value) || 0,
+            cout_unitaire_moyen: Number(document.getElementById("eItCout").value) || 0,
+            date_peremption: document.getElementById("eItPeremption").value ? new Date(document.getElementById("eItPeremption").value) : null,
+            modifie_par: getUserName() || "Inconnu",
+            modifie_le: serverTimestamp()
+          });
+          toast("Article modifié ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+    }
+  });
+}
+
+function formatInputDate(d) {
+  const date = d?.toDate ? d.toDate() : new Date(d);
+  const off = date.getTimezoneOffset();
+  return new Date(date.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+// ---------------------------------------------------------------------
+// Prévision de consommation basée sur le cheptel — deuxième instrument
+// de suivi, indépendant des sorties de sac classiques. On renseigne une
+// fois la ration (kg/jour/animal) par catégorie ; le nombre de canards
+// de chaque catégorie est ensuite lu automatiquement depuis l'inventaire
+// à chaque consultation, sans jamais être stocké en dur ici.
+// ---------------------------------------------------------------------
+const RATIONS_PAR_DEFAUT = { caneton: 0.06, canardeau: 0.15, adulte: 0.18 }; // kg/jour/animal
+
+function openPrevisionModal(item) {
+  const r = item.prevision_kg_jour || {};
+  const counts = getActiveDuckCounts();
+  const needsPoidsUnite = item.unite !== "kg";
+  const groupes = [
+    { key: "caneton", label: "Canetons", tranche: "0 à 3 semaines", nb: counts.caneton },
+    { key: "canardeau", label: "Canardeaux", tranche: "4 à 8 semaines", nb: counts.canardeau },
+    { key: "adulte", label: "Canards adultes", tranche: "8 semaines et plus (dont reproducteurs)", nb: counts.canard + counts.reproducteur_male + counts.reproducteur_femelle }
+  ];
+
+  const groupRow = (g) => {
+    const defaultVal = r[g.key];
+    const isChecked = defaultVal > 0;
+    const startValue = isChecked ? defaultVal : RATIONS_PAR_DEFAUT[g.key];
+    return `
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;">
+      <input type="checkbox" id="fPrevChk_${g.key}" style="width:auto;" ${isChecked ? "checked" : ""}>
+      <label style="margin:0; flex:1;">${g.label} <span class="subtle">(${g.tranche})</span> — ${g.nb} en cheptel</label>
+    </div>
+    <div class="field" id="fPrevWrap_${g.key}" style="${isChecked ? "" : "display:none;"}">
+      <label>Ration / animal / jour (kg) <span class="subtle">— suggestion : ${RATIONS_PAR_DEFAUT[g.key] * 1000} g/j</span></label>
+      <input type="number" id="fPrevVal_${g.key}" min="0" step="0.01" value="${startValue}">
+    </div>
+  `;
+  };
+
+  const body = `
+    <p class="subtle">Cet aliment (ou produit) peut concerner un seul groupe, deux, ou les trois — cochez uniquement les groupes réellement nourris avec cet article. Le nombre d'animaux de chaque groupe est lu automatiquement depuis l'inventaire (canetons, canardeaux, canards adultes/reproducteurs), et suit leur requalification par âge.</p>
+    <div class="spacer-s"></div>
+    ${groupRow(groupes[0])}
+    <div class="spacer-s"></div>
+    ${groupRow(groupes[1])}
+    <div class="spacer-s"></div>
+    ${groupRow(groupes[2])}
+    ${needsPoidsUnite ? `
+    <div class="spacer-s"></div>
+    <div class="field"><label>Poids moyen d'un ${item.unite} (kg) — nécessaire pour convertir le stock en kg</label><input type="number" id="fPrevPoidsUnite" min="0" step="0.1" value="${item.poids_unite_kg || ""}" placeholder="ex : 50"></div>
+    ` : ""}
+    <button class="btn yolk" id="fPrevSave">Enregistrer la prévision</button>
+  `;
+  openModal(`Prévision — ${item.nom}`, body, {
+    onMount: () => {
+      ["caneton", "canardeau", "adulte"].forEach(key => {
+        const chk = document.getElementById(`fPrevChk_${key}`);
+        const wrap = document.getElementById(`fPrevWrap_${key}`);
+        chk.addEventListener("change", () => {
+          wrap.style.display = chk.checked ? "" : "none";
+        });
+      });
+
+      document.getElementById("fPrevSave").addEventListener("click", async () => {
+        try {
+          const readGroup = (key) => {
+            const checked = document.getElementById(`fPrevChk_${key}`).checked;
+            if (!checked) return 0;
+            return Number(document.getElementById(`fPrevVal_${key}`).value) || 0;
+          };
+          const payload = {
+            prevision_kg_jour: {
+              caneton: readGroup("caneton"),
+              canardeau: readGroup("canardeau"),
+              adulte: readGroup("adulte")
+            }
+          };
+          if (needsPoidsUnite) {
+            payload.poids_unite_kg = Number(document.getElementById("fPrevPoidsUnite").value) || null;
+          }
+          await updateDoc(doc(db, "stock_items", item.id), payload);
+          toast("Prévision enregistrée ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
     }
   });
 }
