@@ -9,6 +9,7 @@ import { initNests } from "./nids.js";
 import { initFinances, openAddFinanceModal } from "./finances.js";
 import { initStocks, openAddStockItemModal } from "./stocks.js";
 import { initComptabilite } from "./comptabilite.js";
+import { initRapport } from "./rapport.js";
 
 const PAGES = ["dashboard", "inventaire", "nids", "finances", "stocks"];
 let currentPage = "dashboard";
@@ -127,6 +128,7 @@ async function boot() {
   initFinances();
   initStocks();
   initComptabilite();
+  initRapport();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker non enregistré :", err));
