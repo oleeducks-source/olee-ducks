@@ -199,9 +199,10 @@ async function openCanetonsArchiveModal() {
       <div class="card" style="background:var(--sage-100); border:none;">
         <div class="row"><div class="row-main"><span class="row-title">Total de canetons produits (cumulé)</span><span class="row-sub">Ne compte pas dans le cheptel actif actuel</span></div><span class="row-value pos">${total}</span></div>
       </div>
-      <div class="spacer-m"></div>
+      <p class="subtle" style="margin:10px 0 4px;">Touchez une ligne pour corriger la quantité ou supprimer une entrée en doublon.</p>
+      <div class="spacer-s"></div>
       ${entries.length ? entries.map(e => `
-        <div class="row with-icon">
+        <div class="row with-icon archive-entry" data-id="${e.id}" style="cursor:pointer;">
           <div class="row-icon"><svg><use href="#ic-duck-canardeau"/></svg></div>
           <div class="row-main">
             <span class="row-title">${e.quantite} caneton(s) passés en canardeau</span>
@@ -210,11 +211,60 @@ async function openCanetonsArchiveModal() {
         </div>
       `).join("") : `<div class="empty-state"><div class="glyph">🐥</div><p>Aucun passage caneton → canardeau archivé pour l'instant.</p></div>`}
     `;
-    openModal("Archive des canetons produits", body, { onMount: () => {} });
+    openModal("Archive des canetons produits", body, {
+      onMount: () => {
+        document.querySelectorAll(".archive-entry").forEach(rowEl => {
+          rowEl.addEventListener("click", () => {
+            const entry = entries.find(en => en.id === rowEl.dataset.id);
+            if (entry) openArchiveEntryModal(entry);
+          });
+        });
+      }
+    });
   } catch (e) {
     console.error(e);
     openModal("Archive des canetons produits", `<p class="subtle">Erreur de chargement : ${e.message}</p>`, { onMount: () => {} });
   }
+}
+
+// Correction d'une entrée d'archive (quantité erronée, doublon à
+// supprimer). Après action, on rouvre l'archive pour refléter le
+// changement — la liste n'est pas branchée en temps réel (getDocs
+// ponctuel), donc on la recharge explicitement ici.
+function openArchiveEntryModal(entry) {
+  const body = `
+    <div class="row"><div class="row-main"><span class="row-title">Date</span></div><span class="row-value">${formatDate(entry.date_transition)}</span></div>
+    ${entry.date_naissance ? `<div class="row"><div class="row-main"><span class="row-title">Date de naissance</span></div><span class="row-value">${formatDate(entry.date_naissance)}</span></div>` : ""}
+    <div class="field"><label>Quantité de canetons</label><input type="number" id="eArchQte" min="0" value="${entry.quantite}"></div>
+    <button class="btn secondary" id="eArchSave">Enregistrer la correction</button>
+    <div class="spacer-s"></div>
+    <button class="btn danger" id="eArchDelete">Supprimer cette entrée (doublon)</button>
+  `;
+  openModal("Corriger l'archive", body, {
+    onMount: () => {
+      document.getElementById("eArchSave").addEventListener("click", async () => {
+        const qte = Number(document.getElementById("eArchQte").value);
+        if (isNaN(qte) || qte < 0) { toast("Quantité invalide"); return; }
+        try {
+          await updateDoc(doc(db, "canetons_production", entry.id), {
+            quantite: qte,
+            corrige_par: getUserName() || "Inconnu",
+            corrige_le: serverTimestamp()
+          });
+          toast("Entrée corrigée ✓");
+          openCanetonsArchiveModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+      document.getElementById("eArchDelete").addEventListener("click", async () => {
+        if (!confirm("Supprimer définitivement cette entrée d'archive ? À utiliser si c'est un doublon.")) return;
+        try {
+          await deleteDoc(doc(db, "canetons_production", entry.id));
+          toast("Entrée supprimée ✓");
+          openCanetonsArchiveModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+    }
+  });
 }
 
 // Utilisé par stocks.js pour la prévision de consommation basée sur le
@@ -546,7 +596,7 @@ function openEditModal(d) {
           // requalification automatique ou le bouton dédié, pour que
           // l'archive de production reste complète quelle que soit la
           // méthode utilisée.
-          if (nouveauType === "canardeau" && d.type !== "canardeau") {
+          if (nouveauType === "canardeau" && (allDucks.find(x => x.id === d.id)?.type || d.type) !== "canardeau") {
             await archiverPassageCanardeau(d, Number(document.getElementById("eDuckQte").value) || 1, getUserName() || "Inconnu");
           }
           toast("Mis à jour ✓");
