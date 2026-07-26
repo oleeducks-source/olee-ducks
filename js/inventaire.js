@@ -5,7 +5,7 @@
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
-  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
@@ -37,18 +37,39 @@ const STATUT_LABELS = { actif: "Actif", vendu: "Vendu", mort: "Décédé", refor
 // Catégorie 1 — Caneton      : 0 à 3 semaines révolues (0-20 jours)
 // Catégorie 2 — Canardeau    : 4 à 8 semaines révolues (21-55 jours)
 // Catégorie 3 — Canard adulte: 8 semaines et plus (56 jours et +)
-// L'âge est calculé à partir de "date_entree" du lot. Seuls les lots
-// actuellement "caneton" ou "canardeau" sont concernés par ce décompte
+//
+// L'âge est calculé en priorité à partir de "date_naissance" (date de
+// naissance exacte, si renseignée) et sinon à partir de "date_entree"
+// (date d'ajout dans l'app, utilisée par défaut). Seuls les lots
+// actuellement "caneton" ou "canardeau" ET non verrouillés
+// ("verrouille_type" absent ou false) sont concernés par ce décompte
 // automatique — un canard ou un reproducteur ne redescend jamais dans
-// une catégorie plus jeune, et un lot ajouté directement comme
-// reproducteur n'est jamais touché par cette logique.
+// une catégorie plus jeune, et un lot verrouillé reste au stade choisi
+// manuellement tant qu'on ne le déverrouille pas.
+//
+// ⚠️ CORRECTIF (juillet 2026) : avant ce correctif, un lot dont la
+// "date_entree" datait de plusieurs mois (car saisie au moment de la
+// création du lot dans l'app, pas de la naissance réelle) se voyait
+// recalculé à un âge très avancé. Résultat : une requalification
+// manuelle caneton → canardeau était immédiatement "rattrapée" par
+// l'automatisme au rafraîchissement suivant, qui faisait alors bondir
+// le lot jusqu'à "canard" en une fraction de seconde, car son âge
+// calculé dépassait déjà le seuil des 8 semaines. Deux corrections :
+// (1) on peut désormais saisir une date de naissance exacte pour
+// calibrer correctement l'âge, (2) on peut verrouiller un stade pour
+// empêcher toute requalification automatique ultérieure.
 // ---------------------------------------------------------------------
 const SEMAINE_MS = 7 * 24 * 60 * 60 * 1000;
 const SEUIL_CANARDEAU_SEM = 4; // dès la 4e semaine révolue
 const SEUIL_CANARD_SEM = 8;    // dès la 8e semaine révolue
 
-function ageEnSemaines(dateEntree) {
-  const d = dateEntree?.toDate ? dateEntree.toDate() : new Date(dateEntree);
+function dateReferenceAge(d) {
+  return d.date_naissance || d.date_entree;
+}
+
+function ageEnSemaines(dateReference) {
+  if (!dateReference) return null;
+  const d = dateReference?.toDate ? dateReference.toDate() : new Date(dateReference);
   if (isNaN(d.getTime())) return null;
   return (Date.now() - d.getTime()) / SEMAINE_MS;
 }
@@ -64,16 +85,42 @@ function stadeAttendu(ageSemaines) {
 // pendant qu'une requalification est déjà en cours d'enregistrement.
 const requalificationEnCours = new Set();
 
-// Parcourt les lots actifs "caneton"/"canardeau" et fait automatiquement
-// avancer leur "type" quand l'âge calculé dépasse le seuil de la
-// catégorie suivante. Purement additif : ne touche jamais aux lots déjà
-// "canard" ou reproducteurs, ne supprime rien, trace l'auteur ("Système
-// (auto)") et la date comme pour une requalification manuelle.
+// Collection d'archive : un enregistrement permanent à chaque fois qu'un
+// lot de canetons passe au stade canardeau (donc quitte définitivement
+// la catégorie "caneton"). Ne compte jamais dans les totaux actifs
+// (aucune fonction de KPI ne lit cette collection) — c'est un historique
+// de production cumulé, y compris pour des lots depuis vendus/décédés.
+const canetonsProductionCol = collection(db, "canetons_production");
+
+async function archiverPassageCanardeau(lot, quantite, auteur) {
+  try {
+    await addDoc(canetonsProductionCol, {
+      quantite,
+      date_transition: new Date(),
+      date_naissance: lot.date_naissance || null,
+      date_entree: lot.date_entree || null,
+      lot_origine_id: lot.id,
+      bague_couleur: lot.bague_couleur || null,
+      enregistre_par: auteur
+    });
+  } catch (e) {
+    console.error("Erreur archivage production canetons :", e);
+  }
+}
+
+// Parcourt les lots actifs "caneton"/"canardeau" non verrouillés et fait
+// automatiquement avancer leur "type" quand l'âge calculé dépasse le
+// seuil de la catégorie suivante. Purement additif : ne touche jamais
+// aux lots déjà "canard" ou reproducteurs, ne supprime rien, trace
+// l'auteur ("Système (auto)") et la date comme pour une requalification
+// manuelle, et archive le passage caneton → canardeau.
 async function autoRequalifierParAge() {
-  const candidats = allDucks.filter(d => d.statut === "actif" && (d.type === "caneton" || d.type === "canardeau"));
+  const candidats = allDucks.filter(d =>
+    d.statut === "actif" && (d.type === "caneton" || d.type === "canardeau") && !d.verrouille_type
+  );
   for (const d of candidats) {
     if (requalificationEnCours.has(d.id)) continue;
-    const age = ageEnSemaines(d.date_entree);
+    const age = ageEnSemaines(dateReferenceAge(d));
     const stade = stadeAttendu(age);
     if (!stade || stade === d.type) continue;
     // On ne saute jamais directement caneton -> canard automatiquement :
@@ -88,6 +135,9 @@ async function autoRequalifierParAge() {
         requalifie_par: "Système (auto)",
         requalifie_le: serverTimestamp()
       });
+      if (prochainStade === "canardeau") {
+        await archiverPassageCanardeau(d, Number(d.quantite) || 1, "Système (auto)");
+      }
     } catch (e) {
       console.error("Erreur requalification automatique :", e);
     } finally {
@@ -120,10 +170,51 @@ export function initInventaire() {
       renderList();
     });
   });
+
+  const archiveBtn = document.getElementById("openCanetonsArchiveBtn");
+  if (archiveBtn) archiveBtn.addEventListener("click", openCanetonsArchiveModal);
 }
 
 function activeDucks() {
   return allDucks.filter(d => d.statut === "actif");
+}
+
+function formatInputDate(d) {
+  const date = d?.toDate ? d.toDate() : new Date(d);
+  const off = date.getTimezoneOffset();
+  return new Date(date.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+// Affiche l'archive de production de canetons (collection
+// "canetons_production"). Lecture seule, ne modifie rien ; le total
+// affiché est purement informatif ("combien de canetons ai-je produits
+// au total") et n'entre dans aucun calcul de cheptel actif.
+async function openCanetonsArchiveModal() {
+  openModal("Archive des canetons produits", `<p class="subtle">Chargement…</p>`, { onMount: () => {} });
+  try {
+    const snap = await getDocs(query(canetonsProductionCol, orderBy("date_transition", "desc")));
+    const entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const total = entries.reduce((a, e) => a + (Number(e.quantite) || 0), 0);
+    const body = `
+      <div class="card" style="background:var(--sage-100); border:none;">
+        <div class="row"><div class="row-main"><span class="row-title">Total de canetons produits (cumulé)</span><span class="row-sub">Ne compte pas dans le cheptel actif actuel</span></div><span class="row-value pos">${total}</span></div>
+      </div>
+      <div class="spacer-m"></div>
+      ${entries.length ? entries.map(e => `
+        <div class="row with-icon">
+          <div class="row-icon"><svg><use href="#ic-duck-canardeau"/></svg></div>
+          <div class="row-main">
+            <span class="row-title">${e.quantite} caneton(s) passés en canardeau</span>
+            <span class="row-sub">${formatDate(e.date_transition)}${e.date_naissance ? " · né(s) le " + formatDate(e.date_naissance) : ""} · ${escapeHtml(e.enregistre_par || "")}</span>
+          </div>
+        </div>
+      `).join("") : `<div class="empty-state"><div class="glyph">🐥</div><p>Aucun passage caneton → canardeau archivé pour l'instant.</p></div>`}
+    `;
+    openModal("Archive des canetons produits", body, { onMount: () => {} });
+  } catch (e) {
+    console.error(e);
+    openModal("Archive des canetons produits", `<p class="subtle">Erreur de chargement : ${e.message}</p>`, { onMount: () => {} });
+  }
 }
 
 // Utilisé par stocks.js pour la prévision de consommation basée sur le
@@ -220,7 +311,8 @@ export function openAddDuckModal() {
       <div class="field"><label>Quantité (lot)</label><input type="number" id="fDuckQte" value="1" min="1"></div>
       <div class="field"><label>Date d'entrée</label><input type="date" id="fDuckDate" value="${todayInputValue()}"></div>
     </div>
-    <p class="subtle" style="margin:-4px 0 8px;">Pour un caneton ou un canardeau, cette date sert de référence pour la requalification automatique par âge (0-3 sem. → caneton, 4-8 sem. → canardeau, 8 sem. et + → canard).</p>
+    <div class="field"><label>Date de naissance exacte (optionnel)</label><input type="date" id="fDuckDateNaissance"></div>
+    <p class="subtle" style="margin:-4px 0 8px;">Pour un caneton ou un canardeau, la date de naissance (si connue) est utilisée en priorité sur la date d'entrée pour calculer l'âge et déclencher la requalification automatique (0-3 sem. → caneton, 4-8 sem. → canardeau, 8 sem. et + → canard).</p>
     <div class="field-row">
       <div class="field">
         <label>Couleur de bague</label>
@@ -244,6 +336,7 @@ export function openAddDuckModal() {
           type: document.getElementById("fDuckType").value,
           quantite: Number(document.getElementById("fDuckQte").value) || 1,
           date_entree: new Date(document.getElementById("fDuckDate").value),
+          date_naissance: document.getElementById("fDuckDateNaissance").value ? new Date(document.getElementById("fDuckDateNaissance").value) : null,
           bague_couleur: document.getElementById("fDuckBague").value || null,
           numero_bague: document.getElementById("fDuckNum").value.trim() || null,
           notes: document.getElementById("fDuckNotes").value.trim() || null,
@@ -269,7 +362,7 @@ export function openAddDuckModal() {
 function openEditModal(d) {
   const isActif = d.statut === "actif";
   const estJeune = d.type === "caneton" || d.type === "canardeau";
-  const age = ageEnSemaines(d.date_entree);
+  const age = ageEnSemaines(dateReferenceAge(d));
   const prochainStade = d.type === "caneton" ? "canardeau" : "canard";
   const seuilProchain = d.type === "caneton" ? SEUIL_CANARDEAU_SEM : SEUIL_CANARD_SEM;
   const semainesRestantes = (age !== null && estJeune) ? Math.max(0, Math.ceil(seuilProchain - age)) : null;
@@ -311,6 +404,21 @@ function openEditModal(d) {
     <div class="spacer-m"></div>
     <h3 style="font-size:14px; margin-bottom:8px;">Corriger cet enregistrement</h3>
     <div class="field">
+      <label>Type / stade</label>
+      <select id="eDuckType">
+        <option value="caneton" ${d.type === "caneton" ? "selected" : ""}>Caneton (0-3 sem.)</option>
+        <option value="canardeau" ${d.type === "canardeau" ? "selected" : ""}>Canardeau (4-8 sem.)</option>
+        <option value="canard" ${d.type === "canard" ? "selected" : ""}>Canard (8 sem. et +)</option>
+        <option value="reproducteur_male" ${d.type === "reproducteur_male" ? "selected" : ""}>Reproducteur mâle</option>
+        <option value="reproducteur_femelle" ${d.type === "reproducteur_femelle" ? "selected" : ""}>Reproductrice femelle</option>
+      </select>
+    </div>
+    <div class="field"><label>Date de naissance exacte (optionnel — prioritaire sur la date d'entrée pour le calcul d'âge)</label><input type="date" id="eDuckDateNaissance" value="${d.date_naissance ? formatInputDate(d.date_naissance) : ""}"></div>
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;">
+      <input type="checkbox" id="eDuckLock" style="width:auto;" ${d.verrouille_type ? "checked" : ""}>
+      <label style="margin:0;">Verrouiller ce stade (bloque toute requalification automatique par âge)</label>
+    </div>
+    <div class="field">
       <label>Statut de l'ensemble du lot</label>
       <select id="eDuckStatut">
         <option value="actif" ${d.statut === "actif" ? "selected" : ""}>Actif</option>
@@ -340,6 +448,7 @@ function openEditModal(d) {
               requalifie_par: getUserName() || "Inconnu",
               requalifie_le: serverTimestamp()
             });
+            if (prochainStade === "canardeau") await archiverPassageCanardeau(d, qte, getUserName() || "Inconnu");
           } else {
             await updateDoc(doc(db, "ducks", d.id), {
               quantite: currentQte - qte,
@@ -350,6 +459,7 @@ function openEditModal(d) {
               type: prochainStade,
               quantite: qte,
               date_entree: d.date_entree || new Date(),
+              date_naissance: d.date_naissance || null,
               bague_couleur: d.bague_couleur || null,
               numero_bague: d.numero_bague || null,
               notes: null,
@@ -362,6 +472,7 @@ function openEditModal(d) {
               cree_par: getUserName() || "Inconnu",
               createdAt: serverTimestamp()
             });
+            if (prochainStade === "canardeau") await archiverPassageCanardeau(d, qte, getUserName() || "Inconnu");
           }
           toast(`${qte} sujet(s) requalifié(s) en ${TYPE_LABELS[prochainStade].toLowerCase()} ✓`);
           closeModal();
@@ -416,9 +527,13 @@ function openEditModal(d) {
 
       document.getElementById("eDuckSave").addEventListener("click", async () => {
         const statut = document.getElementById("eDuckStatut").value;
+        const nouveauType = document.getElementById("eDuckType").value;
         try {
           await updateDoc(doc(db, "ducks", d.id), {
+            type: nouveauType,
             statut,
+            date_naissance: document.getElementById("eDuckDateNaissance").value ? new Date(document.getElementById("eDuckDateNaissance").value) : null,
+            verrouille_type: document.getElementById("eDuckLock").checked,
             quantite: Number(document.getElementById("eDuckQte").value) || 1,
             motif_sortie: document.getElementById("eDuckMotif").value.trim() || null,
             notes: document.getElementById("eDuckNotes").value.trim() || null,
@@ -426,6 +541,14 @@ function openEditModal(d) {
             modifie_par: getUserName() || "Inconnu",
             modifie_le: serverTimestamp()
           });
+          // Si la correction fait passer le lot en "canardeau" et qu'il ne
+          // l'était pas déjà, on archive ce passage — même logique que la
+          // requalification automatique ou le bouton dédié, pour que
+          // l'archive de production reste complète quelle que soit la
+          // méthode utilisée.
+          if (nouveauType === "canardeau" && d.type !== "canardeau") {
+            await archiverPassageCanardeau(d, Number(document.getElementById("eDuckQte").value) || 1, getUserName() || "Inconnu");
+          }
           toast("Mis à jour ✓");
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
