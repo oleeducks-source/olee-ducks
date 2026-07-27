@@ -1,26 +1,26 @@
 // =====================================================================
 // MODULE : NOTIFICATIONS
 // Alerte l'utilisateur (via l'API Notification du navigateur) pour les
-// événements clés de la ferme : ponte, éclosion, recette, dépense, et
-// requalification de cheptel imminente (J-2/J-1).
+// événements de la ferme survenus DEPUIS SA DERNIÈRE VISITE : pontes,
+// couvaisons, éclosions, ventes, dépenses, mouvements de stock — et les
+// requalifications de cheptel imminentes (J-2/J-1).
 //
-// ⚠️ LIMITE TECHNIQUE IMPORTANTE À CONNAÎTRE :
-// Ces notifications fonctionnent tant que l'application est OUVERTE sur
-// le téléphone (au premier plan ou en arrière-plan, onglet non fermé).
-// Une vraie notification "push" reçue même app fermée/tuée nécessite un
+// Fonctionnement : à chaque connexion à l'app, un seul résumé est
+// calculé et notifié (pas de flux continu en arrière-plan). C'est un
+// choix délibéré pour rester 100% gratuit et léger en batterie/données :
+// une vraie notification "push" reçue même app fermée nécessiterait un
 // service serveur (Firebase Cloud Messaging + Cloud Functions), qui
-// exige le plan payant "Blaze" de Firebase — hors du cadre gratuit
-// choisi pour cette app depuis le début. Ce module offre donc la
-// meilleure alternative gratuite : une détection quasi immédiate
-// (1 à quelques secondes) tant que l'app tourne quelque part.
+// exige le plan payant "Blaze" — hors du cadre gratuit choisi pour cette
+// app.
 //
 // Module 100% LECTURE SEULE : aucune écriture Firestore.
 // =====================================================================
 import { db } from "./firebase-config.js";
-import { collection, query, where, orderBy, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { collection, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatFCFA, formatDate } from "./utils.js";
 
 const NOTIF_KEY = "oleeducks_notifs_enabled";
+const LAST_VISIT_KEY = "oleeducks_derniere_visite";
 const SEMAINE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function initNotifications() {
@@ -51,13 +51,11 @@ export function initNotifications() {
     }
     localStorage.setItem(NOTIF_KEY, "1");
     refreshBell();
-    envoyerNotif("🔔 Notifications activées", "Vous serez alerté pour les pontes, éclosions, ventes, dépenses et requalifications à venir — tant que l'app reste ouverte sur ce téléphone.");
+    envoyerNotif("🔔 Notifications activées", "Vous recevrez un résumé de l'activité de la ferme à chaque connexion à l'app.");
+    genererResumeConnexion();
   });
 
-  if (actives()) demarrerEcoute();
-  // Si l'utilisateur a déjà activé les notifications sur ce téléphone lors
-  // d'une session précédente mais que le navigateur a depuis révoqué la
-  // permission, on ne relance pas l'écoute inutilement.
+  if (actives()) genererResumeConnexion();
 }
 
 function peutNotifier() {
@@ -73,78 +71,76 @@ function envoyerNotif(titre, corps) {
   }
 }
 
-function demarrerEcoute() {
-  ecouterPontes();
-  ecouterEclosions();
-  ecouterFinances();
-  ecouterRequalifications();
+function toMs(v) {
+  if (!v) return 0;
+  const d = v?.toDate ? v.toDate() : new Date(v);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
 }
 
-// ---- Pontes en cours : nouvelle ponte démarrée + œufs ajoutés ----
-function ecouterPontes() {
-  let connus = {};
-  let premier = true;
-  onSnapshot(query(collection(db, "nest_cycles"), where("statut", "in", ["ponte", "couvaison"])), (snap) => {
-    const nouveaux = {};
-    snap.docs.forEach(d => { nouveaux[d.id] = { id: d.id, ...d.data() }; });
-    if (!premier) {
-      Object.values(nouveaux).forEach(c => {
-        const avant = connus[c.id];
-        if (!avant) {
-          envoyerNotif("🥚 Ponte démarrée", `Nid n° ${c.nid_numero} — ${c.nombre_oeufs || 0} œuf(s)`);
-          return;
-        }
-        const delta = (Number(c.nombre_oeufs) || 0) - (Number(avant.nombre_oeufs) || 0);
-        if (delta > 0) envoyerNotif("🥚 Œufs enregistrés", `Nid n° ${c.nid_numero} : +${delta} œuf(s) (total ${c.nombre_oeufs || 0})`);
-      });
+// ---------------------------------------------------------------------
+// Résumé calculé UNE FOIS par connexion à l'app : compare l'horodatage
+// de la dernière visite (stocké localement sur ce téléphone) aux
+// documents lus, puis notifie un condensé plutôt qu'un événement par
+// événement — évite le flux continu tout en gardant l'utilisateur
+// informé de ce qui s'est passé pendant son absence.
+// ---------------------------------------------------------------------
+async function genererResumeConnexion() {
+  if (!peutNotifier()) return;
+
+  const dernierVisiteBrut = localStorage.getItem(LAST_VISIT_KEY);
+  const premiereFois = !dernierVisiteBrut;
+  // Par défaut (toute première activation), on résume les dernières 24h
+  // pour ne pas noyer l'utilisateur avec tout l'historique de la ferme.
+  const depuis = premiereFois ? Date.now() - 24 * 60 * 60 * 1000 : Number(dernierVisiteBrut);
+  localStorage.setItem(LAST_VISIT_KEY, String(Date.now()));
+
+  try {
+    const [cyclesSnap, txSnap, movSnap, ducksSnap] = await Promise.all([
+      getDocs(collection(db, "nest_cycles")),
+      getDocs(collection(db, "finance_transactions")),
+      getDocs(collection(db, "stock_mouvements")),
+      getDocs(collection(db, "ducks"))
+    ]);
+
+    const cycles = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const tx = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const mouvements = movSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const ducks = ducksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Pontes/couvaisons : on compte les cycles DÉMARRÉS depuis la dernière visite
+    const nouvellesPontes = cycles.filter(c => toMs(c.date_debut) >= depuis).length;
+    // Éclosions et échecs archivés depuis la dernière visite
+    const eclosions = cycles.filter(c => c.statut === "eclos" && toMs(c.date_fin) >= depuis);
+    const echecs = cycles.filter(c => c.statut === "echec" && toMs(c.date_fin) >= depuis);
+    const totalEclos = eclosions.reduce((a, c) => a + (Number(c.nombre_eclos) || 0), 0);
+
+    const recentesTx = tx.filter(t => toMs(t.createdAt || t.date) >= depuis);
+    const recettes = recentesTx.filter(t => t.type === "recette");
+    const depenses = recentesTx.filter(t => t.type === "depense");
+    const totalRecettes = recettes.reduce((a, t) => a + (Number(t.montant) || 0), 0);
+    const totalDepenses = depenses.reduce((a, t) => a + (Number(t.montant) || 0), 0);
+
+    const mouvementsRecents = mouvements.filter(m => toMs(m.createdAt || m.date) >= depuis);
+    const entrees = mouvementsRecents.filter(m => m.type_mouvement === "entree").length;
+    const sorties = mouvementsRecents.filter(m => m.type_mouvement === "sortie").length;
+
+    const lignes = [];
+    if (nouvellesPontes) lignes.push(`🥚 ${nouvellesPontes} ponte(s) démarrée(s)`);
+    if (eclosions.length) lignes.push(`🐣 ${eclosions.length} éclosion(s) (${totalEclos} caneton(s))`);
+    if (echecs.length) lignes.push(`⚠️ ${echecs.length} échec(s) de couvaison`);
+    if (recettes.length) lignes.push(`💰 ${recettes.length} recette(s) — ${formatFCFA(totalRecettes)}`);
+    if (depenses.length) lignes.push(`💸 ${depenses.length} dépense(s) — ${formatFCFA(totalDepenses)}`);
+    if (entrees) lignes.push(`📦 ${entrees} entrée(s) de stock (achat)`);
+    if (sorties) lignes.push(`📤 ${sorties} sortie(s) de stock (usage)`);
+
+    if (lignes.length) {
+      envoyerNotif("📋 Depuis votre dernière visite", lignes.join("\n"));
     }
-    connus = nouveaux;
-    premier = false;
-  }, err => console.error("Erreur notifications pontes :", err));
-}
 
-// ---- Éclosions et échecs de couvaison (nouvelles archives) ----
-function ecouterEclosions() {
-  let idsConnus = new Set();
-  let premier = true;
-  onSnapshot(query(collection(db, "nest_cycles"), where("statut", "in", ["eclos", "echec"])), (snap) => {
-    const nouveauxIds = new Set();
-    snap.docs.forEach(d => {
-      nouveauxIds.add(d.id);
-      if (!premier && !idsConnus.has(d.id)) {
-        const c = { id: d.id, ...d.data() };
-        if (c.statut === "eclos") {
-          envoyerNotif("🐣 Éclosion enregistrée", `Nid n° ${c.nid_numero} : ${c.nombre_eclos || 0}/${c.nombre_oeufs || 0} œufs éclos`);
-        } else {
-          envoyerNotif("⚠️ Échec de couvaison", `Nid n° ${c.nid_numero}`);
-        }
-      }
-    });
-    idsConnus = nouveauxIds;
-    premier = false;
-  }, err => console.error("Erreur notifications éclosions :", err));
-}
-
-// ---- Recettes et dépenses ----
-function ecouterFinances() {
-  let idsConnus = new Set();
-  let premier = true;
-  onSnapshot(query(collection(db, "finance_transactions"), orderBy("createdAt", "desc"), limit(20)), (snap) => {
-    const nouveauxIds = new Set();
-    snap.docs.forEach(d => {
-      nouveauxIds.add(d.id);
-      if (!premier && !idsConnus.has(d.id)) {
-        const t = { id: d.id, ...d.data() };
-        if (t.type === "recette") {
-          envoyerNotif("💰 Recette enregistrée", `${formatFCFA(t.montant)} — ${t.description || t.categorie || ""}`.trim());
-        } else {
-          envoyerNotif("💸 Dépense enregistrée", `${formatFCFA(t.montant)} — ${t.description || t.categorie || ""}`.trim());
-        }
-      }
-    });
-    idsConnus = nouveauxIds;
-    premier = false;
-  }, err => console.error("Erreur notifications finances :", err));
+    verifierRequalificationsAVenir(ducks);
+  } catch (e) {
+    console.error("Erreur génération du résumé de connexion :", e);
+  }
 }
 
 // ---- Alerte J-2 / J-1 avant requalification automatique d'un lot ----
@@ -158,6 +154,7 @@ function ageEnSemaines(d) {
 
 function verifierRequalificationsAVenir(ducks) {
   const aujourdhui = new Date().toDateString();
+  const alertes = [];
   ducks
     .filter(d => d.statut === "actif" && (d.type === "caneton" || d.type === "canardeau") && !d.verrouille_type)
     .forEach(d => {
@@ -170,24 +167,7 @@ function verifierRequalificationsAVenir(ducks) {
       if (localStorage.getItem(cle)) return; // déjà notifié aujourd'hui pour ce lot
       localStorage.setItem(cle, "1");
       const prochain = d.type === "caneton" ? "canardeau" : "canard";
-      envoyerNotif(
-        "⏳ Requalification à venir",
-        `${d.quantite || 1} sujet(s) (lot du ${formatDate(d.date_entree)}) passeront en ${prochain} dans ${joursRestants} jour(s).`
-      );
+      alertes.push(`⏳ ${d.quantite || 1} sujet(s) (lot du ${formatDate(d.date_entree)}) → ${prochain} dans ${joursRestants} j`);
     });
-}
-
-function ecouterRequalifications() {
-  let dernierDucks = [];
-  onSnapshot(collection(db, "ducks"), (snap) => {
-    dernierDucks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    verifierRequalificationsAVenir(dernierDucks);
-  }, err => console.error("Erreur notifications requalification :", err));
-  // Filet de sécurité : si l'app reste ouverte en arrière-plan pendant
-  // plusieurs heures sans qu'aucune donnée "ducks" ne change (donc sans
-  // nouveau snapshot), on revérifie quand même périodiquement pour ne
-  // pas manquer un changement de jour (passage à J-1 par exemple).
-  setInterval(() => {
-    if (dernierDucks.length) verifierRequalificationsAVenir(dernierDucks);
-  }, 6 * 60 * 60 * 1000);
+  if (alertes.length) envoyerNotif("⏳ Requalifications à venir", alertes.join("\n"));
 }
