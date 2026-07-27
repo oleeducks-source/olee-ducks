@@ -22,7 +22,7 @@ let filterType = "all";
 let searchQuery = "";
 
 const CATS_RECETTE = { vente_canards: "Vente de canards", vente_oeufs: "Vente d'œufs", vente_canetons: "Vente de canetons", autre: "Autre recette" };
-const CATS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", achat_animaux: "Achat d'animaux", autre: "Autre dépense" };
+const CATS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", achat_animaux: "Achat d'animaux", transport: "Transport / livraison", autre: "Autre dépense" };
 
 const CATS_ICONS = {
   vente_canards: "ic-duck-canard", vente_oeufs: "ic-nest-ponte", vente_canetons: "ic-duck-caneton", autre: "ic-cat-autre",
