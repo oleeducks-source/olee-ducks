@@ -11,7 +11,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setMaskableText, initEyeToggle } from "./utils.js";
 import { reverserEcriture } from "./comptabilite.js";
 import { attacherRecu, retirerRecu } from "./pieces-jointes.js";
 
@@ -32,6 +32,9 @@ const CATS_ICONS = {
 function catIcon(t) { return CATS_ICONS[t.categorie] || (t.type === "recette" ? "ic-money-in" : "ic-money-out"); }
 
 export function initFinances() {
+  initEyeToggle("kpiBalanceEye");
+  initEyeToggle("finBalanceEye");
+
   onSnapshot(query(finCol, orderBy("date", "desc")), (snap) => {
     allTx = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderAll();
@@ -86,19 +89,19 @@ function renderAll() {
   const depenses = items.filter(t => t.type === "depense").reduce((a, t) => a + Number(t.montant || 0), 0);
   const balance = recettes - depenses;
 
-  setText("finBalance", formatFCFA(balance));
+  setMaskableText("finBalance", formatFCFA(balance));
   document.getElementById("finBalance")?.classList.toggle("negative", balance < 0);
-  setText("finRecettes", formatFCFA(recettes));
-  setText("finDepenses", formatFCFA(depenses));
+  setMaskableText("finRecettes", formatFCFA(recettes));
+  setMaskableText("finDepenses", formatFCFA(depenses));
 
   // Dashboard (toujours en vision globale, indépendante des filtres de la page Finances)
   const allRecettes = allTx.filter(t => t.type === "recette").reduce((a, t) => a + Number(t.montant || 0), 0);
   const allDepenses = allTx.filter(t => t.type === "depense").reduce((a, t) => a + Number(t.montant || 0), 0);
   const allBalance = allRecettes - allDepenses;
-  setText("kpiBalance", formatFCFA(allBalance));
+  setMaskableText("kpiBalance", formatFCFA(allBalance));
   document.getElementById("kpiBalance")?.classList.toggle("negative", allBalance < 0);
-  setText("kpiRecettes", formatFCFA(allRecettes));
-  setText("kpiDepenses", formatFCFA(allDepenses));
+  setMaskableText("kpiRecettes", formatFCFA(allRecettes));
+  setMaskableText("kpiDepenses", formatFCFA(allDepenses));
 
   const listEl = document.getElementById("finList");
   if (listEl) {
