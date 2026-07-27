@@ -495,7 +495,8 @@ function barChart(st, items, opts = {}) {
     pdf.setFillColor(...(it.color || CHART_PALETTE[i % CHART_PALETTE.length]));
     pdf.rect(MARGIN_X + labelW, y, w, barH, "F");
     pdf.setFont("helvetica", "bold"); pdf.setFontSize(8); pdf.setTextColor(...C.pond950);
-    pdf.text(opts.formatValue ? opts.formatValue(it.value) : String(it.value), MARGIN_X + labelW + barAreaW + 2, y + barH / 2 + 1.5);
+    const label = opts.formatValue ? opts.formatValue(it.value) : String(it.value);
+    pdf.text(String(label), MARGIN_X + labelW + barAreaW + 2, y + barH / 2 + 1.5);
   });
   st.y += totalH + 8;
 }
@@ -640,7 +641,7 @@ function sectionStocks(st, agg) {
 
   if (s.items.length) {
     sousTitreSection(st, "Niveau de stock par article");
-    barChart(st, s.items.map(i => ({ label: i.nom, value: Number(i.quantite_actuelle) || 0, color: Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0) ? C.clay : C.pond600 })), { formatValue: (v, idx) => v });
+    barChart(st, s.items.map(i => ({ label: i.nom, value: Number(i.quantite_actuelle) || 0, color: Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0) ? C.clay : C.pond600 })), { formatValue: (v) => String(v) });
 
     sousTitreSection(st, "État des articles");
     const headers = s.valorisationStock !== null
