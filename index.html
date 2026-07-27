@@ -137,6 +137,7 @@
       Olee Ducks
     </div>
     <div class="status">
+      <button id="notifBell" class="notif-bell" aria-label="Activer les notifications" title="Notifications">🔔</button>
       <button id="userChip" class="user-chip">👤 <span id="userChipLabel">…</span></button>
       <span id="syncDot" class="sync-dot"></span>
       <span id="syncLabel">Connexion…</span>
@@ -156,7 +157,10 @@
     </div>
 
     <div class="balance-banner">
-      <div class="kpi-label">Balance commerciale</div>
+      <div class="balance-banner-top">
+        <div class="kpi-label">Balance commerciale</div>
+        <button class="eye-toggle" id="kpiBalanceEye" aria-label="Afficher/masquer les montants"></button>
+      </div>
       <div class="amount" id="kpiBalance">—</div>
       <div class="breakdown">
         <div>Recettes <b id="kpiRecettes">—</b></div>
@@ -294,7 +298,10 @@
       <button class="btn secondary small" id="openComptaBtn">Comptabilité OHADA →</button>
     </div>
     <div class="balance-banner">
-      <div class="kpi-label">Balance période</div>
+      <div class="balance-banner-top">
+        <div class="kpi-label">Balance période</div>
+        <button class="eye-toggle" id="finBalanceEye" aria-label="Afficher/masquer les montants"></button>
+      </div>
       <div class="amount" id="finBalance">—</div>
       <div class="breakdown">
         <div>Recettes <b id="finRecettes">—</b></div>
