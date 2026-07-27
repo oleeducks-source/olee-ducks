@@ -147,6 +147,62 @@ export function promptChangeUserName() {
   });
 }
 
+// ---------------------------------------------------------------------
+// Masquage des montants (icône œil) — préférence purement locale à
+// l'appareil, stockée en localStorage. Ne modifie jamais les données ;
+// seuls les éléments marqués avec un attribut data-real (le texte réel à
+// afficher) sont concernés.
+// ---------------------------------------------------------------------
+const BALANCE_HIDDEN_KEY = "oleeducks_balance_hidden";
+
+export function isBalanceHidden() {
+  return localStorage.getItem(BALANCE_HIDDEN_KEY) === "1";
+}
+
+function maskText(text) {
+  return String(text).replace(/[0-9]/g, "•");
+}
+
+// Affiche `text` dans l'élément #id, masqué (chiffres remplacés par des
+// points) si l'utilisateur a choisi de cacher les montants. Le texte
+// réel est conservé dans data-real pour pouvoir re-basculer sans
+// recalculer quoi que ce soit.
+export function setMaskableText(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.dataset.real = text;
+  el.textContent = isBalanceHidden() ? maskText(text) : text;
+}
+
+// Réapplique le masquage/l'affichage sur tous les éléments marqués
+// data-real de la page (utile après un changement de page ou un
+// nouveau rendu Firestore).
+export function refreshMaskedAmounts() {
+  const hidden = isBalanceHidden();
+  document.querySelectorAll("[data-real]").forEach(el => {
+    el.textContent = hidden ? maskText(el.dataset.real) : el.dataset.real;
+  });
+}
+
+// Branche un bouton "œil" (id fourni) qui bascule l'affichage/masquage
+// de TOUS les montants marqués data-real sur la page, et persiste ce
+// choix pour les prochaines ouvertures de l'app.
+export function initEyeToggle(buttonId) {
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  const applyIcon = () => {
+    btn.innerHTML = isBalanceHidden()
+      ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8M9.5 5.4A10.4 10.4 0 0112 5c6 0 10 7 10 7a17.3 17.3 0 01-3.2 4.1M6.6 6.6C4 8.3 2 11 2 11s4 7 10 7c1.2 0 2.4-.2 3.4-.6"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  };
+  applyIcon();
+  btn.addEventListener("click", () => {
+    localStorage.setItem(BALANCE_HIDDEN_KEY, isBalanceHidden() ? "0" : "1");
+    applyIcon();
+    refreshMaskedAmounts();
+  });
+}
+
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
