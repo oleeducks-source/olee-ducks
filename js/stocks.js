@@ -171,14 +171,16 @@ function renderList() {
   listEl.innerHTML = items.map(i => {
     const daysLeft = estimateDaysLeft(i);
     const prevision = estimateDaysLeftCheptel(i);
-    const joursAffiches = (prevision && prevision.jours !== null) ? prevision.jours : daysLeft;
+    const previsionActive = prevision && prevision.jours !== null;
+    const joursAffiches = previsionActive ? prevision.jours : daysLeft;
+    const sourceLabel = previsionActive ? " (prévision cheptel)" : (joursAffiches !== null ? " (historique)" : "");
     const low = Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0);
     return `
     <div class="row with-icon">
       ${sackGaugeSvg(i)}
       <div class="row-main">
         <span class="row-title">${escapeHtml(i.nom)}</span>
-        <span class="row-sub">${i.type === "aliment" ? "Aliment" : "Vétérinaire"} · ${formatFCFA(i.cout_unitaire_moyen)} / ${i.unite}${joursAffiches !== null ? ` · ~${joursAffiches} j restants` : ""}${i.cree_par ? " · ajouté par " + escapeHtml(i.cree_par) : ""}</span>
+        <span class="row-sub">${i.type === "aliment" ? "Aliment" : "Vétérinaire"} · ${formatFCFA(i.cout_unitaire_moyen)} / ${i.unite}${joursAffiches !== null ? ` · ~${joursAffiches} j restants${sourceLabel}` : ""}${i.cree_par ? " · ajouté par " + escapeHtml(i.cree_par) : ""}</span>
       </div>
       <span class="tag ${low ? "danger" : "ok"}">${i.quantite_actuelle} ${i.unite}</span>
     </div>`;
@@ -357,7 +359,7 @@ function openPrevisionModal(item) {
     </div>
     <div class="field" id="fPrevWrap_${g.key}" style="${isChecked ? "" : "display:none;"}">
       <label>Ration / animal / jour (kg) <span class="subtle">— suggestion : ${RATIONS_PAR_DEFAUT[g.key] * 1000} g/j</span></label>
-      <input type="number" id="fPrevVal_${g.key}" min="0" step="0.01" value="${startValue}">
+      <input type="text" inputmode="decimal" id="fPrevVal_${g.key}" value="${String(startValue).replace('.', ',')}">
     </div>
   `;
   };
@@ -372,7 +374,7 @@ function openPrevisionModal(item) {
     ${groupRow(groupes[2])}
     ${needsPoidsUnite ? `
     <div class="spacer-s"></div>
-    <div class="field"><label>Poids moyen d'un ${item.unite} (kg) — nécessaire pour convertir le stock en kg</label><input type="number" id="fPrevPoidsUnite" min="0" step="0.1" value="${item.poids_unite_kg || ""}" placeholder="ex : 50"></div>
+    <div class="field"><label>Poids moyen d'un ${item.unite} (kg) — nécessaire pour convertir le stock en kg</label><input type="text" inputmode="decimal" id="fPrevPoidsUnite" value="${item.poids_unite_kg ? String(item.poids_unite_kg).replace('.', ',') : ""}" placeholder="ex : 50"></div>
     ` : ""}
     <button class="btn yolk" id="fPrevSave">Enregistrer la prévision</button>
   `;
@@ -388,24 +390,41 @@ function openPrevisionModal(item) {
 
       document.getElementById("fPrevSave").addEventListener("click", async () => {
         try {
+          // Accepte aussi bien "0.15" que "0,15" — certains claviers mobiles
+          // en français saisissent une virgule que <input type="number">
+          // rejette silencieusement, ce qui enregistrait une ration à 0 sans
+          // aucun message d'erreur (bug corrigé ici).
+          const parseDecimal = (v) => {
+            const n = Number(String(v).trim().replace(",", "."));
+            return isNaN(n) ? 0 : n;
+          };
           const readGroup = (key) => {
             const checked = document.getElementById(`fPrevChk_${key}`).checked;
             if (!checked) return 0;
-            return Number(document.getElementById(`fPrevVal_${key}`).value) || 0;
+            return parseDecimal(document.getElementById(`fPrevVal_${key}`).value);
           };
-          const payload = {
-            prevision_kg_jour: {
-              caneton: readGroup("caneton"),
-              canardeau: readGroup("canardeau"),
-              adulte: readGroup("adulte")
-            }
+          const prevision_kg_jour = {
+            caneton: readGroup("caneton"),
+            canardeau: readGroup("canardeau"),
+            adulte: readGroup("adulte")
           };
+          const payload = { prevision_kg_jour };
+          let poidsUnite = item.poids_unite_kg || null;
           if (needsPoidsUnite) {
-            payload.poids_unite_kg = Number(document.getElementById("fPrevPoidsUnite").value) || null;
+            poidsUnite = parseDecimal(document.getElementById("fPrevPoidsUnite").value) || null;
+            payload.poids_unite_kg = poidsUnite;
+          }
+          if (!prevision_kg_jour.caneton && !prevision_kg_jour.canardeau && !prevision_kg_jour.adulte) {
+            toast("Cochez au moins un groupe et indiquez sa ration pour activer la prévision");
+            return;
           }
           await updateDoc(doc(db, "stock_items", item.id), payload);
           toast("Prévision enregistrée ✓");
-          closeModal();
+          // On ré-ouvre immédiatement la fiche de l'article (avec les
+          // nouvelles valeurs fusionnées localement) pour que l'autonomie
+          // prévisionnelle calculée soit visible tout de suite, sans avoir
+          // à rouvrir manuellement l'article.
+          openItemDetail({ ...item, prevision_kg_jour, poids_unite_kg: poidsUnite });
         } catch (e) { toast("Erreur : " + e.message); }
       });
     }
