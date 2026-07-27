@@ -29,6 +29,8 @@ let currentNidsView = "grille";
 
 const DUREE_INCUBATION_JOURS = 28; // incubation moyenne du canard
 
+let premierChargementCycles = true;
+
 export function initNests() {
   ensureNestsExist().catch((e) => {
     console.error("Impossible d'initialiser les 100 nids :", e);
@@ -43,8 +45,25 @@ export function initNests() {
   }, err => console.error("Erreur lecture nids :", err));
 
   onSnapshot(query(cyclesCol, where("statut", "in", ["ponte", "couvaison"])), (snap) => {
-    cyclesMap = {};
-    snap.docs.forEach(d => { cyclesMap[d.id] = { id: d.id, ...d.data() }; });
+    const nouveauCyclesMap = {};
+    snap.docs.forEach(d => { nouveauCyclesMap[d.id] = { id: d.id, ...d.data() }; });
+
+    // Détecte toute variation du nombre d'œufs (ce téléphone ou un autre)
+    // pour déclencher l'animation "+N" au coin du nid concerné — sauf au
+    // tout premier chargement de la page, pour ne pas tout animer d'un
+    // coup à l'ouverture de l'app.
+    if (!premierChargementCycles) {
+      Object.values(nouveauCyclesMap).forEach(c => {
+        const avant = cyclesMap[c.id];
+        const avantQte = avant ? Number(avant.nombre_oeufs) || 0 : 0;
+        const apresQte = Number(c.nombre_oeufs) || 0;
+        const delta = apresQte - avantQte;
+        if (delta !== 0) animerGainOeufs(c.nid_numero, delta);
+      });
+    }
+    premierChargementCycles = false;
+
+    cyclesMap = nouveauCyclesMap;
     renderGrids();
     renderEnCoursList();
     renderDashboardNestKpi();
@@ -99,6 +118,22 @@ async function ensureNestsExist() {
 
 function cycleForNest(n) {
   return Object.values(cyclesMap).find(c => c.nid_numero === n);
+}
+
+// Anime un petit badge "+N" (ou "-N") avec une icône d'œuf dans le coin
+// supérieur droit du nid concerné, sur toutes les grilles visibles
+// (mini-grille du tableau de bord + grille complète de la page Nids).
+// Purement visuel, ne lit ni n'écrit aucune donnée.
+function animerGainOeufs(n, delta) {
+  if (!delta) return;
+  document.querySelectorAll(`.nest-cell[data-n="${n}"]`).forEach(cell => {
+    const badge = document.createElement("div");
+    badge.className = "egg-pop" + (delta < 0 ? " neg" : "");
+    badge.innerHTML = `<svg viewBox="0 0 40 40"><use href="#ic-nest-ponte"/></svg><span>${delta > 0 ? "+" : ""}${delta}</span>`;
+    cell.appendChild(badge);
+    requestAnimationFrame(() => badge.classList.add("play"));
+    setTimeout(() => badge.remove(), 1500);
+  });
 }
 
 function renderGrids() {
