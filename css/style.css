@@ -39,10 +39,19 @@ body{
   background:var(--sage-50);
   color:var(--ink-900);
   -webkit-font-smoothing:antialiased;
-  overscroll-behavior-y:none;
-  min-height:100vh;
-  min-height:-webkit-fill-available;
-  overflow-x:hidden;
+  /* Le scroll natif du document est volontairement désactivé : c'est le
+     rebond élastique du body (overscroll bounce) qui fait "nager" les
+     éléments position:fixed (barre de navigation, topbar) sur mobile
+     pendant le défilement. #app ci-dessous devient l'UNIQUE conteneur de
+     défilement, ce qui élimine ce rebond à la racine du document tout en
+     gardant la barre de navigation parfaitement stable à l'écran. */
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  height:-webkit-fill-available;
+  overflow:hidden;
+  overscroll-behavior:none;
 }
 button{font-family:inherit;}
 input,select,textarea{font-family:inherit; font-size:16px;}
@@ -56,7 +65,11 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 #app{
   max-width:560px;
   margin:0 auto;
-  min-height:100%;
+  height:100%;
+  overflow-y:auto;
+  overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
   padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 12px);
   position:relative;
 }
