@@ -54,33 +54,46 @@ const DEFAULT_ACCOUNTS = [
   { numero: "605", libelle: "Achats d'animaux (canetons/reproducteurs)", classe: 6, nature: "charge" },
   { numero: "606", libelle: "Eau", classe: 6, nature: "charge" },
   { numero: "607", libelle: "Électricité", classe: 6, nature: "charge" },
+  { numero: "624", libelle: "Transports (livraison, déplacements)", classe: 6, nature: "charge" },
+  { numero: "628", libelle: "Autres charges externes (divers)", classe: 6, nature: "charge" },
   { numero: "661", libelle: "Charges de personnel (salaires)", classe: 6, nature: "charge" },
   { numero: "701", libelle: "Ventes de canards", classe: 7, nature: "produit" },
   { numero: "702", libelle: "Ventes d'œufs", classe: 7, nature: "produit" },
-  { numero: "703", libelle: "Ventes de canetons", classe: 7, nature: "produit" }
+  { numero: "703", libelle: "Ventes de canetons", classe: 7, nature: "produit" },
+  { numero: "707", libelle: "Autres produits divers", classe: 7, nature: "produit" }
 ];
 
-// Correspondance automatique catégorie de transaction -> comptes suggérés
+// Correspondance automatique catégorie de transaction -> comptes suggérés.
+// Distincte par type (recette/dépense) car les deux partagent la même
+// clé de catégorie "autre" — les fusionner causait une confusion (voir
+// correctif juillet 2026).
 const MAPPING_COMPTABLE = {
-  vente_canards: { debit: "571", credit: "701" },
-  vente_oeufs: { debit: "571", credit: "702" },
-  vente_canetons: { debit: "571", credit: "703" },
-  aliments: { debit: "601", credit: "571" },
-  materiel: { debit: "602", credit: "571" },
-  veterinaire: { debit: "604", credit: "571" },
-  achat_animaux: { debit: "605", credit: "571" },
-  eau: { debit: "606", credit: "571" },
-  electricite: { debit: "607", credit: "571" },
-  salaire: { debit: "661", credit: "571" },
-  autre: { debit: null, credit: null }
+  recette: {
+    vente_canards: { debit: "571", credit: "701" },
+    vente_oeufs: { debit: "571", credit: "702" },
+    vente_canetons: { debit: "571", credit: "703" },
+    autre: { debit: "571", credit: "707" }
+  },
+  depense: {
+    aliments: { debit: "601", credit: "571" },
+    materiel: { debit: "602", credit: "571" },
+    veterinaire: { debit: "604", credit: "571" },
+    achat_animaux: { debit: "605", credit: "571" },
+    eau: { debit: "606", credit: "571" },
+    electricite: { debit: "607", credit: "571" },
+    salaire: { debit: "661", credit: "571" },
+    transport: { debit: "624", credit: "571" },
+    autre: { debit: "628", credit: "571" }
+  }
 };
 
-const CATS_LABELS = {
-  vente_canards: "Vente de canards", vente_oeufs: "Vente d'œufs", vente_canetons: "Vente de canetons", autre: "Autre recette",
-  salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité",
-  materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires",
-  achat_animaux: "Achat d'animaux"
-};
+const CATS_LABELS_RECETTE = { vente_canards: "Vente de canards", vente_oeufs: "Vente d'œufs", vente_canetons: "Vente de canetons", autre: "Autre recette" };
+const CATS_LABELS_DEPENSE = { salaire: "Salaire du fermier", eau: "Facture d'eau", electricite: "Facture d'électricité", materiel: "Achat de matériel", aliments: "Achat d'aliments", veterinaire: "Produits vétérinaires", achat_animaux: "Achat d'animaux", transport: "Transport / livraison", autre: "Autre dépense" };
+
+function libelleCategorie(t) {
+  const table = t.type === "recette" ? CATS_LABELS_RECETTE : CATS_LABELS_DEPENSE;
+  return table[t.categorie] || t.categorie;
+}
 
 // ---------------------------------------------------------------------
 // Validation d'une écriture (partie double) — sans Cloud Functions.
@@ -173,8 +186,9 @@ export function initComptabilite() {
     const numero = document.getElementById("fCompteNum").value.trim();
     const libelle = document.getElementById("fCompteLibelle").value.trim();
     if (!numero || !libelle) { toast("Numéro et libellé requis"); return; }
+    if (allAccounts.some(a => a.numero === numero)) { toast(`Le compte ${numero} existe déjà`); return; }
     try {
-      await addDoc(accountsCol, {
+      await setDoc(doc(db, "accounts", numero), {
         numero, libelle,
         classe: Number(document.getElementById("fCompteClasse").value),
         nature: document.getElementById("fCompteNature").value,
@@ -190,6 +204,13 @@ export function initComptabilite() {
   document.getElementById("exportExcelBtn")?.addEventListener("click", exporterExcel);
   document.getElementById("shareEtatsBtn")?.addEventListener("click", partagerEtatsPDF);
   document.getElementById("exerciceSelector")?.addEventListener("change", (e) => selectExercice(e.target.value));
+  document.getElementById("nettoyerDoublonsBtn")?.addEventListener("click", async () => {
+    if (!confirm("Rechercher et supprimer les comptes en double (même numéro) ? Un seul exemplaire de chaque compte sera conservé.")) return;
+    try {
+      const n = await nettoyerComptesEnDouble();
+      toast(n > 0 ? `${n} compte(s) en double supprimé(s) ✓` : "Aucun doublon trouvé ✓");
+    } catch (e) { toast("Erreur : " + e.message); }
+  });
   document.getElementById("journalSearch")?.addEventListener("input", (e) => {
     journalSearchQuery = e.target.value.trim().toLowerCase();
     renderJournalList();
@@ -214,9 +235,46 @@ async function ensureDefaultAccounts() {
   if (!snap.empty) return;
   const batch = writeBatch(db);
   DEFAULT_ACCOUNTS.forEach(a => {
-    batch.set(doc(collection(db, "accounts")), { ...a, actif: true, createdAt: new Date() });
+    // Le numéro de compte sert d'identifiant de document (au lieu d'un ID
+    // auto-généré) : même si deux téléphones lancent l'initialisation au
+    // même instant (course), les deux écritures ciblent le MÊME document
+    // Firestore et la seconde écrase simplement la première avec des
+    // données identiques — aucun doublon possible. C'est le correctif du
+    // bug de comptes en double observé en juillet 2026.
+    batch.set(doc(db, "accounts", a.numero), { ...a, actif: true, createdAt: new Date() });
   });
   await batch.commit();
+}
+
+// ---------------------------------------------------------------------
+// Nettoyage manuel des doublons créés par l'ancienne version (avant le
+// correctif ci-dessus, qui utilisait des ID auto-générés). Regroupe les
+// comptes par numéro, ne garde que le plus ancien de chaque groupe, et
+// supprime le reste. Déclenché uniquement par un clic explicite de
+// l'utilisateur — jamais automatiquement.
+export async function nettoyerComptesEnDouble() {
+  const snap = await getDocs(query(accountsCol));
+  const parNumero = {};
+  snap.docs.forEach(d => {
+    const data = { id: d.id, ...d.data() };
+    parNumero[data.numero] = parNumero[data.numero] || [];
+    parNumero[data.numero].push(data);
+  });
+  const aSupprimer = [];
+  Object.values(parNumero).forEach(group => {
+    if (group.length <= 1) return;
+    group.sort((a, b) => {
+      const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+      const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      return ta - tb;
+    });
+    group.slice(1).forEach(doublon => aSupprimer.push(doublon.id));
+  });
+  if (!aSupprimer.length) return 0;
+  const batch = writeBatch(db);
+  aSupprimer.forEach(id => batch.delete(doc(db, "accounts", id)));
+  await batch.commit();
+  return aSupprimer.length;
 }
 
 let exercisesEnsured = new Set();
@@ -314,7 +372,7 @@ function renderBrouillonsList() {
   }
   el.innerHTML = allBrouillons.map(t => `
     <div class="row">
-      <div class="row-main"><span class="row-title">${CATS_LABELS[t.categorie] || t.categorie}</span><span class="row-sub">${formatDate(t.date)}${t.description ? " · " + escapeHtml(t.description) : ""}</span></div>
+      <div class="row-main"><span class="row-title">${libelleCategorie(t)}</span><span class="row-sub">${formatDate(t.date)}${t.description ? " · " + escapeHtml(t.description) : ""}</span></div>
       <span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span>
     </div>
   `).join("");
@@ -325,16 +383,16 @@ function renderBrouillonsList() {
 }
 
 function openValidationModal(t) {
-  const suggestion = MAPPING_COMPTABLE[t.categorie] || { debit: null, credit: null };
+  const suggestion = (MAPPING_COMPTABLE[t.type] && MAPPING_COMPTABLE[t.type][t.categorie]) || { debit: null, credit: null };
   const options = allAccounts.map(a => `<option value="${a.numero}">${a.numero} — ${a.libelle}</option>`).join("");
   const exercice = exerciceForDate(t.date);
   openModal("Valider l'écriture", `
-    <div class="row"><div class="row-main"><span class="row-title">${CATS_LABELS[t.categorie] || t.categorie}</span><span class="row-sub">${formatDate(t.date)}${exercice ? " · Exercice " + exercice.annee : ""}</span></div><span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">${libelleCategorie(t)}</span><span class="row-sub">${formatDate(t.date)}${exercice ? " · Exercice " + exercice.annee : ""}</span></div><span class="row-value ${t.type === 'recette' ? 'pos' : 'neg'}">${formatFCFA(t.montant)}</span></div>
     ${!exercice ? `<p class="subtle" style="color:var(--clay-500)">Aucun exercice comptable ne couvre cette date. Rechargez la page.</p>` : ""}
     <div class="spacer-m"></div>
     <div class="field"><label>Compte à débiter</label><select id="fCompteDebit"><option value="">— Choisir —</option>${options}</select></div>
     <div class="field"><label>Compte à créditer</label><select id="fCompteCredit"><option value="">— Choisir —</option>${options}</select></div>
-    <div class="field"><label>Libellé de l'écriture</label><input type="text" id="fEcritureLibelle" value="${escapeHtml((CATS_LABELS[t.categorie] || t.categorie) + (t.description ? " — " + t.description : ""))}"></div>
+    <div class="field"><label>Libellé de l'écriture</label><input type="text" id="fEcritureLibelle" value="${escapeHtml((libelleCategorie(t)) + (t.description ? " — " + t.description : ""))}"></div>
     <button class="btn yolk" id="fValiderBtn">Valider l'écriture</button>
     <p class="subtle" id="fValidErrors" style="color:var(--clay-500); margin-top:8px;"></p>
   `, {
