@@ -8,7 +8,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp } from "./utils.js";
 
 const ducksCol = collection(db, "ducks");
 let allDucks = [];
@@ -29,6 +29,7 @@ const TYPE_ICONS = {
   reproducteur_male: "ic-duck-repro-m",
   reproducteur_femelle: "ic-duck-repro-f"
 };
+const TYPE_ICONS_EMOJI = { canardeau: "🐤", canard: "🦆" };
 const BAGUE_LABELS = { rouge: "Rouge", vert: "Vert", violet: "Violet", bleu: "Bleu" };
 const STATUT_LABELS = { actif: "Actif", vendu: "Vendu", mort: "Décédé", reforme: "Réformé" };
 
@@ -299,7 +300,8 @@ function renderKpis() {
   `;
   const totalEl = document.getElementById("kpiTotalCanards");
   const subEl = document.getElementById("kpiCanardsSub");
-  if (totalEl) totalEl.textContent = actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  const totalActifCount = actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  if (totalEl) animateCountUp("kpiTotalCanards", totalActifCount);
   if (subEl) subEl.textContent = `${sum("reproducteur_male") + sum("reproducteur_femelle")} reproducteurs · ${sum("canard")} canards · ${sum("canardeau")} canardeaux · ${sum("caneton")} canetons`;
 
   const dashEl = document.getElementById("dashInventaireBreakdown");
@@ -415,7 +417,9 @@ function openEditModal(d) {
   const age = ageEnSemaines(dateReferenceAge(d));
   const prochainStade = d.type === "caneton" ? "canardeau" : "canard";
   const seuilProchain = d.type === "caneton" ? SEUIL_CANARDEAU_SEM : SEUIL_CANARD_SEM;
+  const seuilDebut = d.type === "caneton" ? 0 : SEUIL_CANARDEAU_SEM;
   const semainesRestantes = (age !== null && estJeune) ? Math.max(0, Math.ceil(seuilProchain - age)) : null;
+  const pctStade = (age !== null && estJeune) ? Math.max(0, Math.min(100, Math.round(((age - seuilDebut) / (seuilProchain - seuilDebut)) * 100))) : 0;
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Quantité actuelle</span></div><span class="row-value">${d.quantite || 1}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span></div>
@@ -423,9 +427,21 @@ function openEditModal(d) {
 
     ${isActif && estJeune && (d.quantite || 1) > 0 ? `
     <div class="spacer-m"></div>
+    <div class="stage-progress">
+      <div class="stage-progress-head">
+        <span class="row-title">Progression vers ${TYPE_LABELS[prochainStade].toLowerCase()}</span>
+        <span class="row-value">${semainesRestantes === 0 ? "Prêt" : `${semainesRestantes} sem. restantes`}</span>
+      </div>
+      <div class="stage-bar">
+        <div class="stage-bar-fill" style="width:${pctStade}%;">
+          <span class="stage-marker">${TYPE_ICONS_EMOJI[prochainStade] || "🦆"}</span>
+        </div>
+      </div>
+      <div class="stage-caption">${semainesRestantes !== null ? (semainesRestantes > 0 ? `Passage automatique dans ~${semainesRestantes} semaine(s) selon l'âge, ou forcez-le dès maintenant ci-dessous.` : "Ce lot a atteint l'âge du prochain stade — il sera requalifié automatiquement au prochain rafraîchissement, ou forcez-le maintenant.") : "Basculement manuel avec traçabilité (date, par qui)."}</div>
+    </div>
+    <div class="spacer-s"></div>
     <div class="card" style="background:#FCEBD9; border:none;">
-      <h3 style="font-size:14px; margin-bottom:2px;">Requalifier en ${TYPE_LABELS[prochainStade].toLowerCase()}</h3>
-      <p class="subtle" style="margin:0 0 10px;">${semainesRestantes !== null ? (semainesRestantes > 0 ? `Passage automatique dans ~${semainesRestantes} semaine(s) selon l'âge, ou forcez-le dès maintenant ci-dessous.` : "Ce lot a atteint l'âge du prochain stade — il sera requalifié automatiquement au prochain rafraîchissement, ou forcez-le maintenant.") : "Basculement manuel avec traçabilité (date, par qui)."}</p>
+      <h3 style="font-size:14px; margin-bottom:8px;">Requalifier en ${TYPE_LABELS[prochainStade].toLowerCase()}</h3>
       <div class="field"><label>Quantité concernée</label><input type="number" id="fRequalQte" min="1" max="${d.quantite || 1}" value="${d.quantite || 1}"></div>
       <button class="btn yolk" id="fRequalSave">Requalifier maintenant</button>
     </div>
