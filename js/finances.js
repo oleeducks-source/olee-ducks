@@ -11,7 +11,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setMaskableText, initEyeToggle } from "./utils.js";
+import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setMaskableText, initEyeToggle, animateBalanceCountUp } from "./utils.js";
 import { reverserEcriture } from "./comptabilite.js";
 import { attacherRecu, retirerRecu } from "./pieces-jointes.js";
 
@@ -89,7 +89,7 @@ function renderAll() {
   const depenses = items.filter(t => t.type === "depense").reduce((a, t) => a + Number(t.montant || 0), 0);
   const balance = recettes - depenses;
 
-  setMaskableText("finBalance", formatFCFA(balance));
+  animateBalanceCountUp("finBalance", balance);
   document.getElementById("finBalance")?.classList.toggle("negative", balance < 0);
   setMaskableText("finRecettes", formatFCFA(recettes));
   setMaskableText("finDepenses", formatFCFA(depenses));
@@ -98,7 +98,7 @@ function renderAll() {
   const allRecettes = allTx.filter(t => t.type === "recette").reduce((a, t) => a + Number(t.montant || 0), 0);
   const allDepenses = allTx.filter(t => t.type === "depense").reduce((a, t) => a + Number(t.montant || 0), 0);
   const allBalance = allRecettes - allDepenses;
-  setMaskableText("kpiBalance", formatFCFA(allBalance));
+  animateBalanceCountUp("kpiBalance", allBalance);
   document.getElementById("kpiBalance")?.classList.toggle("negative", allBalance < 0);
   setMaskableText("kpiRecettes", formatFCFA(allRecettes));
   setMaskableText("kpiDepenses", formatFCFA(allDepenses));
