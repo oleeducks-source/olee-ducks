@@ -203,6 +203,82 @@ export function initEyeToggle(buttonId) {
   });
 }
 
+// ---------------------------------------------------------------------
+// Anime un nombre affiché dans #id de sa valeur précédente jusqu'à
+// `target` (effet "compteur", ease-out). Si la valeur est identique à la
+// précédente, ne réanime rien (évite un flash inutile à chaque re-rendu
+// Firestore). Utilisé pour les KPI du tableau de bord.
+// ---------------------------------------------------------------------
+export function animateCountUp(id, target, opts = {}) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const suffix = opts.suffix || "";
+  const duration = opts.duration || 700;
+  const prev = Number(el.dataset.countTarget);
+  el.dataset.countTarget = String(target);
+  if (prev === target) { el.textContent = target + suffix; return; }
+  const start = isNaN(prev) ? 0 : prev;
+  const startTime = performance.now();
+  function tick(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const current = Math.round(start + (target - start) * eased);
+    el.textContent = current + suffix;
+    if (t < 1) requestAnimationFrame(tick);
+    else el.textContent = target + suffix;
+  }
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------------
+// Variante spécialisée pour la balance commerciale (FCFA) : anime le
+// montant en le formatant à chaque frame, respecte le masquage (icône
+// œil) en cours, et fait clignoter un badge +/- directionnel bref quand
+// le montant vient de changer (nouvelle transaction).
+// ---------------------------------------------------------------------
+export function animateBalanceCountUp(id, targetNumber) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const realText = formatFCFA(targetNumber);
+  el.dataset.real = realText;
+
+  if (isBalanceHidden()) {
+    el.textContent = maskText(realText);
+    el.dataset.countTarget = String(targetNumber);
+    return;
+  }
+
+  const prev = Number(el.dataset.countTarget);
+  el.dataset.countTarget = String(targetNumber);
+  if (prev === targetNumber) { el.textContent = realText; return; }
+
+  if (!isNaN(prev)) {
+    const wrap = el.parentElement;
+    if (wrap) {
+      wrap.style.position = wrap.style.position || "relative";
+      const badge = document.createElement("span");
+      badge.className = "balance-flash" + (targetNumber < prev ? " neg" : "");
+      badge.textContent = targetNumber >= prev ? "▲" : "▼";
+      wrap.appendChild(badge);
+      requestAnimationFrame(() => badge.classList.add("play"));
+      setTimeout(() => badge.remove(), 1400);
+    }
+  }
+
+  const start = isNaN(prev) ? 0 : prev;
+  const duration = 700;
+  const startTime = performance.now();
+  function tick(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const current = Math.round(start + (targetNumber - start) * eased);
+    el.textContent = formatFCFA(current);
+    if (t < 1) requestAnimationFrame(tick);
+    else el.textContent = realText;
+  }
+  requestAnimationFrame(tick);
+}
+
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
