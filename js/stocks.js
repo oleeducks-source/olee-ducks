@@ -12,7 +12,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query, increment
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp } from "./utils.js";
 import { getActiveDuckCounts } from "./inventaire.js";
 
 const itemsCol = collection(db, "stock_items");
@@ -31,8 +31,21 @@ export function initStocks() {
     renderList();
   }, err => console.error("Erreur lecture stocks :", err));
 
+  let idsMouvementsConnus = new Set();
+  let premierMouvements = true;
   onSnapshot(query(movCol, orderBy("date", "desc")), (snap) => {
     allMovements = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!premierMouvements) {
+      allMovements.forEach(m => {
+        if (!idsMouvementsConnus.has(m.id)) {
+          const item = allItems.find(i => i.id === m.item_id);
+          const signe = m.type_mouvement === "entree" ? 1 : -1;
+          animerMouvementStock(m.item_id, signe * (Number(m.quantite) || 0), item?.unite);
+        }
+      });
+    }
+    idsMouvementsConnus = new Set(allMovements.map(m => m.id));
+    premierMouvements = false;
     renderList();
   }, err => console.error("Erreur lecture mouvements :", err));
 
@@ -138,12 +151,30 @@ function sackGaugeSvg(item) {
   const fillH = 34 * ratio;
   const clipId = `sackClip_${item.id}`;
   return `
-    <svg class="sack-gauge" viewBox="0 0 34 40">
-      <clipPath id="${clipId}"><path d="M4 6 L30 6 L26.5 38 L7.5 38 Z"/></clipPath>
-      <rect x="4" y="${fillY}" width="26" height="${Math.max(0, fillH)}" fill="${color}" clip-path="url(#${clipId})"/>
-      <path class="sack-outline" d="M4 6 L30 6 L26.5 38 L7.5 38 Z" stroke="${color}"/>
-      <path d="M11 6 Q17 1 23 6" fill="none" stroke="${color}" stroke-width="2"/>
-    </svg>`;
+    <div class="sack-wrap" data-item="${item.id}">
+      <svg class="sack-gauge" viewBox="0 0 34 40">
+        <clipPath id="${clipId}"><path d="M4 6 L30 6 L26.5 38 L7.5 38 Z"/></clipPath>
+        <rect class="sack-fill" x="4" y="${fillY}" width="26" height="${Math.max(0, fillH)}" fill="${color}" clip-path="url(#${clipId})"/>
+        <path class="sack-outline" d="M4 6 L30 6 L26.5 38 L7.5 38 Z" stroke="${color}"/>
+        <path d="M11 6 Q17 1 23 6" fill="none" stroke="${color}" stroke-width="2"/>
+      </svg>
+    </div>`;
+}
+
+// Anime un badge flottant "+N" / "−N" au-dessus du sac concerné, plus un
+// bref pulse du sac lui-même, à chaque mouvement de stock enregistré
+// (achat ou usage) — sur ce téléphone ou un autre. Purement visuel.
+function animerMouvementStock(itemId, delta, unite) {
+  if (!delta) return;
+  document.querySelectorAll(`.sack-wrap[data-item="${itemId}"]`).forEach(wrap => {
+    wrap.classList.remove("pulse"); void wrap.offsetWidth; wrap.classList.add("pulse");
+    const badge = document.createElement("div");
+    badge.className = "sack-pop" + (delta < 0 ? " neg" : "");
+    badge.textContent = `${delta > 0 ? "+" : ""}${delta} ${unite || ""}`.trim();
+    wrap.appendChild(badge);
+    requestAnimationFrame(() => badge.classList.add("play"));
+    setTimeout(() => badge.remove(), 1500);
+  });
 }
 
 function renderList() {
@@ -160,7 +191,7 @@ function renderList() {
       `).join("") : `<p class="subtle">Aucun article sous le seuil d'alerte. ✓</p>`}
     `;
   }
-  setText("kpiAlertesStock", alerts.length);
+  animateCountUp("kpiAlertesStock", alerts.length);
 
   const listEl = document.getElementById("stockList");
   if (!listEl) return;
