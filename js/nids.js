@@ -15,7 +15,7 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot,
   serverTimestamp, query, where, orderBy, increment, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputValue, getUserName, escapeHtml } from "./utils.js";
+import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputValue, getUserName, escapeHtml, animateCountUp } from "./utils.js";
 
 const nestsCol = collection(db, "nests");
 const cyclesCol = collection(db, "nest_cycles");
@@ -162,7 +162,7 @@ function renderDashboardNestKpi() {
   const occ = Object.keys(cyclesMap).length;
   const elV = document.getElementById("kpiOeufsNids");
   const elS = document.getElementById("kpiNidsOccupesSub");
-  if (elV) elV.textContent = totalOeufs;
+  if (elV) animateCountUp("kpiOeufsNids", totalOeufs);
   if (elS) elS.textContent = `${occ} nids occupés sur 100`;
 }
 
@@ -288,7 +288,7 @@ function renderStats() {
   const totalEclos = archivedCycles.reduce((a, c) => a + (Number(c.nombre_eclos) || 0), 0);
   const taux = totalOeufs ? Math.round((totalEclos / totalOeufs) * 100) : 0;
   const kpiT = document.getElementById("kpiTauxEclosion");
-  if (kpiT) kpiT.textContent = taux + "%";
+  if (kpiT) animateCountUp("kpiTauxEclosion", taux, { suffix: "%" });
   globalEl.innerHTML = `
     <div class="row"><div class="row-main"><span class="row-title">Œufs couvés (archivés)</span></div><span class="row-value">${totalOeufs}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Canetons éclos</span></div><span class="row-value pos">${totalEclos}</span></div>
