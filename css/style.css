@@ -322,7 +322,35 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 .row-icon.dark{background:var(--pond-950); color:var(--yolk-500);}
 .row.with-icon{align-items:center;}
 
-/* ---------- Grille de nids : panier tressé, pas un simple chiffre ---------- */
+/* ---------- Barre de progression de couvaison (ludique) ---------- */
+.incubation-progress{background:var(--sage-100); border-radius:var(--radius-s); padding:12px 14px;}
+.incubation-progress-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;}
+.incubation-progress-head .row-title{font-size:13px;}
+.incubation-progress-head .row-value{font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--pond-800);}
+.incubation-bar{
+  position:relative; height:16px; border-radius:999px;
+  background:var(--white); border:1px solid var(--line); overflow:hidden;
+}
+.incubation-bar-fill{
+  position:relative; height:100%; border-radius:999px;
+  background:repeating-linear-gradient(135deg, var(--yolk-500) 0 10px, var(--yolk-600) 10px 20px);
+  background-size:200% 100%;
+  animation:incubationStripes 1.2s linear infinite;
+  transition:width .4s ease;
+  min-width:16px;
+}
+.incubation-egg{
+  position:absolute; right:-9px; top:50%; transform:translateY(-50%);
+  font-size:16px; line-height:1;
+  filter:drop-shadow(0 1px 1px rgba(14,46,44,.35));
+  animation:incubationWobble 1.6s ease-in-out infinite;
+}
+.incubation-caption{margin-top:8px; font-size:12px; color:var(--ink-600);}
+@keyframes incubationStripes{ from{background-position:0 0;} to{background-position:-40px 0;} }
+@keyframes incubationWobble{
+  0%,100%{transform:translateY(-50%) rotate(-8deg);}
+  50%{transform:translateY(-56%) rotate(8deg);}
+}
 .nest-cell{
   aspect-ratio:1;
   border-radius:8px;
