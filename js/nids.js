@@ -27,7 +27,7 @@ let archivedCycles = []; // cycles terminées (eclos / echec)
 let pontesLog = []; // tous les relevés de ponte datés (tous nids, tous cycles)
 let currentNidsView = "grille";
 
-const DUREE_INCUBATION_JOURS = 28; // incubation moyenne du canard
+const DUREE_INCUBATION_JOURS = 36; // canard de Barbarie (muscovy) — 35 à 37 jours, 36 en moyenne
 
 let premierChargementCycles = true;
 
@@ -343,12 +343,29 @@ function openNestModal(n) {
 
   const joursDepuisCouvaison = cycle.date_debut_couvaison ? Math.round((Date.now() - (cycle.date_debut_couvaison.toDate?.() || new Date(cycle.date_debut_couvaison))) / 86400000) : null;
 
+  const pctCouvaison = joursDepuisCouvaison !== null ? Math.max(0, Math.min(100, Math.round((joursDepuisCouvaison / DUREE_INCUBATION_JOURS) * 100))) : 0;
+  const joursRestants = joursDepuisCouvaison !== null ? Math.max(0, DUREE_INCUBATION_JOURS - joursDepuisCouvaison) : null;
+
   openModal(`Nid n° ${n}`, `
     <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${cycle.statut === 'couvaison' ? 'warn' : 'ok'}">${cycle.statut === 'couvaison' ? 'Couvaison' : 'Ponte en cours'}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Œufs enregistrés</span></div><span class="row-value">${cycle.nombre_oeufs || 0}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Début du cycle</span></div><span class="row-value">${formatDate(cycle.date_debut)}</span></div>
     ${cycle.cree_par ? `<div class="row"><div class="row-main"><span class="row-title">Démarré par</span></div><span class="row-value">${escapeHtml(cycle.cree_par)}</span></div>` : ""}
-    ${cycle.statut === "couvaison" ? `<div class="row"><div class="row-main"><span class="row-title">Couvaison depuis</span></div><span class="row-value">${joursDepuisCouvaison} j / ${DUREE_INCUBATION_JOURS} j</span></div>` : ""}
+    ${cycle.statut === "couvaison" ? `
+    <div class="spacer-s"></div>
+    <div class="incubation-progress">
+      <div class="incubation-progress-head">
+        <span class="row-title">Couvaison (canard de Barbarie — ${DUREE_INCUBATION_JOURS} j)</span>
+        <span class="row-value">${joursDepuisCouvaison} / ${DUREE_INCUBATION_JOURS} j</span>
+      </div>
+      <div class="incubation-bar">
+        <div class="incubation-bar-fill" style="width:${pctCouvaison}%;">
+          <span class="incubation-egg">🥚</span>
+        </div>
+      </div>
+      <div class="incubation-caption">${joursRestants > 0 ? `⏳ Éclosion estimée dans ~${joursRestants} jour(s)` : "🐣 Éclosion imminente — vérifiez le nid !"}</div>
+    </div>
+    ` : ""}
     <div class="spacer-m"></div>
 
     <div class="field-row">
