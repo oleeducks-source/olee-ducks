@@ -169,6 +169,16 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 }
 .eye-toggle:active{background:rgba(255,255,255,.22);}
 .balance-banner .amount{font-family:var(--font-display); font-size:38px; margin-top:6px; font-weight:600;}
+.balance-flash{
+  position:absolute; top:16px; right:20px; z-index:5;
+  font-size:15px; font-weight:700; color:var(--pond-600);
+  background:var(--sage-50); border-radius:50%;
+  width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+  box-shadow:var(--shadow-2);
+  opacity:0; pointer-events:none;
+}
+.balance-flash.neg{color:var(--clay-500);}
+.balance-flash.play{animation:eggPop 1.4s ease forwards;}
 .balance-banner .amount.negative{color:#F2A9A0;}
 .balance-banner .breakdown{display:flex; gap:18px; margin-top:12px; font-size:13px;}
 .balance-banner .breakdown b{font-family:var(--font-mono);}
@@ -323,15 +333,15 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 .row.with-icon{align-items:center;}
 
 /* ---------- Barre de progression de couvaison (ludique) ---------- */
-.incubation-progress{background:var(--sage-100); border-radius:var(--radius-s); padding:12px 14px;}
-.incubation-progress-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;}
-.incubation-progress-head .row-title{font-size:13px;}
-.incubation-progress-head .row-value{font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--pond-800);}
-.incubation-bar{
+.incubation-progress,.stage-progress{background:var(--sage-100); border-radius:var(--radius-s); padding:12px 14px;}
+.incubation-progress-head,.stage-progress-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;}
+.incubation-progress-head .row-title,.stage-progress-head .row-title{font-size:13px;}
+.incubation-progress-head .row-value,.stage-progress-head .row-value{font-family:var(--font-mono); font-weight:700; font-size:13px; color:var(--pond-800);}
+.incubation-bar,.stage-bar{
   position:relative; height:16px; border-radius:999px;
   background:var(--white); border:1px solid var(--line); overflow:hidden;
 }
-.incubation-bar-fill{
+.incubation-bar-fill,.stage-bar-fill{
   position:relative; height:100%; border-radius:999px;
   background:repeating-linear-gradient(135deg, var(--yolk-500) 0 10px, var(--yolk-600) 10px 20px);
   background-size:200% 100%;
@@ -339,13 +349,13 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
   transition:width .4s ease;
   min-width:16px;
 }
-.incubation-egg{
+.incubation-egg,.stage-marker{
   position:absolute; right:-9px; top:50%; transform:translateY(-50%);
   font-size:16px; line-height:1;
   filter:drop-shadow(0 1px 1px rgba(14,46,44,.35));
   animation:incubationWobble 1.6s ease-in-out infinite;
 }
-.incubation-caption{margin-top:8px; font-size:12px; color:var(--ink-600);}
+.incubation-caption,.stage-caption{margin-top:8px; font-size:12px; color:var(--ink-600);}
 @keyframes incubationStripes{ from{background-position:0 0;} to{background-position:-40px 0;} }
 @keyframes incubationWobble{
   0%,100%{transform:translateY(-50%) rotate(-8deg);}
@@ -389,10 +399,31 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
   100%{opacity:0; transform:translateY(-30px) scale(.9);}
 }
 .nest-cell.ponte{background:#FCEEDA; color:var(--yolk-600); border-color:#F0D19C;}
-.nest-cell.couvaison{background:var(--pond-600); color:var(--sage-50); border-color:var(--pond-800);}
+.nest-cell.couvaison{background:var(--pond-600); color:var(--sage-50); border-color:var(--pond-800); animation:nestHeartbeat 2.6s ease-in-out infinite;}
 .nest-cell.couvaison .nest-num{opacity:.75;}
+@keyframes nestHeartbeat{
+  0%,100%{box-shadow:0 0 0 0 rgba(29,90,84,.45);}
+  50%{box-shadow:0 0 0 5px rgba(29,90,84,0);}
+}
 
 /* ---------- Sacs de stock : jauge de remplissage réelle ---------- */
 .sack-gauge{flex:none; width:32px; height:40px;}
 .sack-gauge .sack-outline{fill:none; stroke-width:2;}
 .sack-gauge .sack-fill{transition:height .3s ease;}
+.sack-wrap{position:relative; flex:none; width:32px; height:40px;}
+.sack-wrap.pulse{animation:sackPulse .5s ease;}
+@keyframes sackPulse{
+  0%{transform:scale(1);}
+  35%{transform:scale(1.18);}
+  100%{transform:scale(1);}
+}
+.sack-pop{
+  position:absolute; top:-8px; right:-14px; z-index:6;
+  background:var(--yolk-500); color:var(--pond-950);
+  border-radius:999px; padding:2px 7px;
+  font-family:var(--font-mono); font-weight:700; font-size:10px;
+  box-shadow:var(--shadow-2);
+  opacity:0; pointer-events:none; white-space:nowrap;
+}
+.sack-pop.neg{background:var(--clay-500); color:var(--white);}
+.sack-pop.play{animation:eggPop 1.5s ease forwards;}
