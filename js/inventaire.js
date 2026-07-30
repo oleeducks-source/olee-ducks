@@ -376,7 +376,7 @@ export function openAddDuckModal() {
           <option value="bleu">Bleu</option>
         </select>
       </div>
-      <div class="field"><label>N° de bague</label><input type="text" id="fDuckNum" placeholder="ex: R-014"></div>
+      <div class="field"><label>N° de bague</label><input type="text" id="fDuckNum" placeholder="ex : R-014"></div>
     </div>
     <div class="field"><label>Notes</label><textarea id="fDuckNotes" rows="2" placeholder="Origine, race, remarques…"></textarea></div>
     <button class="btn yolk" id="fDuckSave">Enregistrer</button>
