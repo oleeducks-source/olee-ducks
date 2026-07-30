@@ -117,6 +117,24 @@
     <circle cx="28" cy="20" r="2.4" fill="currentColor"/>
   </symbol>
 
+  <!-- Tâches : commande client (presse-papier) -->
+  <symbol id="ic-task-commande" viewBox="0 0 40 40">
+    <rect x="9" y="7" width="22" height="28" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+    <rect x="15" y="4" width="10" height="6" rx="1.5" fill="currentColor"/>
+    <path d="M14 18h12M14 24h12M14 30h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <!-- Tâches : tâche de ferme générique (outil) -->
+  <symbol id="ic-task-ferme" viewBox="0 0 40 40">
+    <path d="M13 27 L23 17 M23 17 L20 11 L29 11 L29 20 L23 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="11" cy="29" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+  </symbol>
+  <!-- Tâches : ravitaillement / moulin (sac + flèche de collecte) -->
+  <symbol id="ic-task-ravitaillement" viewBox="0 0 40 40">
+    <path d="M11 9 L29 9 L26 32 L14 32 Z" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M15 9 Q20 4 25 9" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M20 16 L20 25 M16 21 L20 25 L24 21" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+
   <!-- Comptabilité : une icône par classe de compte SYSCOHADA -->
   <symbol id="ic-cls-1" viewBox="0 0 40 40"><path d="M20 6 L34 15 L34 34 L6 34 L6 15 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
   <symbol id="ic-cls-2" viewBox="0 0 40 40"><rect x="8" y="10" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="8" y1="17" x2="32" y2="17" stroke="currentColor" stroke-width="1.6"/></symbol>
@@ -166,6 +184,19 @@
         <div>Recettes <b id="kpiRecettes">—</b></div>
         <div>Dépenses <b id="kpiDepenses">—</b></div>
       </div>
+    </div>
+
+    <div class="spacer-m"></div>
+    <div class="card tasks-card" id="dashTasksCard">
+      <div class="tasks-card-top">
+        <div class="tasks-card-title">
+          <span class="voyant" id="tachesVoyant"></span>
+          <span class="eyebrow">Organisation</span>
+        </div>
+        <button class="btn secondary small" id="openTachesBtn">Voir tout →</button>
+      </div>
+      <h3 style="margin:4px 0 2px;">Tâches à faire</h3>
+      <div id="dashTachesResume"><p class="subtle">Chargement…</p></div>
     </div>
 
     <div class="spacer-m"></div>
@@ -357,6 +388,26 @@
     </div>
   </section>
 
+  <!-- ===================== TÂCHES ===================== -->
+  <section id="page-taches" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">Organisation</span><h2>Tâches à effectuer</h2></div>
+    </div>
+    <div class="segmented" id="tachesView">
+      <button data-v="a_faire" class="active">À faire</button>
+      <button data-v="historique">Historique</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="tachesAFaireWrap">
+      <div class="card"><div id="tachesAFaireList"><div class="empty-state"><div class="glyph">📋</div><p>Aucune tâche en attente. Utilisez le bouton + pour en ajouter une.</p></div></div></div>
+    </div>
+
+    <div id="tachesHistoriqueWrap" class="hidden">
+      <div class="card"><div id="tachesHistoriqueList"><div class="empty-state"><div class="glyph">🗂️</div><p>Aucune tâche effectuée pour l'instant.</p></div></div></div>
+    </div>
+  </section>
+
   <!-- ===================== COMPTABILITÉ OHADA ===================== -->
   <section id="page-compta" class="page hidden">
     <div class="section-title">
@@ -383,7 +434,7 @@
       <div class="card">
         <h3 style="font-size:14px; margin-bottom:10px;">Ajouter un compte</h3>
         <div class="field-row">
-          <div class="field"><label>Numéro</label><input type="text" id="fCompteNum" placeholder="ex: 606"></div>
+          <div class="field"><label>Numéro</label><input type="text" id="fCompteNum" placeholder="ex : 606"></div>
           <div class="field"><label>Classe</label>
             <select id="fCompteClasse">
               <option value="1">1 — Capitaux</option>
@@ -396,7 +447,7 @@
             </select>
           </div>
         </div>
-        <div class="field"><label>Libellé</label><input type="text" id="fCompteLibelle" placeholder="ex: Achats d'emballages"></div>
+        <div class="field"><label>Libellé</label><input type="text" id="fCompteLibelle" placeholder="ex : Achats d'emballages"></div>
         <div class="field"><label>Nature</label>
           <select id="fCompteNature">
             <option value="actif">Actif</option>
@@ -471,6 +522,13 @@
     <button class="nav-item" data-page="stocks">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>
       Stocks
+    </button>
+    <button class="nav-item" data-page="taches">
+      <span class="nav-item-icon-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+        <span class="nav-badge hidden" id="tachesNavBadge"></span>
+      </span>
+      Tâches
     </button>
   </nav>
 
