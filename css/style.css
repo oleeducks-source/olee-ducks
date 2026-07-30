@@ -296,13 +296,23 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 
 /* ---------- Voyant de tâches (tableau de bord) ---------- */
 .voyant{
-  width:9px; height:9px; border-radius:50%; background:var(--sage-100); flex:none;
+  width:13px; height:13px; border-radius:50%; background:var(--sage-100); flex:none;
+  position:relative;
 }
-.voyant:not(.idle){background:var(--clay-500);}
+.voyant:not(.idle){background:var(--clay-500); box-shadow:0 0 0 3px rgba(193,84,58,.15);}
 .voyant.blink{animation:voyantBlink var(--blink-speed, 1.5s) ease-in-out infinite;}
+.voyant.blink::after{
+  content:""; position:absolute; inset:-4px; border-radius:50%;
+  border:2px solid var(--clay-500);
+  animation:voyantPing var(--blink-speed, 1.5s) ease-out infinite;
+}
 @keyframes voyantBlink{
   0%,100%{opacity:1; transform:scale(1);}
-  50%{opacity:.25; transform:scale(.7);}
+  50%{opacity:.4; transform:scale(.85);}
+}
+@keyframes voyantPing{
+  0%{transform:scale(1); opacity:.7;}
+  100%{transform:scale(1.9); opacity:0;}
 }
 .tasks-card{padding:16px;}
 .tasks-card-top{display:flex; align-items:center; justify-content:space-between; gap:8px;}
