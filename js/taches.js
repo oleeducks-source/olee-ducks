@@ -88,6 +88,63 @@ export function initTaches() {
 }
 
 // ---------------------------------------------------------------------
+// Rappel calendrier (.ics) — solution gratuite pour être averti même si
+// l'app n'est jamais rouverte : le fichier généré, une fois ajouté au
+// calendrier natif du téléphone (Google Calendar, Calendrier iOS…),
+// déclenche une vraie notification système à l'heure prévue. Aucune
+// donnée n'est envoyée nulle part — le fichier est créé et téléchargé
+// localement dans le navigateur.
+// ---------------------------------------------------------------------
+function pad(n) { return String(n).padStart(2, "0"); }
+
+function genererRappelCalendrier(t) {
+  if (!t.date_echeance) { toast("Ajoutez d'abord une date d'échéance à cette tâche"); return; }
+  const d = t.date_echeance?.toDate ? t.date_echeance.toDate() : new Date(t.date_echeance);
+  if (isNaN(d.getTime())) { toast("Date d'échéance invalide"); return; }
+
+  // Événement à 8h du matin le jour de l'échéance, avec une alarme au
+  // moment même de l'événement — la plupart des calendriers mobiles
+  // déclenchent alors une notification système à cette heure précise.
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0);
+  const end = new Date(start.getTime() + 30 * 60000);
+  const toIcsUtc = (date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
+  const cat = CATEGORIES_TACHES[t.categorie] || CATEGORIES_TACHES.autre;
+  const description = [cat.label, t.notes].filter(Boolean).join(" — ").replace(/\n/g, "\\n");
+
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Olee Ducks//Taches//FR",
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:tache-${t.id}@oleeducks`,
+    `DTSTAMP:${toIcsUtc(new Date())}`,
+    `DTSTART:${toIcsUtc(start)}`,
+    `DTEND:${toIcsUtc(end)}`,
+    `SUMMARY:🦆 ${t.titre}`,
+    description ? `DESCRIPTION:${description}` : "",
+    "BEGIN:VALARM",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:Rappel Olee Ducks",
+    "TRIGGER:PT0M",
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR"
+  ].filter(Boolean).join("\r\n");
+
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Rappel_${t.titre.replace(/[^a-z0-9]+/gi, "_").slice(0, 40)}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast("Fichier de rappel généré — ouvrez-le pour l'ajouter à votre calendrier");
+}
+
+// ---------------------------------------------------------------------
 // Ajout
 // ---------------------------------------------------------------------
 export function openAddTacheModal() {
@@ -107,18 +164,27 @@ export function openAddTacheModal() {
       document.getElementById("fTacheSave").addEventListener("click", async () => {
         const titre = document.getElementById("fTacheTitre").value.trim();
         if (!titre) { toast("Le titre est requis"); return; }
+        const categorie = document.getElementById("fTacheCategorie").value;
+        const echeanceVal = document.getElementById("fTacheEcheance").value;
+        const notes = document.getElementById("fTacheNotes").value.trim() || null;
         try {
-          await addDoc(tachesCol, {
-            titre,
-            categorie: document.getElementById("fTacheCategorie").value,
-            date_echeance: document.getElementById("fTacheEcheance").value ? new Date(document.getElementById("fTacheEcheance").value) : null,
-            notes: document.getElementById("fTacheNotes").value.trim() || null,
+          const ref = await addDoc(tachesCol, {
+            titre, categorie,
+            date_echeance: echeanceVal ? new Date(echeanceVal) : null,
+            notes,
             statut: "a_faire",
             cree_par: getUserName() || "Inconnu",
             createdAt: serverTimestamp()
           });
           toast("Tâche ajoutée ✓");
-          closeModal();
+          if (echeanceVal) {
+            // Échéance renseignée : on rouvre directement la fiche pour
+            // proposer le rappel calendrier, plutôt que de fermer le modal
+            // et laisser l'utilisateur chercher où le trouver.
+            openTacheDetail({ id: ref.id, titre, categorie, date_echeance: new Date(echeanceVal), notes, statut: "a_faire", cree_par: getUserName() || "Inconnu" });
+          } else {
+            closeModal();
+          }
         } catch (e) { toast("Erreur : " + e.message); }
       });
     }
@@ -140,11 +206,13 @@ function openTacheDetail(t) {
     ${estEffectuee ? `<div class="row"><div class="row-main"><span class="row-title">Effectuée par</span></div><span class="row-value">${escapeHtml(t.effectue_par || "")} · ${formatDate(t.effectue_le)}</span></div>` : ""}
     ${t.notes ? `<div class="spacer-s"></div><p class="subtle" style="white-space:pre-wrap;">${escapeHtml(t.notes)}</p>` : ""}
     <div class="spacer-m"></div>
+    ${(!estEffectuee && t.date_echeance) ? `<button class="btn secondary" id="fTacheRappel">📅 Ajouter un rappel au calendrier du téléphone</button><div class="spacer-s"></div>` : ""}
     ${!estEffectuee ? `<button class="btn yolk" id="fTacheDone">✓ Marquer comme effectuée</button><div class="spacer-s"></div>` : ""}
     <button class="btn danger" id="fTacheDelete">Supprimer cette tâche</button>
   `;
   openModal(t.titre, body, {
     onMount: () => {
+      document.getElementById("fTacheRappel")?.addEventListener("click", () => genererRappelCalendrier(t));
       document.getElementById("fTacheDone")?.addEventListener("click", async () => {
         try {
           await updateDoc(doc(db, "taches", t.id), {
