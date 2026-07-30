@@ -285,6 +285,28 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 .nav-item svg{width:21px; height:21px;}
 .nav-item.active{color:var(--pond-600);}
 .nav-item.active svg{stroke:var(--pond-600);}
+.nav-item-icon-wrap{position:relative; display:inline-flex;}
+.nav-badge{
+  position:absolute; top:-4px; right:-8px; min-width:15px; height:15px; padding:0 3px;
+  border-radius:999px; background:var(--clay-500); color:var(--white);
+  font-family:var(--font-mono); font-size:9px; font-weight:700;
+  display:flex; align-items:center; justify-content:center;
+}
+.nav-badge.blink{animation:voyantBlink var(--blink-speed, 1.5s) ease-in-out infinite;}
+
+/* ---------- Voyant de tâches (tableau de bord) ---------- */
+.voyant{
+  width:9px; height:9px; border-radius:50%; background:var(--sage-100); flex:none;
+}
+.voyant:not(.idle){background:var(--clay-500);}
+.voyant.blink{animation:voyantBlink var(--blink-speed, 1.5s) ease-in-out infinite;}
+@keyframes voyantBlink{
+  0%,100%{opacity:1; transform:scale(1);}
+  50%{opacity:.25; transform:scale(.7);}
+}
+.tasks-card{padding:16px;}
+.tasks-card-top{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+.tasks-card-title{display:flex; align-items:center; gap:7px;}
 
 /* ---------- Modal ---------- */
 .modal-backdrop{
