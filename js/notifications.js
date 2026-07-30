@@ -95,17 +95,19 @@ async function genererResumeConnexion() {
   localStorage.setItem(LAST_VISIT_KEY, String(Date.now()));
 
   try {
-    const [cyclesSnap, txSnap, movSnap, ducksSnap] = await Promise.all([
+    const [cyclesSnap, txSnap, movSnap, ducksSnap, tachesSnap] = await Promise.all([
       getDocs(collection(db, "nest_cycles")),
       getDocs(collection(db, "finance_transactions")),
       getDocs(collection(db, "stock_mouvements")),
-      getDocs(collection(db, "ducks"))
+      getDocs(collection(db, "ducks")),
+      getDocs(collection(db, "taches"))
     ]);
 
     const cycles = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const tx = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const mouvements = movSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const ducks = ducksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const taches = tachesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
     // Pontes/couvaisons : on compte les cycles DÉMARRÉS depuis la dernière visite
     const nouvellesPontes = cycles.filter(c => toMs(c.date_debut) >= depuis).length;
@@ -125,6 +127,8 @@ async function genererResumeConnexion() {
     const sorties = mouvementsRecents.filter(m => m.type_mouvement === "sortie").length;
 
     const lignes = [];
+    const nouvellesTaches = taches.filter(t => toMs(t.createdAt) >= depuis).length;
+
     if (nouvellesPontes) lignes.push(`🥚 ${nouvellesPontes} ponte(s) démarrée(s)`);
     if (eclosions.length) lignes.push(`🐣 ${eclosions.length} éclosion(s) (${totalEclos} caneton(s))`);
     if (echecs.length) lignes.push(`⚠️ ${echecs.length} échec(s) de couvaison`);
@@ -132,12 +136,14 @@ async function genererResumeConnexion() {
     if (depenses.length) lignes.push(`💸 ${depenses.length} dépense(s) — ${formatFCFA(totalDepenses)}`);
     if (entrees) lignes.push(`📦 ${entrees} entrée(s) de stock (achat)`);
     if (sorties) lignes.push(`📤 ${sorties} sortie(s) de stock (usage)`);
+    if (nouvellesTaches) lignes.push(`📋 ${nouvellesTaches} nouvelle(s) tâche(s) ajoutée(s)`);
 
     if (lignes.length) {
       envoyerNotif("📋 Depuis votre dernière visite", lignes.join("\n"));
     }
 
     verifierRequalificationsAVenir(ducks);
+    verifierTachesUrgentes(taches);
   } catch (e) {
     console.error("Erreur génération du résumé de connexion :", e);
   }
@@ -170,4 +176,27 @@ function verifierRequalificationsAVenir(ducks) {
       alertes.push(`⏳ ${d.quantite || 1} sujet(s) (lot du ${formatDate(d.date_entree)}) → ${prochain} dans ${joursRestants} j`);
     });
   if (alertes.length) envoyerNotif("⏳ Requalifications à venir", alertes.join("\n"));
+}
+
+// ---- Alerte pour les tâches en retard ou proches de l'échéance ----
+function verifierTachesUrgentes(taches) {
+  const aujourdhui = new Date().toDateString();
+  const alertes = [];
+  taches
+    .filter(t => t.statut === "a_faire" && t.date_echeance)
+    .forEach(t => {
+      const d = t.date_echeance?.toDate ? t.date_echeance.toDate() : new Date(t.date_echeance);
+      if (isNaN(d.getTime())) return;
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      d.setHours(0, 0, 0, 0);
+      const j = Math.round((d - today) / 86400000);
+      if (j > 1) return; // pas encore urgent (au-delà de demain)
+      const cle = `oleeducks_notif_tache_${t.id}_${aujourdhui}`;
+      if (localStorage.getItem(cle)) return;
+      localStorage.setItem(cle, "1");
+      if (j < 0) alertes.push(`🔴 "${t.titre}" — en retard de ${Math.abs(j)} j`);
+      else if (j === 0) alertes.push(`🟠 "${t.titre}" — échéance aujourd'hui`);
+      else alertes.push(`🟡 "${t.titre}" — échéance demain`);
+    });
+  if (alertes.length) envoyerNotif("📋 Tâches à ne pas oublier", alertes.join("\n"));
 }
