@@ -11,8 +11,9 @@ import { initStocks, openAddStockItemModal } from "./stocks.js";
 import { initComptabilite } from "./comptabilite.js";
 import { initRapport } from "./rapport.js";
 import { initNotifications } from "./notifications.js";
+import { initTaches, openAddTacheModal } from "./taches.js";
 
-const PAGES = ["dashboard", "inventaire", "nids", "finances", "stocks"];
+const PAGES = ["dashboard", "inventaire", "nids", "finances", "stocks", "taches"];
 let currentPage = "dashboard";
 
 function setPage(page) {
@@ -50,6 +51,7 @@ function initFab() {
       case "inventaire": openAddDuckModal(); break;
       case "finances": openAddFinanceModal(); break;
       case "stocks": openAddStockItemModal(); break;
+      case "taches": openAddTacheModal(); break;
       case "nids":
         alert("Pour agir sur un nid, touchez directement sa case dans la grille.");
         break;
@@ -131,6 +133,7 @@ async function boot() {
   initComptabilite();
   initRapport();
   initNotifications();
+  initTaches();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker non enregistré :", err));
