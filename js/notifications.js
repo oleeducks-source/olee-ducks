@@ -16,7 +16,7 @@
 // Module 100% LECTURE SEULE : aucune écriture Firestore.
 // =====================================================================
 import { db } from "./firebase-config.js";
-import { collection, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatFCFA, formatDate } from "./utils.js";
 
 const NOTIF_KEY = "oleeducks_notifs_enabled";
@@ -95,36 +95,46 @@ async function genererResumeConnexion() {
   localStorage.setItem(LAST_VISIT_KEY, String(Date.now()));
 
   try {
-    const [cyclesSnap, txSnap, movSnap, ducksSnap, tachesSnap] = await Promise.all([
-      getDocs(collection(db, "nest_cycles")),
-      getDocs(collection(db, "finance_transactions")),
-      getDocs(collection(db, "stock_mouvements")),
+    const depuisDate = new Date(depuis);
+    // ---------------------------------------------------------------
+    // Optimisation : au lieu de relire l'intégralité de chaque
+    // collection à chaque connexion (coûteux et de plus en plus lent à
+    // mesure que l'historique de la ferme grandit), on ne demande à
+    // Firestore que les documents réellement récents grâce à des
+    // requêtes filtrées par date. Seules "ducks" (petit volume, on a
+    // besoin de TOUT le cheptel actif pour les âges) et "taches"
+    // (volume naturellement faible) restent lues intégralement.
+    // ---------------------------------------------------------------
+    const [pontesSnap, archivesSnap, txSnap, movSnap, ducksSnap, tachesSnap] = await Promise.all([
+      getDocs(query(collection(db, "nest_cycles"), where("date_debut", ">=", depuisDate))),
+      getDocs(query(collection(db, "nest_cycles"), where("date_fin", ">=", depuisDate))),
+      getDocs(query(collection(db, "finance_transactions"), where("createdAt", ">=", depuisDate))),
+      getDocs(query(collection(db, "stock_mouvements"), where("date", ">=", depuisDate))),
       getDocs(collection(db, "ducks")),
       getDocs(collection(db, "taches"))
     ]);
 
-    const cycles = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const nouveauxCycles = pontesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const cyclesArchivesRecents = archivesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const tx = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const mouvements = movSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const ducks = ducksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const taches = tachesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    // Pontes/couvaisons : on compte les cycles DÉMARRÉS depuis la dernière visite
-    const nouvellesPontes = cycles.filter(c => toMs(c.date_debut) >= depuis).length;
-    // Éclosions et échecs archivés depuis la dernière visite
-    const eclosions = cycles.filter(c => c.statut === "eclos" && toMs(c.date_fin) >= depuis);
-    const echecs = cycles.filter(c => c.statut === "echec" && toMs(c.date_fin) >= depuis);
+    // Pontes/couvaisons démarrées depuis la dernière visite (déjà filtré côté serveur)
+    const nouvellesPontes = nouveauxCycles.length;
+    // Éclosions et échecs archivés depuis la dernière visite (déjà filtré côté serveur)
+    const eclosions = cyclesArchivesRecents.filter(c => c.statut === "eclos");
+    const echecs = cyclesArchivesRecents.filter(c => c.statut === "echec");
     const totalEclos = eclosions.reduce((a, c) => a + (Number(c.nombre_eclos) || 0), 0);
 
-    const recentesTx = tx.filter(t => toMs(t.createdAt || t.date) >= depuis);
-    const recettes = recentesTx.filter(t => t.type === "recette");
-    const depenses = recentesTx.filter(t => t.type === "depense");
+    const recettes = tx.filter(t => t.type === "recette");
+    const depenses = tx.filter(t => t.type === "depense");
     const totalRecettes = recettes.reduce((a, t) => a + (Number(t.montant) || 0), 0);
     const totalDepenses = depenses.reduce((a, t) => a + (Number(t.montant) || 0), 0);
 
-    const mouvementsRecents = mouvements.filter(m => toMs(m.createdAt || m.date) >= depuis);
-    const entrees = mouvementsRecents.filter(m => m.type_mouvement === "entree").length;
-    const sorties = mouvementsRecents.filter(m => m.type_mouvement === "sortie").length;
+    const entrees = mouvements.filter(m => m.type_mouvement === "entree").length;
+    const sorties = mouvements.filter(m => m.type_mouvement === "sortie").length;
 
     const lignes = [];
     const nouvellesTaches = taches.filter(t => toMs(t.createdAt) >= depuis).length;
