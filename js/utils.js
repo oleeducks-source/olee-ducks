@@ -279,6 +279,56 @@ export function animateBalanceCountUp(id, targetNumber) {
   requestAnimationFrame(tick);
 }
 
+// ---------------------------------------------------------------------
+// Suppression avec délai d'annulation (façon Gmail). Au lieu d'un
+// dialogue "Êtes-vous sûr ?" qui bloque puis supprime instantanément et
+// sans retour possible, l'élément disparaît tout de suite de la liste
+// (voir estEnAttenteSuppression, à appeler dans chaque fonction de rendu
+// concernée) et un bandeau propose 5 secondes pour annuler avant que la
+// suppression réelle ne soit envoyée à Firestore.
+// ---------------------------------------------------------------------
+const idsEnSuppression = new Set();
+
+export function estEnAttenteSuppression(id) {
+  return idsEnSuppression.has(id);
+}
+
+export function confirmerSuppression(id, libelle, executerSuppression, rerender) {
+  if (idsEnSuppression.has(id)) return; // déjà en cours d'annulation possible
+  idsEnSuppression.add(id);
+  if (rerender) rerender();
+
+  const bar = document.createElement("div");
+  bar.className = "undo-toast";
+  bar.innerHTML = `<span>${escapeHtml(libelle)} supprimé(e)</span><button class="undo-btn">Annuler</button>`;
+  document.body.appendChild(bar);
+  requestAnimationFrame(() => bar.classList.add("show"));
+
+  const retirerBar = () => {
+    bar.classList.remove("show");
+    setTimeout(() => bar.remove(), 250);
+  };
+
+  const timeoutId = setTimeout(async () => {
+    idsEnSuppression.delete(id);
+    retirerBar();
+    try {
+      await executerSuppression();
+    } catch (e) {
+      toast("Erreur lors de la suppression : " + e.message);
+      if (rerender) rerender();
+    }
+  }, 5000);
+
+  bar.querySelector(".undo-btn").addEventListener("click", () => {
+    clearTimeout(timeoutId);
+    idsEnSuppression.delete(id);
+    retirerBar();
+    if (rerender) rerender();
+    toast("Suppression annulée");
+  });
+}
+
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
