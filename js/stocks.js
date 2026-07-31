@@ -12,7 +12,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query, increment
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp } from "./utils.js";
+import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { getActiveDuckCounts } from "./inventaire.js";
 
 const itemsCol = collection(db, "stock_items");
@@ -531,12 +531,13 @@ function openMovementModal(item, type) {
 function renderFormulationsList() {
   const el = document.getElementById("formulationsList");
   if (!el) return;
-  if (!allFormulations.length) {
+  const visibles = allFormulations.filter(f => !estEnAttenteSuppression(f.id));
+  if (!visibles.length) {
     el.innerHTML = `<div class="empty-state"><div class="glyph">🧪</div><p>Aucune formulation enregistrée pour le moment.</p></div>`;
     return;
   }
-  el.innerHTML = allFormulations.map(f => `
-    <div class="row">
+  el.innerHTML = visibles.map(f => `
+    <div class="row" data-id="${f.id}">
       <div class="row-main">
         <span class="row-title">${escapeHtml(f.nom)}</span>
         <span class="row-sub">${formatDate(f.date)} · ${(f.total_kg || 0).toFixed(1)} kg · ${(f.lignes || []).length} ingrédient(s)${f.cree_par ? " · par " + escapeHtml(f.cree_par) : ""}</span>
@@ -544,9 +545,12 @@ function renderFormulationsList() {
       <span class="row-value">${formatFCFA(f.prix_revient_kg)} /kg</span>
     </div>
   `).join("");
-  el.querySelectorAll(".row").forEach((rowEl, idx) => {
+  el.querySelectorAll(".row").forEach(rowEl => {
     rowEl.style.cursor = "pointer";
-    rowEl.addEventListener("click", () => openFormulationDetail(allFormulations[idx]));
+    rowEl.addEventListener("click", () => {
+      const f = allFormulations.find(x => x.id === rowEl.dataset.id);
+      if (f) openFormulationDetail(f);
+    });
   });
 }
 
@@ -791,13 +795,9 @@ function openFormulationDetail(f) {
       document.getElementById("fFormPdf").addEventListener("click", () => exporterFormulationPDF(f));
       document.getElementById("fFormEdit").addEventListener("click", () => openFormulationModal(f, "edit"));
       document.getElementById("fFormDuplicate").addEventListener("click", () => openFormulationModal(f, "duplicate"));
-      document.getElementById("fFormDelete").addEventListener("click", async () => {
-        if (!confirm("Supprimer définitivement cette formulation ?")) return;
-        try {
-          await deleteDoc(doc(db, "formulations", f.id));
-          toast("Formulation supprimée");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+      document.getElementById("fFormDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(f.id, `Formulation "${f.nom}"`, () => deleteDoc(doc(db, "formulations", f.id)), renderFormulationsList);
       });
     }
   });
