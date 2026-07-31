@@ -11,7 +11,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setMaskableText, initEyeToggle, animateBalanceCountUp } from "./utils.js";
+import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setMaskableText, initEyeToggle, animateBalanceCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { reverserEcriture } from "./comptabilite.js";
 import { attacherRecu, retirerRecu } from "./pieces-jointes.js";
 
@@ -63,7 +63,7 @@ export function initFinances() {
 }
 
 function filteredTx() {
-  let items = allTx;
+  let items = allTx.filter(t => !estEnAttenteSuppression(t.id));
   if (filterPeriode !== "all") {
     const days = Number(filterPeriode);
     const cutoff = Date.now() - days * 86400000;
@@ -95,8 +95,8 @@ function renderAll() {
   setMaskableText("finDepenses", formatFCFA(depenses));
 
   // Dashboard (toujours en vision globale, indépendante des filtres de la page Finances)
-  const allRecettes = allTx.filter(t => t.type === "recette").reduce((a, t) => a + Number(t.montant || 0), 0);
-  const allDepenses = allTx.filter(t => t.type === "depense").reduce((a, t) => a + Number(t.montant || 0), 0);
+  const allRecettes = allTx.filter(t => t.type === "recette" && !estEnAttenteSuppression(t.id)).reduce((a, t) => a + Number(t.montant || 0), 0);
+  const allDepenses = allTx.filter(t => t.type === "depense" && !estEnAttenteSuppression(t.id)).reduce((a, t) => a + Number(t.montant || 0), 0);
   const allBalance = allRecettes - allDepenses;
   animateBalanceCountUp("kpiBalance", allBalance);
   document.getElementById("kpiBalance")?.classList.toggle("negative", allBalance < 0);
@@ -299,13 +299,9 @@ function openTxDetail(t) {
     onMount: () => {
       renderPieceJointeZone(t);
       document.getElementById("fTxEdit").addEventListener("click", () => openEditTxModal(t));
-      document.getElementById("fTxDelete").addEventListener("click", async () => {
-        if (!confirm("Supprimer définitivement cette transaction ?")) return;
-        try {
-          await deleteDoc(doc(db, "finance_transactions", t.id));
-          toast("Transaction supprimée");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+      document.getElementById("fTxDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(t.id, "Transaction", () => deleteDoc(doc(db, "finance_transactions", t.id)), renderAll);
       });
     }
   });
