@@ -20,6 +20,7 @@ import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputVal
 const nestsCol = collection(db, "nests");
 const cyclesCol = collection(db, "nest_cycles");
 const pontesCol = collection(db, "pontes_journalieres");
+const eclosionsCol = collection(db, "eclosions_journalieres");
 
 let nestsMap = {};   // numero -> nest doc
 let cyclesMap = {};  // cycle id -> cycle doc (cycles en cours, indexées par id)
@@ -179,9 +180,9 @@ function renderEnCoursList() {
       <div class="row-icon ${c.statut === 'couvaison' ? 'warn' : 'pos'}"><svg><use href="#${c.statut === 'couvaison' ? 'ic-nest-couvaison' : 'ic-nest-ponte'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">Nid n° ${c.nid_numero}</span>
-        <span class="row-sub">${c.nombre_oeufs || 0} œuf(s) · depuis ${formatDate(c.date_debut)}${c.cree_par ? " · par " + escapeHtml(c.cree_par) : ""}</span>
+        <span class="row-sub">${c.nombre_oeufs || 0} œuf(s) · depuis ${formatDate(c.date_debut)}${c.cree_par ? " · par " + escapeHtml(c.cree_par) : ""}${c.nombre_eclos ? ` · 🐣 ${c.nombre_eclos} déjà éclos` : ""}</span>
       </div>
-      <span class="tag ${c.statut === 'couvaison' ? 'warn' : 'ok'}">${c.statut === "couvaison" ? "Couvaison" : "Ponte"}</span>
+      <span class="tag ${c.statut === 'couvaison' ? (c.nombre_eclos ? 'ok' : 'warn') : 'ok'}">${c.statut === "couvaison" ? (c.nombre_eclos ? "Éclosion en cours" : "Couvaison") : "Ponte"}</span>
     </div>
   `).join("");
   el.querySelectorAll(".row").forEach((rowEl, idx) => {
@@ -347,7 +348,7 @@ function openNestModal(n) {
   const joursRestants = joursDepuisCouvaison !== null ? Math.max(0, DUREE_INCUBATION_JOURS - joursDepuisCouvaison) : null;
 
   openModal(`Nid n° ${n}`, `
-    <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${cycle.statut === 'couvaison' ? 'warn' : 'ok'}">${cycle.statut === 'couvaison' ? 'Couvaison' : 'Ponte en cours'}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${cycle.statut === 'couvaison' ? (cycle.nombre_eclos ? 'ok' : 'warn') : 'ok'}">${cycle.statut === 'couvaison' ? (cycle.nombre_eclos ? 'Éclosion en cours' : 'Couvaison') : 'Ponte en cours'}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Œufs enregistrés</span></div><span class="row-value">${cycle.nombre_oeufs || 0}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Début du cycle</span></div><span class="row-value">${formatDate(cycle.date_debut)}</span></div>
     ${cycle.cree_par ? `<div class="row"><div class="row-main"><span class="row-title">Démarré par</span></div><span class="row-value">${escapeHtml(cycle.cree_par)}</span></div>` : ""}
@@ -382,8 +383,14 @@ function openNestModal(n) {
     ${cycle.statut === "ponte" ? `
     <button class="btn yolk" id="fToCouvaison">Démarrer la couvaison</button>
     ` : `
-    <div class="field"><label>Nombre de canetons éclos</label><input type="number" id="fEclos" value="0" min="0"></div>
-    <button class="btn yolk" id="fFinish">Enregistrer l'éclosion (archive le cycle)</button>
+    ${cycle.nombre_eclos ? `<p class="subtle" style="margin-bottom:8px;">Déjà enregistré pour ce cycle : <b>${cycle.nombre_eclos}</b> caneton(s) éclos.</p>` : ""}
+    <div class="field"><label>Canetons éclos à ce relevé</label><input type="number" id="fEclos" value="0" min="0"></div>
+    <p class="subtle" style="margin:-4px 0 10px;">Une couvée de canard de Barbarie éclot souvent en plusieurs vagues, étalées sur plusieurs jours. Enregistrez chaque relevé au fur et à mesure — le nid ne sera archivé que lorsque vous cliquerez sur "Archiver".</p>
+    <div class="field-row">
+      <button class="btn secondary" id="fEclosAddBtn">🐣 Enregistrer (sans archiver)</button>
+    </div>
+    <div class="spacer-s"></div>
+    <button class="btn yolk" id="fFinish">🏁 Archiver ce nid (cycle terminé)</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="fEchec">Déclarer un échec de couvaison</button>
     `}
@@ -450,10 +457,28 @@ function openNestModal(n) {
         } catch (e) { toast("Erreur : " + e.message); }
       });
 
+      // Enregistre une vague d'éclosion SANS archiver le nid — le cycle
+      // reste actif ("couvaison") pour permettre d'autres relevés les
+      // jours suivants, jusqu'à l'archivage explicite.
+      const eclosAddBtn = document.getElementById("fEclosAddBtn");
+      if (eclosAddBtn) eclosAddBtn.addEventListener("click", async () => {
+        const q = Number(document.getElementById("fEclos").value) || 0;
+        if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
+        try {
+          await updateDoc(doc(db, "nest_cycles", cycle.id), { nombre_eclos: increment(q) });
+          await addDoc(eclosionsCol, {
+            nid_numero: n, cycle_id: cycle.id, date: new Date(),
+            quantite: q, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+          });
+          toast(`${q} éclosion(s) enregistrée(s) — nid ${n} toujours actif ✓`);
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+
       const finish = document.getElementById("fFinish");
       if (finish) finish.addEventListener("click", async () => {
-        const eclos = Number(document.getElementById("fEclos").value) || 0;
-        await archiveCycle(n, cycle, "eclos", eclos);
+        const eclosSupp = Number(document.getElementById("fEclos").value) || 0;
+        await archiveCycle(n, cycle, "eclos", eclosSupp);
       });
       const echec = document.getElementById("fEchec");
       if (echec) echec.addEventListener("click", async () => {
@@ -464,13 +489,24 @@ function openNestModal(n) {
   });
 }
 
-async function archiveCycle(n, cycle, statut, nombreEclos) {
+// Archive définitivement le cycle. `eclosSupplementaires` est ajouté au
+// total déjà accumulé via les relevés successifs (fEclosAddBtn) — permet
+// d'enregistrer une dernière vague d'éclosion en même temps que
+// l'archivage, en un seul geste.
+async function archiveCycle(n, cycle, statut, eclosSupplementaires) {
   try {
+    const totalEclos = (Number(cycle.nombre_eclos) || 0) + (Number(eclosSupplementaires) || 0);
+    if (eclosSupplementaires > 0) {
+      await addDoc(eclosionsCol, {
+        nid_numero: n, cycle_id: cycle.id, date: new Date(),
+        quantite: eclosSupplementaires, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+      });
+    }
     await updateDoc(doc(db, "nest_cycles", cycle.id), {
-      statut, nombre_eclos: nombreEclos, date_fin: new Date(), archive_par: getUserName() || "Inconnu"
+      statut, nombre_eclos: totalEclos, date_fin: new Date(), archive_par: getUserName() || "Inconnu"
     });
     await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
-    toast(statut === "eclos" ? `Éclosion enregistrée — nid ${n} archivé ✓` : `Échec enregistré — nid ${n} archivé`);
+    toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) éclos au total ✓` : `Échec enregistré — nid ${n} archivé`);
     closeModal();
   } catch (e) { toast("Erreur : " + e.message); }
 }
