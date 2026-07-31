@@ -8,7 +8,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs,
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp } from "./utils.js";
+import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 
 const ducksCol = collection(db, "ducks");
 let allDucks = [];
@@ -30,7 +30,7 @@ const TYPE_ICONS = {
   reproducteur_femelle: "ic-duck-repro-f"
 };
 const TYPE_ICONS_EMOJI = { canardeau: "🐤", canard: "🦆" };
-const BAGUE_LABELS = { rouge: "Rouge", vert: "Vert", violet: "Violet", bleu: "Bleu" };
+const BAGUE_LABELS = { rouge: "Rouge", vert: "Verte", violet: "Violette", bleu: "Bleue" };
 const STATUT_LABELS = { actif: "Actif", vendu: "Vendu", mort: "Décédé", reforme: "Réformé" };
 
 // ---------------------------------------------------------------------
@@ -194,7 +194,7 @@ async function openCanetonsArchiveModal() {
   openModal("Archive des canetons produits", `<p class="subtle">Chargement…</p>`, { onMount: () => {} });
   try {
     const snap = await getDocs(query(canetonsProductionCol, orderBy("date_transition", "desc")));
-    const entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const entries = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(e => !estEnAttenteSuppression(e.id));
     const total = entries.reduce((a, e) => a + (Number(e.quantite) || 0), 0);
     const body = `
       <div class="card" style="background:var(--sage-100); border:none;">
@@ -256,13 +256,9 @@ function openArchiveEntryModal(entry) {
           openCanetonsArchiveModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
-      document.getElementById("eArchDelete").addEventListener("click", async () => {
-        if (!confirm("Supprimer définitivement cette entrée d'archive ? À utiliser si c'est un doublon.")) return;
-        try {
-          await deleteDoc(doc(db, "canetons_production", entry.id));
-          toast("Entrée supprimée ✓");
-          openCanetonsArchiveModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+      document.getElementById("eArchDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(entry.id, "Entrée d'archive", () => deleteDoc(doc(db, "canetons_production", entry.id)), openCanetonsArchiveModal);
       });
     }
   });
@@ -319,7 +315,7 @@ function renderKpis() {
 function renderList() {
   const el = document.getElementById("invList");
   if (!el) return;
-  let items = allDucks;
+  let items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
   if (filterType !== "all") items = items.filter(d => d.type === filterType);
   if (filterStatut !== "all") items = items.filter(d => d.statut === filterStatut);
 
@@ -371,9 +367,9 @@ export function openAddDuckModal() {
         <select id="fDuckBague">
           <option value="">Aucune</option>
           <option value="rouge">Rouge</option>
-          <option value="vert">Vert</option>
-          <option value="violet">Violet</option>
-          <option value="bleu">Bleu</option>
+          <option value="vert">Verte</option>
+          <option value="violet">Violette</option>
+          <option value="bleu">Bleue</option>
         </select>
       </div>
       <div class="field"><label>N° de bague</label><input type="text" id="fDuckNum" placeholder="ex : R-014"></div>
@@ -619,13 +615,9 @@ function openEditModal(d) {
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
-      document.getElementById("eDuckDelete").addEventListener("click", async () => {
-        if (!confirm("Supprimer définitivement cet enregistrement ?")) return;
-        try {
-          await deleteDoc(doc(db, "ducks", d.id));
-          toast("Supprimé");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+      document.getElementById("eDuckDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(d.id, "Enregistrement", () => deleteDoc(doc(db, "ducks", d.id)), renderList);
       });
     }
   });
