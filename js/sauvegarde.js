@@ -5,11 +5,19 @@
 // en cas de problème avec le projet Firebase — à faire une fois par mois
 // par exemple, et à conserver quelque part (email à soi-même, Drive…).
 //
-// Module 100% LECTURE SEULE : aucune écriture Firestore.
+// Après un export réussi, la date est enregistrée dans "app_meta/sauvegarde"
+// (partagée entre les 3 téléphones) et tout rappel de sauvegarde en
+// attente dans le module Tâches est automatiquement clôturé — voir
+// js/taches.js pour le rappel mensuel automatique associé.
+//
+// Écriture Firestore limitée à ces deux effets de bord ci-dessus ;
+// aucune donnée métier de la ferme n'est modifiée.
 // =====================================================================
 import { db } from "./firebase-config.js";
-import { collection, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { toast } from "./utils.js";
+import {
+  collection, getDocs, doc, setDoc, updateDoc, query, where, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { toast, getUserName } from "./utils.js";
 
 const COLLECTIONS = [
   "ducks", "nests", "nest_cycles", "pontes_journalieres",
@@ -62,6 +70,23 @@ async function exporterToutesLesDonnees() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     toast(`Sauvegarde générée ✓ (${totalDocs} enregistrements) — conservez ce fichier en lieu sûr`);
+
+    // Trace partagée (visible par les 3 téléphones) pour que le rappel
+    // mensuel automatique de js/taches.js sache qu'une sauvegarde vient
+    // d'être faite ce mois-ci, et clôture toute tâche de rappel en attente.
+    await setDoc(doc(db, "app_meta", "sauvegarde"), {
+      date: serverTimestamp(),
+      par: getUserName() || "Inconnu"
+    }, { merge: true });
+
+    const rappelSnap = await getDocs(query(collection(db, "taches"), where("categorie", "==", "sauvegarde"), where("statut", "==", "a_faire")));
+    for (const d of rappelSnap.docs) {
+      await updateDoc(doc(db, "taches", d.id), {
+        statut: "effectuee",
+        effectue_par: "Système (auto — sauvegarde effectuée)",
+        effectue_le: serverTimestamp()
+      });
+    }
   } catch (e) {
     console.error("Erreur sauvegarde :", e);
     toast("Erreur lors de la sauvegarde : " + e.message);
