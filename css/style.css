@@ -345,6 +345,27 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
   font-size:13px; z-index:50; box-shadow:var(--shadow-2);
 }
 
+.undo-toast{
+  position:fixed; bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 16px); left:50%;
+  transform:translateX(-50%) translateY(12px);
+  background:var(--ink-900); color:var(--white); padding:10px 10px 10px 16px; border-radius:30px;
+  font-size:13px; z-index:55; box-shadow:var(--shadow-2);
+  display:flex; align-items:center; gap:12px;
+  opacity:0; pointer-events:none;
+  transition:opacity .25s ease, transform .25s ease;
+  overflow:hidden;
+}
+.undo-toast.show{opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto;}
+.undo-toast .undo-btn{
+  background:var(--yolk-500); color:var(--pond-950); border:none; border-radius:20px;
+  padding:6px 14px; font-weight:700; font-size:12.5px; cursor:pointer; flex:none;
+}
+.undo-toast::after{
+  content:""; position:absolute; left:0; bottom:0; height:2px; background:var(--yolk-500);
+  animation:undoCountdown 5s linear forwards;
+}
+@keyframes undoCountdown{ from{width:100%;} to{width:0%;} }
+
 .stat-bar-track{background:var(--sage-100); border-radius:6px; height:8px; overflow:hidden;}
 .stat-bar-fill{background:var(--pond-600); height:100%; border-radius:6px;}
 
