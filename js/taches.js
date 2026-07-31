@@ -12,8 +12,8 @@
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
-  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
-  serverTimestamp, query, orderBy
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs,
+  serverTimestamp, query, orderBy, where
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 
@@ -25,8 +25,17 @@ export const CATEGORIES_TACHES = {
   commande: { label: "Commande client", icon: "ic-task-commande" },
   ferme: { label: "Tâche à la ferme", icon: "ic-task-ferme" },
   ravitaillement: { label: "Ravitaillement (aliments, moulin…)", icon: "ic-task-ravitaillement" },
+  sauvegarde: { label: "Sauvegarde des données", icon: "ic-task-sauvegarde" },
   autre: { label: "Autre", icon: "ic-cat-autre" }
 };
+
+// Catégories que l'utilisateur peut choisir à la main dans le formulaire
+// d'ajout — "sauvegarde" est réservée au rappel automatique généré par
+// l'app elle-même (voir verifierRappelSauvegardeMensuelle), pour éviter
+// toute confusion avec une tâche "Autre" ordinaire.
+const CATEGORIES_TACHES_SELECTIONNABLES = Object.fromEntries(
+  Object.entries(CATEGORIES_TACHES).filter(([k]) => k !== "sauvegarde")
+);
 
 // ---------------------------------------------------------------------
 // Urgence — basée sur le nombre de jours restants avant l'échéance.
@@ -68,6 +77,8 @@ export function initTaches() {
     renderHistoriqueList();
     updateVoyantEtBadge();
   }, err => console.error("Erreur lecture tâches :", err));
+
+  verifierRappelSauvegardeMensuelle();
 
   document.querySelectorAll("#tachesView button").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -145,6 +156,45 @@ function genererRappelCalendrier(t) {
 }
 
 // ---------------------------------------------------------------------
+// Rappel automatique de sauvegarde mensuelle. Ne crée une tâche que si
+// aucune sauvegarde n'a été faite ce mois-ci (par n'importe lequel des 3
+// téléphones — voir "app_meta/sauvegarde", écrit par sauvegarde.js à
+// chaque export réussi) ET qu'aucun rappel n'est déjà en attente. Ne
+// relance jamais un doublon.
+// ---------------------------------------------------------------------
+async function verifierRappelSauvegardeMensuelle() {
+  try {
+    const now = new Date();
+    const debutMois = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const metaSnap = await getDoc(doc(db, "app_meta", "sauvegarde"));
+    if (metaSnap.exists()) {
+      const derniere = metaSnap.data().date;
+      const derniereDate = derniere?.toDate ? derniere.toDate() : new Date(derniere);
+      if (derniereDate >= debutMois) return; // déjà sauvegardé ce mois-ci
+    }
+
+    const existanteSnap = await getDocs(query(tachesCol, where("categorie", "==", "sauvegarde"), where("statut", "==", "a_faire")));
+    if (!existanteSnap.empty) return; // rappel déjà en attente, pas de doublon
+
+    const dernierJourMois = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const echeance = new Date(dernierJourMois.getFullYear(), dernierJourMois.getMonth(), Math.max(1, dernierJourMois.getDate() - 1));
+
+    await addDoc(tachesCol, {
+      titre: "Sauvegarder les données de la ferme",
+      categorie: "sauvegarde",
+      date_echeance: echeance,
+      notes: "Rappel automatique mensuel — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
+      statut: "a_faire",
+      cree_par: "Système (auto)",
+      createdAt: serverTimestamp()
+    });
+  } catch (e) {
+    console.error("Erreur vérification rappel sauvegarde :", e);
+  }
+}
+
+// ---------------------------------------------------------------------
 // Ajout
 // ---------------------------------------------------------------------
 export function openAddTacheModal() {
@@ -152,7 +202,7 @@ export function openAddTacheModal() {
     <div class="field"><label>Titre</label><input type="text" id="fTacheTitre" placeholder="ex : Récupérer les aliments au moulin"></div>
     <div class="field"><label>Catégorie</label>
       <select id="fTacheCategorie">
-        ${Object.entries(CATEGORIES_TACHES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("")}
+        ${Object.entries(CATEGORIES_TACHES_SELECTIONNABLES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("")}
       </select>
     </div>
     <div class="field"><label>Date d'échéance (optionnel)</label><input type="date" id="fTacheEcheance"></div>
