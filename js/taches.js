@@ -15,7 +15,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, query, orderBy
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 
 const tachesCol = collection(db, "taches");
 let allTaches = [];
@@ -224,13 +224,9 @@ function openTacheDetail(t) {
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
-      document.getElementById("fTacheDelete").addEventListener("click", async () => {
-        if (!confirm("Supprimer définitivement cette tâche ?")) return;
-        try {
-          await deleteDoc(doc(db, "taches", t.id));
-          toast("Tâche supprimée");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+      document.getElementById("fTacheDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(t.id, `Tâche "${t.titre}"`, () => deleteDoc(doc(db, "taches", t.id)), () => { renderAFaireList(); renderHistoriqueList(); });
       });
     }
   });
@@ -242,7 +238,7 @@ function openTacheDetail(t) {
 function renderAFaireList() {
   const el = document.getElementById("tachesAFaireList");
   if (!el) return;
-  const ouvertes = allTaches.filter(t => t.statut === "a_faire").sort((a, b) => {
+  const ouvertes = allTaches.filter(t => t.statut === "a_faire" && !estEnAttenteSuppression(t.id)).sort((a, b) => {
     const ja = joursRestants(a), jb = joursRestants(b);
     if (ja === null && jb === null) return 0;
     if (ja === null) return 1;
@@ -277,7 +273,7 @@ function renderAFaireList() {
 function renderHistoriqueList() {
   const el = document.getElementById("tachesHistoriqueList");
   if (!el) return;
-  const effectuees = allTaches.filter(t => t.statut === "effectuee")
+  const effectuees = allTaches.filter(t => t.statut === "effectuee" && !estEnAttenteSuppression(t.id))
     .sort((a, b) => (b.effectue_le?.toMillis?.() || 0) - (a.effectue_le?.toMillis?.() || 0));
   if (!effectuees.length) {
     el.innerHTML = `<div class="empty-state"><div class="glyph">🗂️</div><p>Aucune tâche effectuée pour l'instant.</p></div>`;
