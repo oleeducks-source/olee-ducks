@@ -8,7 +8,7 @@
 // IMPORTANT : le numéro de version ci-dessous doit être incrémenté à
 // chaque mise à jour de ce fichier pour forcer le navigateur à détecter
 // un nouveau service worker et à vider l'ancien cache.
-const CACHE_NAME = "oleeducks-shell-v6";
+const CACHE_NAME = "oleeducks-shell-v7";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -26,6 +26,7 @@ const SHELL_FILES = [
   "./js/rapport.js",
   "./js/notifications.js",
   "./js/taches.js",
+  "./js/sauvegarde.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
