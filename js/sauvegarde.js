@@ -43,6 +43,16 @@ function serialiser(valeur) {
 }
 
 async function exporterToutesLesDonnees() {
+  const maintenant = new Date();
+  const estSamedi = maintenant.getDay() === 6;
+  if (!estSamedi) {
+    const confirme = confirm(
+      "Pour rappel, la sauvegarde se fait normalement chaque samedi à 12h.\n\n" +
+      "Vous êtes sur le point de sauvegarder un autre jour — si c'est volontaire, continuez ; sinon, annulez et revenez samedi."
+    );
+    if (!confirme) return;
+  }
+
   toast("Préparation de la sauvegarde…");
   try {
     const data = {};
