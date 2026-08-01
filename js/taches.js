@@ -171,45 +171,46 @@ function genererRappelCalendrier(t) {
 }
 
 // ---------------------------------------------------------------------
-// Rappel automatique de sauvegarde HEBDOMADAIRE. Ne crée une tâche que si
-// aucune sauvegarde n'a été faite cette semaine (lundi → dimanche, par
-// n'importe lequel des 3 téléphones — voir "app_meta/sauvegarde", écrit
-// par sauvegarde.js à chaque export réussi) ET qu'aucun rappel n'est déjà
-// en attente. Ne relance jamais un doublon.
+// Rappel automatique de sauvegarde HEBDOMADAIRE, ancré sur le cycle
+// samedi 12h → samedi 12h suivant (et non plus lundi → dimanche, pour
+// coller exactement à la règle "sauvegarde chaque samedi à 12h"). Ne crée
+// une tâche que si aucune sauvegarde n'a été faite depuis le début du
+// cycle en cours (par n'importe lequel des 3 téléphones — voir
+// "app_meta/sauvegarde", écrit par sauvegarde.js à chaque export réussi)
+// ET qu'aucun rappel n'est déjà en attente. Ne relance jamais un doublon.
 // ---------------------------------------------------------------------
-function lundiDeLaSemaine(date) {
+function prochainSamedi12h(date) {
   const d = new Date(date);
-  const jour = d.getDay(); // 0 = dimanche, 1 = lundi, ...
-  const decalage = jour === 0 ? -6 : 1 - jour;
-  d.setDate(d.getDate() + decalage);
-  d.setHours(0, 0, 0, 0);
+  const jour = d.getDay(); // 0 = dimanche, ..., 6 = samedi
+  const joursAvant = (6 - jour + 7) % 7;
+  d.setDate(d.getDate() + joursAvant);
+  d.setHours(12, 0, 0, 0);
+  if (d.getTime() < date.getTime()) d.setDate(d.getDate() + 7); // samedi après 12h passé -> viser le samedi suivant
   return d;
 }
 
 async function verifierRappelSauvegardeMensuelle() {
   try {
     const now = new Date();
-    const debutSemaine = lundiDeLaSemaine(now);
+    const prochainSamedi = prochainSamedi12h(now);
+    const debutCycle = new Date(prochainSamedi);
+    debutCycle.setDate(debutCycle.getDate() - 7);
 
     const metaSnap = await getDoc(doc(db, "app_meta", "sauvegarde"));
     if (metaSnap.exists()) {
       const derniere = metaSnap.data().date;
       const derniereDate = derniere?.toDate ? derniere.toDate() : new Date(derniere);
-      if (derniereDate >= debutSemaine) return; // déjà sauvegardé cette semaine
+      if (derniereDate >= debutCycle) return; // déjà sauvegardé dans le cycle en cours
     }
 
     const existanteSnap = await getDocs(query(tachesCol, where("categorie", "==", "sauvegarde"), where("statut", "==", "a_faire")));
     if (!existanteSnap.empty) return; // rappel déjà en attente, pas de doublon
 
-    const samediSemaine = new Date(debutSemaine);
-    samediSemaine.setDate(samediSemaine.getDate() + 5); // lundi + 5 jours = samedi
-    samediSemaine.setHours(10, 0, 0, 0);
-
     await addDoc(tachesCol, {
       titre: "Sauvegarder les données de la ferme",
       categorie: "sauvegarde",
-      date_echeance: samediSemaine,
-      notes: "Rappel automatique hebdomadaire (samedi 10h) — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
+      date_echeance: prochainSamedi,
+      notes: "Rappel automatique hebdomadaire (samedi 12h) — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
       statut: "a_faire",
       cree_par: "Système (auto)",
       createdAt: serverTimestamp()
