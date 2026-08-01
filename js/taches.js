@@ -70,6 +70,15 @@ function urgenceTag(j) {
   return { cls: "ok", label: `Dans ${j} j` };
 }
 
+// Affiche " à HHhMM" quand l'échéance porte une heure précise (ex : le
+// rappel de sauvegarde du samedi 10h) — rien pour une échéance "journée"
+// classique saisie via un simple champ date (donc à minuit).
+function heureEcheance(dateEcheance) {
+  const d = dateEcheance?.toDate ? dateEcheance.toDate() : new Date(dateEcheance);
+  if (isNaN(d.getTime()) || (d.getHours() === 0 && d.getMinutes() === 0)) return "";
+  return ` à ${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 export function initTaches() {
   onSnapshot(query(tachesCol, orderBy("createdAt", "desc")), (snap) => {
     allTaches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -116,7 +125,13 @@ function genererRappelCalendrier(t) {
   // Événement à 8h du matin le jour de l'échéance, avec une alarme au
   // moment même de l'événement — la plupart des calendriers mobiles
   // déclenchent alors une notification système à cette heure précise.
-  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0);
+  // Événement à l'heure précise de l'échéance si une heure a été fixée
+  // (ex : le rappel de sauvegarde du samedi à 10h) ; à défaut (tâche
+  // saisie via un simple champ date, donc à minuit), on garde 8h du matin
+  // comme heure par défaut raisonnable.
+  const heure = (d.getHours() || d.getMinutes()) ? d.getHours() : 8;
+  const minute = (d.getHours() || d.getMinutes()) ? d.getMinutes() : 0;
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), heure, minute, 0);
   const end = new Date(start.getTime() + 30 * 60000);
   const toIcsUtc = (date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
   const cat = CATEGORIES_TACHES[t.categorie] || CATEGORIES_TACHES.autre;
@@ -156,35 +171,45 @@ function genererRappelCalendrier(t) {
 }
 
 // ---------------------------------------------------------------------
-// Rappel automatique de sauvegarde mensuelle. Ne crée une tâche que si
-// aucune sauvegarde n'a été faite ce mois-ci (par n'importe lequel des 3
-// téléphones — voir "app_meta/sauvegarde", écrit par sauvegarde.js à
-// chaque export réussi) ET qu'aucun rappel n'est déjà en attente. Ne
-// relance jamais un doublon.
+// Rappel automatique de sauvegarde HEBDOMADAIRE. Ne crée une tâche que si
+// aucune sauvegarde n'a été faite cette semaine (lundi → dimanche, par
+// n'importe lequel des 3 téléphones — voir "app_meta/sauvegarde", écrit
+// par sauvegarde.js à chaque export réussi) ET qu'aucun rappel n'est déjà
+// en attente. Ne relance jamais un doublon.
 // ---------------------------------------------------------------------
+function lundiDeLaSemaine(date) {
+  const d = new Date(date);
+  const jour = d.getDay(); // 0 = dimanche, 1 = lundi, ...
+  const decalage = jour === 0 ? -6 : 1 - jour;
+  d.setDate(d.getDate() + decalage);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 async function verifierRappelSauvegardeMensuelle() {
   try {
     const now = new Date();
-    const debutMois = new Date(now.getFullYear(), now.getMonth(), 1);
+    const debutSemaine = lundiDeLaSemaine(now);
 
     const metaSnap = await getDoc(doc(db, "app_meta", "sauvegarde"));
     if (metaSnap.exists()) {
       const derniere = metaSnap.data().date;
       const derniereDate = derniere?.toDate ? derniere.toDate() : new Date(derniere);
-      if (derniereDate >= debutMois) return; // déjà sauvegardé ce mois-ci
+      if (derniereDate >= debutSemaine) return; // déjà sauvegardé cette semaine
     }
 
     const existanteSnap = await getDocs(query(tachesCol, where("categorie", "==", "sauvegarde"), where("statut", "==", "a_faire")));
     if (!existanteSnap.empty) return; // rappel déjà en attente, pas de doublon
 
-    const dernierJourMois = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const echeance = new Date(dernierJourMois.getFullYear(), dernierJourMois.getMonth(), Math.max(1, dernierJourMois.getDate() - 1));
+    const samediSemaine = new Date(debutSemaine);
+    samediSemaine.setDate(samediSemaine.getDate() + 5); // lundi + 5 jours = samedi
+    samediSemaine.setHours(10, 0, 0, 0);
 
     await addDoc(tachesCol, {
       titre: "Sauvegarder les données de la ferme",
       categorie: "sauvegarde",
-      date_echeance: echeance,
-      notes: "Rappel automatique mensuel — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
+      date_echeance: samediSemaine,
+      notes: "Rappel automatique hebdomadaire (samedi 10h) — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
       statut: "a_faire",
       cree_par: "Système (auto)",
       createdAt: serverTimestamp()
@@ -251,7 +276,7 @@ function openTacheDetail(t) {
   const estEffectuee = t.statut === "effectuee";
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Catégorie</span></div><span class="row-value">${escapeHtml(cat.label)}</span></div>
-    ${t.date_echeance ? `<div class="row"><div class="row-main"><span class="row-title">Échéance</span></div><span class="tag ${tag.cls}">${formatDate(t.date_echeance)} · ${tag.label}</span></div>` : ""}
+    ${t.date_echeance ? `<div class="row"><div class="row-main"><span class="row-title">Échéance</span></div><span class="tag ${tag.cls}">${formatDate(t.date_echeance)}${heureEcheance(t.date_echeance)} · ${tag.label}</span></div>` : ""}
     <div class="row"><div class="row-main"><span class="row-title">Créée par</span></div><span class="row-value">${escapeHtml(t.cree_par || "Inconnu")}</span></div>
     ${estEffectuee ? `<div class="row"><div class="row-main"><span class="row-title">Effectuée par</span></div><span class="row-value">${escapeHtml(t.effectue_par || "")} · ${formatDate(t.effectue_le)}</span></div>` : ""}
     ${t.notes ? `<div class="spacer-s"></div><p class="subtle" style="white-space:pre-wrap;">${escapeHtml(t.notes)}</p>` : ""}
