@@ -419,7 +419,10 @@ function openEditModal(d) {
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Quantité actuelle</span></div><span class="row-value">${d.quantite || 1}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span></div>
+    ${!isActif && d.date_sortie ? `<div class="row"><div class="row-main"><span class="row-title">Date de sortie</span></div><span class="row-value">${formatDate(d.date_sortie)}</span></div>` : ""}
+    ${!isActif && d.motif_sortie ? `<div class="row" style="flex-direction:column; align-items:flex-start; gap:2px;"><span class="row-title">Motif / note</span><p class="subtle" style="margin:0;">${escapeHtml(d.motif_sortie)}</p></div>` : ""}
     ${age !== null ? `<div class="row"><div class="row-main"><span class="row-title">Âge estimé</span></div><span class="row-value">${age < 1 ? Math.round(age * 7) + " j" : age.toFixed(1) + " sem."}</span></div>` : ""}
+    ${d.requalifie_le ? `<div class="row"><div class="row-main"><span class="row-title">Requalifié le</span></div><span class="row-value">${formatDate(d.requalifie_le)}${d.requalifie_par ? " · " + escapeHtml(d.requalifie_par) : ""}</span></div>` : ""}
 
     ${isActif && estJeune && (d.quantite || 1) > 0 ? `
     <div class="spacer-m"></div>
@@ -458,6 +461,7 @@ function openEditModal(d) {
           </select>
         </div>
       </div>
+      <div class="field"><label>Date du retrait</label><input type="date" id="fWithdrawDate" value="${todayInputValue()}"></div>
       <div class="field"><label>Note (optionnel)</label><input type="text" id="fWithdrawNote" placeholder="ex : vendu au marché de Bingerville"></div>
       <button class="btn yolk" id="fWithdrawSave">Enregistrer le retrait</button>
     </div>
@@ -475,6 +479,15 @@ function openEditModal(d) {
         <option value="reproducteur_femelle" ${d.type === "reproducteur_femelle" ? "selected" : ""}>Reproductrice femelle</option>
       </select>
     </div>
+    <div class="field"><label>Couleur de bague</label>
+      <select id="eDuckBague">
+        <option value="" ${!d.bague_couleur ? "selected" : ""}>Aucune</option>
+        <option value="rouge" ${d.bague_couleur === "rouge" ? "selected" : ""}>Rouge</option>
+        <option value="vert" ${d.bague_couleur === "vert" ? "selected" : ""}>Verte</option>
+        <option value="violet" ${d.bague_couleur === "violet" ? "selected" : ""}>Violette</option>
+        <option value="bleu" ${d.bague_couleur === "bleu" ? "selected" : ""}>Bleue</option>
+      </select>
+    </div>
     <div class="field"><label>Date de naissance exacte (optionnel — prioritaire sur la date d'entrée pour le calcul d'âge)</label><input type="date" id="eDuckDateNaissance" value="${d.date_naissance ? formatInputDate(d.date_naissance) : ""}"></div>
     <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;">
       <input type="checkbox" id="eDuckLock" style="width:auto;" ${d.verrouille_type ? "checked" : ""}>
@@ -489,6 +502,7 @@ function openEditModal(d) {
         <option value="reforme" ${d.statut === "reforme" ? "selected" : ""}>Réformé</option>
       </select>
     </div>
+    <div class="field"><label>Date de sortie (si vendu/décédé/réformé)</label><input type="date" id="eDuckDateSortie" value="${d.date_sortie ? formatInputDate(d.date_sortie) : todayInputValue()}"></div>
     <div class="field"><label>Corriger la quantité (erreur de saisie uniquement)</label><input type="number" id="eDuckQte" value="${d.quantite || 1}" min="1"></div>
     <div class="field"><label>Motif de sortie (si vendu/décédé)</label><input type="text" id="eDuckMotif" value="${escapeHtml(d.motif_sortie || "")}"></div>
     <div class="field"><label>Notes</label><textarea id="eDuckNotes" rows="2">${escapeHtml(d.notes || "")}</textarea></div>
@@ -548,12 +562,13 @@ function openEditModal(d) {
         if (qte <= 0 || qte > currentQte) { toast(`Indiquez une quantité entre 1 et ${currentQte}`); return; }
         const motif = document.getElementById("fWithdrawMotif").value;
         const note = document.getElementById("fWithdrawNote").value.trim() || null;
+        const dateRetrait = document.getElementById("fWithdrawDate").value ? new Date(document.getElementById("fWithdrawDate").value) : new Date();
         try {
           if (qte === currentQte) {
             // Le lot entier part : on met simplement à jour ce document
             await updateDoc(doc(db, "ducks", d.id), {
               statut: motif,
-              date_sortie: new Date(),
+              date_sortie: dateRetrait,
               motif_sortie: note,
               modifie_par: getUserName() || "Inconnu",
               modifie_le: serverTimestamp()
@@ -575,7 +590,7 @@ function openEditModal(d) {
               numero_bague: d.numero_bague || null,
               notes: null,
               statut: motif,
-              date_sortie: new Date(),
+              date_sortie: dateRetrait,
               motif_sortie: note,
               issu_du_lot: d.id,
               cree_par: getUserName() || "Inconnu",
@@ -594,12 +609,13 @@ function openEditModal(d) {
           await updateDoc(doc(db, "ducks", d.id), {
             type: nouveauType,
             statut,
+            bague_couleur: document.getElementById("eDuckBague").value || null,
             date_naissance: document.getElementById("eDuckDateNaissance").value ? new Date(document.getElementById("eDuckDateNaissance").value) : null,
             verrouille_type: document.getElementById("eDuckLock").checked,
             quantite: Number(document.getElementById("eDuckQte").value) || 1,
             motif_sortie: document.getElementById("eDuckMotif").value.trim() || null,
             notes: document.getElementById("eDuckNotes").value.trim() || null,
-            date_sortie: statut !== "actif" ? new Date() : null,
+            date_sortie: statut !== "actif" && document.getElementById("eDuckDateSortie").value ? new Date(document.getElementById("eDuckDateSortie").value) : null,
             modifie_par: getUserName() || "Inconnu",
             modifie_le: serverTimestamp()
           });
