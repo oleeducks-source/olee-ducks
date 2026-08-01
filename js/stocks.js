@@ -178,10 +178,11 @@ function animerMouvementStock(itemId, delta, unite) {
 }
 
 function renderList() {
-  let items = allItems;
+  const visibleItems = allItems.filter(i => !estEnAttenteSuppression(i.id));
+  let items = visibleItems;
   if (filterType !== "all") items = items.filter(i => i.type === filterType);
 
-  const alerts = allItems.filter(i => Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0));
+  const alerts = visibleItems.filter(i => Number(i.quantite_actuelle) <= Number(i.seuil_alerte || 0));
   const alertsEl = document.getElementById("stockAlertsCard");
   if (alertsEl) {
     alertsEl.innerHTML = `
@@ -294,12 +295,18 @@ function openItemDetail(item) {
     <div>${history.length ? history.map(m => `
       <div class="row"><div class="row-main"><span class="row-title">${m.type_mouvement === "entree" ? "Entrée" : "Sortie"} · ${m.motif || ""}</span><span class="row-sub">${formatDate(m.date)}${m.cree_par ? " · par " + escapeHtml(m.cree_par) : ""}</span></div><span class="row-value ${m.type_mouvement === "entree" ? "pos" : "neg"}">${m.type_mouvement === "entree" ? "+" : "−"}${m.quantite} ${item.unite}</span></div>
     `).join("") : `<p class="subtle">Aucun mouvement enregistré.</p>`}</div>
+    <div class="spacer-m"></div>
+    <button class="btn danger" id="fItDelete">Supprimer cet article de stock</button>
   `, {
     onMount: () => {
       document.getElementById("fMovEntree").addEventListener("click", () => openMovementModal(item, "entree"));
       document.getElementById("fMovSortie").addEventListener("click", () => openMovementModal(item, "sortie"));
       document.getElementById("fItEdit").addEventListener("click", () => openEditStockItemModal(item));
       document.getElementById("fItPrevision").addEventListener("click", () => openPrevisionModal(item));
+      document.getElementById("fItDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(item.id, `Article "${item.nom}"`, () => deleteDoc(doc(db, "stock_items", item.id)), renderList);
+      });
     }
   });
 }
@@ -590,13 +597,23 @@ function openFormulationModal(existing = null, mode = "new") {
   const dateDefaut = existing && isEdit ? dateToInputValue(existing.date) : todayInputValue();
   const mainOeuvreDefaut = existing ? Number(existing.main_oeuvre) || 0 : 0;
 
+  const aliments = allItems.filter(i => i.type === "aliment");
+  const matchAuto = aliments.find(i => i.nom.toLowerCase() === nomDefaut.toLowerCase());
   const optionsHtml = isEdit ? `
     <div class="card" style="background:var(--sage-100); border:none;">
       <p class="subtle" style="margin:0;">ℹ️ Modifier une formulation ne recrée pas la dépense ni le mouvement de stock déjà enregistrés lors de sa création initiale.</p>
     </div>
   ` : `
     <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkFinance" style="width:auto;" checked><label style="margin:0;">Enregistrer aussi la dépense correspondante dans Finances</label></div>
-    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkStock" style="width:auto;" checked><label style="margin:0;">Ajouter la quantité produite au stock d'aliments</label></div>
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fFormLinkStock" style="width:auto;" checked><label style="margin:0;">Ajouter la quantité produite au stock</label></div>
+    <div class="field" id="fFormStockTargetWrap">
+      <label>Article de stock à approvisionner</label>
+      <select id="fFormStockTarget">
+        <option value="__new__" ${!matchAuto ? "selected" : ""}>+ Créer un nouvel article de stock</option>
+        ${aliments.map(i => `<option value="${i.id}" ${matchAuto && matchAuto.id === i.id ? "selected" : ""}>${escapeHtml(i.nom)} — ${i.quantite_actuelle} ${i.unite} actuellement</option>`).join("")}
+      </select>
+      <p class="subtle" style="margin:6px 0 0;">Choisissez l'article existant à réapprovisionner (une prévision déjà réglée dessus est conservée), ou créez-en un nouveau si cette formulation correspond à un aliment encore jamais suivi.</p>
+    </div>
   `;
 
   const body = `
@@ -640,6 +657,10 @@ function openFormulationModal(existing = null, mode = "new") {
       lignesEl.addEventListener("input", recalcFormulation);
       document.getElementById("fFormMainOeuvre").addEventListener("input", recalcFormulation);
       document.getElementById("fFormAddLigne").addEventListener("click", () => addRow());
+      document.getElementById("fFormLinkStock")?.addEventListener("change", (e) => {
+        const wrap = document.getElementById("fFormStockTargetWrap");
+        if (wrap) wrap.style.display = e.target.checked ? "" : "none";
+      });
 
       if (existing && (existing.lignes || []).length) {
         existing.lignes.forEach(l => addRow(l));
@@ -687,14 +708,17 @@ function openFormulationModal(existing = null, mode = "new") {
           }
 
           if (document.getElementById("fFormLinkStock").checked) {
-            const existingItem = allItems.find(i => i.nom.toLowerCase() === nom.toLowerCase());
-            if (existingItem) {
+            const target = document.getElementById("fFormStockTarget").value;
+            if (target !== "__new__") {
+              // Article existant choisi explicitement : on ajoute simplement
+              // la quantité produite. Tous les autres champs (dont une
+              // éventuelle prévision cheptel déjà réglée) restent intacts.
               await addDoc(movCol, {
-                item_id: existingItem.id, type_mouvement: "entree", quantite: totalKg, date: dateVal,
+                item_id: target, type_mouvement: "entree", quantite: totalKg, date: dateVal,
                 motif: "formulation", cout_total: totalGeneral,
                 cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
               });
-              await updateDoc(doc(db, "stock_items", existingItem.id), {
+              await updateDoc(doc(db, "stock_items", target), {
                 quantite_actuelle: increment(totalKg),
                 cout_unitaire_moyen: Math.round(prixRevientKg)
               });
