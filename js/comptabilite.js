@@ -129,7 +129,9 @@ function exerciceForDate(dateVal) {
 }
 
 export function initComptabilite() {
-  ensureDefaultAccounts().catch(e => console.error("Erreur init plan de comptes :", e));
+  ensureDefaultAccounts()
+    .then(() => nettoyerComptesEnDouble())
+    .catch(e => console.error("Erreur init plan de comptes :", e));
 
   onSnapshot(query(accountsCol, orderBy("numero")), snap => {
     allAccounts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -231,16 +233,20 @@ function showComptaView() {
 // historique importée), plus l'année en cours.
 // ---------------------------------------------------------------------
 async function ensureDefaultAccounts() {
+  // ⚠️ Avant ce correctif, la fonction s'arrêtait dès que la collection
+  // n'était pas vide — ce qui empêchait tout nouveau compte ajouté à
+  // DEFAULT_ACCOUNTS après la création initiale du plan comptable (comme
+  // 624 Transports ou 628 Autres charges externes) d'atteindre les
+  // installations déjà en service. Elle vérifie maintenant compte par
+  // compte et n'ajoute que ceux qui manquent réellement — jamais de
+  // doublon possible (numéro de compte = identifiant du document), et
+  // les comptes déjà existants ne sont jamais modifiés.
   const snap = await getDocs(query(accountsCol));
-  if (!snap.empty) return;
+  const existants = new Set(snap.docs.map(d => d.id));
+  const manquants = DEFAULT_ACCOUNTS.filter(a => !existants.has(a.numero));
+  if (!manquants.length) return;
   const batch = writeBatch(db);
-  DEFAULT_ACCOUNTS.forEach(a => {
-    // Le numéro de compte sert d'identifiant de document (au lieu d'un ID
-    // auto-généré) : même si deux téléphones lancent l'initialisation au
-    // même instant (course), les deux écritures ciblent le MÊME document
-    // Firestore et la seconde écrase simplement la première avec des
-    // données identiques — aucun doublon possible. C'est le correctif du
-    // bug de comptes en double observé en juillet 2026.
+  manquants.forEach(a => {
     batch.set(doc(db, "accounts", a.numero), { ...a, actif: true, createdAt: new Date() });
   });
   await batch.commit();
