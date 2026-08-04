@@ -225,38 +225,47 @@ function renderArchives() {
 // correctif du lien nids → inventaire (voir archiveCycle) : le bouton
 // "Ajouter au cheptel" n'apparaît que si ce n'est pas déjà fait, pour ne
 // jamais créer de doublon.
-function openArchiveDetailModal(c) {
-  const dejaAjoute = c.canetons_ajoutes_inventaire === true;
+// Fiche d'un cycle archivé — STRICTEMENT EN LECTURE SEULE. Une archive
+// ne se corrige jamais après coup (même logique que la comptabilité
+// OHADA du module : une écriture validée ne se modifie pas, elle se
+// contre-passe si une erreur est découverte). Le nombre d'œufs et
+// d'éclosions saisi au moment de l'archivage reste la trace fidèle de
+// ce qui a été constaté ce jour-là.
+//
+// Le seul rattrapage possible ici concerne les cycles archivés AVANT la
+// mise en place du lien automatique avec l'inventaire (voir
+// archiveCycle) : on vérifie — sans jamais écrire quoi que ce soit sur
+// le cycle archivé lui-même — si un lot de canetons issu de ce cycle
+// existe déjà dans l'inventaire (recherche par issu_du_cycle_id), pour
+// proposer l'ajout uniquement s'il manque réellement.
+async function openArchiveDetailModal(c) {
+  const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Date d'archivage</span></div><span class="row-value">${formatDate(c.date_fin)}</span></div>
-    <div class="field"><label>Nombre d'œufs (correction si erreur de saisie)</label><input type="number" id="fArchOeufs" min="0" value="${c.nombre_oeufs || 0}"></div>
-    <div class="field"><label>Nombre de canetons éclos (correction si erreur de saisie)</label><input type="number" id="fArchEclos" min="0" value="${c.nombre_eclos || 0}"></div>
-    <button class="btn secondary" id="fArchSave">Enregistrer la correction</button>
-    <div class="spacer-m"></div>
-    ${c.statut === "eclos" && (c.nombre_eclos || 0) > 0 ? `
-    <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
-      <h3 style="font-size:14px; margin-bottom:4px;">Inventaire des canards</h3>
-      ${dejaAjoute
-        ? `<p class="subtle" style="margin:0;">✓ Ces canetons ont déjà été ajoutés à l'inventaire.</p>`
-        : `<p class="subtle" style="margin:0 0 10px;">Ce cycle a été archivé avant la mise en place du lien automatique avec l'inventaire — les canetons nés ici n'y figurent peut-être pas encore.</p>
-           <button class="btn yolk" id="fArchAddInventaire">🐥 Ajouter ${c.nombre_eclos} caneton(s) au cheptel</button>`}
-    </div>
-    ` : ""}
+    <div class="row"><div class="row-main"><span class="row-title">Œufs constatés</span></div><span class="row-value">${c.nombre_oeufs || 0}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">Canetons éclos</span></div><span class="row-value">${c.nombre_eclos || 0}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">Taux d'éclosion</span></div><span class="row-value">${taux}%</span></div>
+    ${c.archive_par ? `<div class="row"><div class="row-main"><span class="row-title">Archivé par</span></div><span class="row-value">${escapeHtml(c.archive_par)}</span></div>` : ""}
+    <div class="spacer-s"></div>
+    <p class="subtle">🔒 Cette archive est en lecture seule — un cycle une fois clôturé ne se modifie plus, pour garantir la fiabilité de l'historique.</p>
+    <div id="fArchInventaireZone"></div>
   `;
   openModal(`Nid n° ${c.nid_numero}`, body, {
-    onMount: () => {
-      document.getElementById("fArchSave").addEventListener("click", async () => {
-        const oeufs = Number(document.getElementById("fArchOeufs").value) || 0;
-        const eclos = Number(document.getElementById("fArchEclos").value) || 0;
-        try {
-          await updateDoc(doc(db, "nest_cycles", c.id), {
-            nombre_oeufs: oeufs, nombre_eclos: eclos,
-            modifie_par: getUserName() || "Inconnu", modifie_le: serverTimestamp()
-          });
-          toast("Cycle corrigé ✓");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
+    onMount: async () => {
+      if (c.statut !== "eclos" || !(c.nombre_eclos > 0)) return;
+      const zone = document.getElementById("fArchInventaireZone");
+      const dejaSnap = await getDocs(query(ducksCol, where("issu_du_cycle_id", "==", c.id)));
+      const dejaAjoute = !dejaSnap.empty;
+      zone.innerHTML = `
+        <div class="spacer-m"></div>
+        <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
+          <h3 style="font-size:14px; margin-bottom:4px;">Inventaire des canards</h3>
+          ${dejaAjoute
+            ? `<p class="subtle" style="margin:0;">✓ Ces canetons figurent déjà dans l'inventaire.</p>`
+            : `<p class="subtle" style="margin:0 0 10px;">Ce cycle a été archivé avant la mise en place du lien automatique avec l'inventaire — les canetons nés ici n'y figurent pas encore.</p>
+               <button class="btn yolk" id="fArchAddInventaire">🐥 Ajouter ${c.nombre_eclos} caneton(s) au cheptel</button>`}
+        </div>
+      `;
       const addBtn = document.getElementById("fArchAddInventaire");
       if (addBtn) addBtn.addEventListener("click", async () => {
         try {
@@ -269,7 +278,6 @@ function openArchiveDetailModal(c) {
             issu_du_nid: c.nid_numero, issu_du_cycle_id: c.id,
             cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
           });
-          await updateDoc(doc(db, "nest_cycles", c.id), { canetons_ajoutes_inventaire: true });
           toast(`${c.nombre_eclos} caneton(s) ajoutés à l'inventaire ✓`);
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
@@ -575,8 +583,7 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires) {
     }
     const dateFin = new Date();
     await updateDoc(doc(db, "nest_cycles", cycle.id), {
-      statut, nombre_eclos: totalEclos, date_fin: dateFin, archive_par: getUserName() || "Inconnu",
-      canetons_ajoutes_inventaire: statut === "eclos" && totalEclos > 0
+      statut, nombre_eclos: totalEclos, date_fin: dateFin, archive_par: getUserName() || "Inconnu"
     });
     await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
 
