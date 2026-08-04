@@ -21,6 +21,7 @@ const nestsCol = collection(db, "nests");
 const cyclesCol = collection(db, "nest_cycles");
 const pontesCol = collection(db, "pontes_journalieres");
 const eclosionsCol = collection(db, "eclosions_journalieres");
+const ducksCol = collection(db, "ducks");
 
 let nestsMap = {};   // numero -> nest doc
 let cyclesMap = {};  // cycle id -> cycle doc (cycles en cours, indexées par id)
@@ -202,7 +203,7 @@ function renderArchives() {
     const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
     const succes = c.statut === "eclos";
     return `
-    <div class="row with-icon">
+    <div class="row with-icon archive-row" data-id="${c.id}" style="cursor:pointer;">
       <div class="row-icon ${succes ? 'pos' : 'neg'}"><svg><use href="#${succes ? 'ic-nest-eclos' : 'ic-nest-echec'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">Nid n° ${c.nid_numero} — ${formatDate(c.date_fin)}</span>
@@ -211,6 +212,70 @@ function renderArchives() {
       <span class="tag ${succes ? 'ok' : 'danger'}">${taux}%</span>
     </div>`;
   }).join("");
+  el.querySelectorAll(".archive-row").forEach(rowEl => {
+    rowEl.addEventListener("click", () => {
+      const c = archivedCycles.find(x => x.id === rowEl.dataset.id);
+      if (c) openArchiveDetailModal(c);
+    });
+  });
+}
+
+// Correction d'un cycle déjà archivé (nombre d'œufs/éclos erroné à la
+// saisie) + rattrapage manuel pour les cycles archivés AVANT le
+// correctif du lien nids → inventaire (voir archiveCycle) : le bouton
+// "Ajouter au cheptel" n'apparaît que si ce n'est pas déjà fait, pour ne
+// jamais créer de doublon.
+function openArchiveDetailModal(c) {
+  const dejaAjoute = c.canetons_ajoutes_inventaire === true;
+  const body = `
+    <div class="row"><div class="row-main"><span class="row-title">Date d'archivage</span></div><span class="row-value">${formatDate(c.date_fin)}</span></div>
+    <div class="field"><label>Nombre d'œufs (correction si erreur de saisie)</label><input type="number" id="fArchOeufs" min="0" value="${c.nombre_oeufs || 0}"></div>
+    <div class="field"><label>Nombre de canetons éclos (correction si erreur de saisie)</label><input type="number" id="fArchEclos" min="0" value="${c.nombre_eclos || 0}"></div>
+    <button class="btn secondary" id="fArchSave">Enregistrer la correction</button>
+    <div class="spacer-m"></div>
+    ${c.statut === "eclos" && (c.nombre_eclos || 0) > 0 ? `
+    <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
+      <h3 style="font-size:14px; margin-bottom:4px;">Inventaire des canards</h3>
+      ${dejaAjoute
+        ? `<p class="subtle" style="margin:0;">✓ Ces canetons ont déjà été ajoutés à l'inventaire.</p>`
+        : `<p class="subtle" style="margin:0 0 10px;">Ce cycle a été archivé avant la mise en place du lien automatique avec l'inventaire — les canetons nés ici n'y figurent peut-être pas encore.</p>
+           <button class="btn yolk" id="fArchAddInventaire">🐥 Ajouter ${c.nombre_eclos} caneton(s) au cheptel</button>`}
+    </div>
+    ` : ""}
+  `;
+  openModal(`Nid n° ${c.nid_numero}`, body, {
+    onMount: () => {
+      document.getElementById("fArchSave").addEventListener("click", async () => {
+        const oeufs = Number(document.getElementById("fArchOeufs").value) || 0;
+        const eclos = Number(document.getElementById("fArchEclos").value) || 0;
+        try {
+          await updateDoc(doc(db, "nest_cycles", c.id), {
+            nombre_oeufs: oeufs, nombre_eclos: eclos,
+            modifie_par: getUserName() || "Inconnu", modifie_le: serverTimestamp()
+          });
+          toast("Cycle corrigé ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+      const addBtn = document.getElementById("fArchAddInventaire");
+      if (addBtn) addBtn.addEventListener("click", async () => {
+        try {
+          await addDoc(ducksCol, {
+            type: "caneton", quantite: Number(c.nombre_eclos) || 0,
+            date_entree: c.date_fin || new Date(), date_naissance: c.date_fin || new Date(),
+            bague_couleur: null, numero_bague: null,
+            notes: `Éclosion nid n° ${c.nid_numero} (rattrapage manuel)`,
+            statut: "actif", date_sortie: null, motif_sortie: null,
+            issu_du_nid: c.nid_numero, issu_du_cycle_id: c.id,
+            cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+          });
+          await updateDoc(doc(db, "nest_cycles", c.id), { canetons_ajoutes_inventaire: true });
+          toast(`${c.nombre_eclos} caneton(s) ajoutés à l'inventaire ✓`);
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+    }
+  });
 }
 
 function toDateObj(d) {
@@ -493,6 +558,12 @@ function openNestModal(n) {
 // total déjà accumulé via les relevés successifs (fEclosAddBtn) — permet
 // d'enregistrer une dernière vague d'éclosion en même temps que
 // l'archivage, en un seul geste.
+//
+// ⚠️ CORRECTIF (août 2026) : jusqu'ici, l'archivage d'un cycle "éclos" ne
+// créait AUCUN enregistrement dans l'inventaire des canards — les
+// canetons nés n'apparaissaient nulle part dans le décompte du cheptel.
+// Un lot de canetons est maintenant automatiquement créé dans
+// l'inventaire à l'archivage, avec le nid d'origine tracé.
 async function archiveCycle(n, cycle, statut, eclosSupplementaires) {
   try {
     const totalEclos = (Number(cycle.nombre_eclos) || 0) + (Number(eclosSupplementaires) || 0);
@@ -502,11 +573,26 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires) {
         quantite: eclosSupplementaires, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
       });
     }
+    const dateFin = new Date();
     await updateDoc(doc(db, "nest_cycles", cycle.id), {
-      statut, nombre_eclos: totalEclos, date_fin: new Date(), archive_par: getUserName() || "Inconnu"
+      statut, nombre_eclos: totalEclos, date_fin: dateFin, archive_par: getUserName() || "Inconnu",
+      canetons_ajoutes_inventaire: statut === "eclos" && totalEclos > 0
     });
     await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
-    toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) éclos au total ✓` : `Échec enregistré — nid ${n} archivé`);
+
+    if (statut === "eclos" && totalEclos > 0) {
+      await addDoc(ducksCol, {
+        type: "caneton", quantite: totalEclos,
+        date_entree: dateFin, date_naissance: dateFin,
+        bague_couleur: null, numero_bague: null,
+        notes: `Éclosion nid n° ${n}`,
+        statut: "actif", date_sortie: null, motif_sortie: null,
+        issu_du_nid: n, issu_du_cycle_id: cycle.id,
+        cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+      });
+    }
+
+    toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) ajoutés à l'inventaire ✓` : `Échec enregistré — nid ${n} archivé`);
     closeModal();
   } catch (e) { toast("Erreur : " + e.message); }
 }
