@@ -140,6 +140,15 @@
     <rect x="13" y="8" width="11" height="8" fill="none" stroke="currentColor" stroke-width="2"/>
     <rect x="12" y="21" width="16" height="11" fill="currentColor"/>
   </symbol>
+  <!-- Suivi pondéral : balance -->
+  <symbol id="ic-poids" viewBox="0 0 40 40">
+    <line x1="20" y1="7" x2="20" y2="30" stroke="currentColor" stroke-width="2"/>
+    <line x1="9" y1="12" x2="31" y2="12" stroke="currentColor" stroke-width="2"/>
+    <path d="M9 12 L5 21 Q9 25 13 21 Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M31 12 L27 21 Q31 25 35 21 Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M14 30 L26 30 L24 34 L16 34 Z" fill="currentColor"/>
+    <circle cx="20" cy="7" r="2" fill="currentColor"/>
+  </symbol>
 
   <!-- Comptabilité : une icône par classe de compte SYSCOHADA -->
   <symbol id="ic-cls-1" viewBox="0 0 40 40"><path d="M20 6 L34 15 L34 34 L6 34 L6 15 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -207,23 +216,40 @@
     </div>
 
     <div class="spacer-m"></div>
+    <div class="card tasks-card" id="dashPoidsCard">
+      <div class="tasks-card-top">
+        <div class="tasks-card-title">
+          <span class="voyant idle" id="poidsVoyant"></span>
+          <span class="eyebrow">Santé du cheptel</span>
+        </div>
+        <button class="btn secondary small" id="openPoidsBtn">Voir les lots →</button>
+      </div>
+      <h3 style="margin:4px 0 2px;">Suivi pondéral</h3>
+      <div id="dashPoidsResume"><p class="subtle">Chargement…</p></div>
+    </div>
+
+    <div class="spacer-m"></div>
     <div class="kpi-grid">
       <div class="kpi">
+        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-duck-canard"/></svg>
         <div class="kpi-label">Canards au total</div>
         <div class="kpi-value" id="kpiTotalCanards">—</div>
         <div class="kpi-sub" id="kpiCanardsSub">—</div>
       </div>
       <div class="kpi yolk">
+        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-nest-ponte"/></svg>
         <div class="kpi-label">Œufs dans les nids</div>
         <div class="kpi-value" id="kpiOeufsNids">—</div>
         <div class="kpi-sub" id="kpiNidsOccupesSub">—</div>
       </div>
       <div class="kpi alt">
+        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-nest-eclos"/></svg>
         <div class="kpi-label">Taux d'éclosion moyen</div>
         <div class="kpi-value" id="kpiTauxEclosion">—</div>
         <div class="kpi-sub">30 derniers cycles</div>
       </div>
       <div class="kpi">
+        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-cat-aliment"/></svg>
         <div class="kpi-label">Alertes stock</div>
         <div class="kpi-value" id="kpiAlertesStock">—</div>
         <div class="kpi-sub">sous le seuil</div>
