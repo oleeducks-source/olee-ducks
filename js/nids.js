@@ -254,8 +254,19 @@ async function openArchiveDetailModal(c) {
     onMount: async () => {
       if (c.statut !== "eclos" || !(c.nombre_eclos > 0)) return;
       const zone = document.getElementById("fArchInventaireZone");
-      const dejaSnap = await getDocs(query(ducksCol, where("issu_du_cycle_id", "==", c.id)));
-      const dejaAjoute = !dejaSnap.empty;
+      // Détecte un ajout déjà fait — soit via le lien automatique
+      // (issu_du_cycle_id), soit un ajout manuel antérieur à cette
+      // fonctionnalité (même date d'entrée que l'archivage + même
+      // quantité que le nombre de canetons éclos ce jour-là).
+      const canetonsSnap = await getDocs(query(ducksCol, where("type", "==", "caneton")));
+      const dateFinCycle = c.date_fin?.toDate ? c.date_fin.toDate() : new Date(c.date_fin);
+      const dejaAjoute = canetonsSnap.docs.some(docSnap => {
+        const dd = docSnap.data();
+        if (dd.issu_du_cycle_id === c.id) return true;
+        if (!dd.date_entree || Number(dd.quantite) !== Number(c.nombre_eclos)) return false;
+        const de = dd.date_entree?.toDate ? dd.date_entree.toDate() : new Date(dd.date_entree);
+        return de.getFullYear() === dateFinCycle.getFullYear() && de.getMonth() === dateFinCycle.getMonth() && de.getDate() === dateFinCycle.getDate();
+      });
       zone.innerHTML = `
         <div class="spacer-m"></div>
         <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
