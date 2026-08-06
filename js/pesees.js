@@ -66,13 +66,28 @@ function poidsReferenceG(ageSemaines) {
   return Math.round(dernier.g + (s - dernier.s) * 294);
 }
 
+const CONSEILS_RETARD = [
+  "Vérifiez l'accès à l'eau propre — un manque d'eau réduit l'ingestion d'aliment plus vite qu'un manque de nourriture.",
+  "Contrôlez la quantité réelle d'aliment distribué par sujet, et son état (pas de moisissure, stockage au sec).",
+  "Vérifiez que l'espace aux mangeoires est suffisant — dans un lot nombreux, les plus faibles peuvent être évincés par les plus forts.",
+  "Observez les fientes et le comportement : léthargie ou diarrhée peuvent indiquer une parasitose ou une infection à traiter.",
+  "Vérifiez le confort thermique (trop chaud ou trop froid pour l'âge fatigue et ralentit la croissance).",
+  "Si le retard touche tout le lot, isolez et pesez individuellement les 2-3 sujets les plus légers pour écarter un problème localisé (bec, patte, maladie)."
+];
+const CONSEILS_SURCROISSANCE = [
+  "Vérifiez d'abord que l'échantillon n'était pas biaisé (sujets les plus gros attrapés en premier, plus faciles à saisir).",
+  "Surveillez la locomotion : une prise de poids très rapide peut fatiguer les pattes avant qu'elles ne soient assez solides.",
+  "Si l'alimentation est très énergétique, un léger ajustement peut suffire à ralentir sans nuire à la croissance globale.",
+  "Une croissance au-dessus de la moyenne n'est pas un problème en soi si les sujets restent actifs et bien portants — à surveiller, pas forcément à corriger."
+];
+
 function diagnosticCroissance(poidsMoyenG, ageSemaines) {
   const ref = poidsReferenceG(ageSemaines);
   const ecart = ref > 0 ? (poidsMoyenG - ref) / ref : 0;
   let diag;
-  if (ecart <= -0.20) diag = { cls: "danger", label: "⚠️ Retard de croissance possible", detail: `Environ ${Math.round(Math.abs(ecart) * 100)}% sous le repère de référence pour cet âge.` };
-  else if (ecart >= 0.25) diag = { cls: "warn", label: "📈 Croissance au-dessus de la moyenne", detail: `Environ ${Math.round(ecart * 100)}% au-dessus du repère de référence pour cet âge.` };
-  else diag = { cls: "ok", label: "✓ Croissance dans la norme", detail: "Poids cohérent avec le repère de référence pour cet âge." };
+  if (ecart <= -0.20) diag = { cls: "danger", label: "⚠️ Retard de croissance possible", detail: `Environ ${Math.round(Math.abs(ecart) * 100)}% sous le repère de référence pour cet âge.`, conseils: CONSEILS_RETARD };
+  else if (ecart >= 0.25) diag = { cls: "warn", label: "📈 Croissance au-dessus de la moyenne", detail: `Environ ${Math.round(ecart * 100)}% au-dessus du repère de référence pour cet âge.`, conseils: CONSEILS_SURCROISSANCE };
+  else diag = { cls: "ok", label: "✓ Croissance dans la norme", detail: "Poids cohérent avec le repère de référence pour cet âge.", conseils: [] };
   diag.ref = ref;
   diag.ecartPct = Math.round(ecart * 100);
   diag.avertissementDimorphisme = ageSemaines >= 8;
@@ -134,6 +149,15 @@ export function openPeseeModal(lot, onSaved) {
                 <div class="row"><div class="row-main"><span class="row-title">Diagnostic</span></div><span class="tag ${diag.cls}">${diag.label}</span></div>
                 <p class="subtle" style="margin:8px 0 0;">${diag.detail}${diag.avertissementDimorphisme ? " ⚠️ Au-delà de 8 semaines, le dimorphisme mâle/femelle rend ce repère moins précis pour un lot mixte." : ""}</p>
               </div>
+              ${diag.conseils.length ? `
+              <div class="spacer-s"></div>
+              <div class="card" style="background:${diag.cls === 'danger' ? '#FCEAE6' : '#FCEBD9'}; border:none;">
+                <h3 style="font-size:13.5px; margin-bottom:8px;">Pistes à vérifier</h3>
+                <ul style="margin:0; padding-left:18px; display:flex; flex-direction:column; gap:6px;">
+                  ${diag.conseils.map(c => `<li class="subtle" style="line-height:1.4;">${c}</li>`).join("")}
+                </ul>
+              </div>
+              ` : ""}
             `;
           } else {
             zone.innerHTML = `<div class="spacer-m"></div><p class="subtle">Pesée enregistrée — âge non calculable (date de naissance/entrée manquante sur ce lot).</p>`;
@@ -164,6 +188,74 @@ export async function chargerHistoriquePesees(lotId) {
     return db_ - da;
   });
   return pesees;
+}
+
+// ---------------------------------------------------------------------
+// Résumé global (toutes les pesées, tous lots confondus) — pour le KPI
+// du tableau de bord : ne garde que la pesée la plus récente de chaque
+// lot, puis compte combien sont dans la norme / en retard / au-dessus.
+// ---------------------------------------------------------------------
+export async function resumeSuiviPonderal() {
+  const snap = await getDocs(peseesCol);
+  const tous = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  if (!tous.length) return { total: 0, normal: 0, retard: 0, surcroissance: 0, derniereDate: null };
+
+  const parLot = {};
+  tous.forEach(p => {
+    const ms = p.date?.toDate ? p.date.toDate().getTime() : new Date(p.date).getTime();
+    if (!parLot[p.duck_id] || ms > parLot[p.duck_id]._ms) parLot[p.duck_id] = { ...p, _ms: ms };
+  });
+
+  const entries = Object.values(parLot);
+  let normal = 0, retard = 0, surcroissance = 0, derniereDateMs = 0;
+  entries.forEach(p => {
+    derniereDateMs = Math.max(derniereDateMs, p._ms);
+    if (p.age_semaines === null || p.age_semaines === undefined) { normal++; return; }
+    const diag = diagnosticCroissance(p.poids_moyen_g, p.age_semaines);
+    if (diag.cls === "danger") retard++;
+    else if (diag.cls === "warn") surcroissance++;
+    else normal++;
+  });
+
+  return { total: entries.length, normal, retard, surcroissance, derniereDate: derniereDateMs ? new Date(derniereDateMs) : null };
+}
+
+// ---------------------------------------------------------------------
+// Initialisation unique (bouton de navigation) + premier chargement.
+// ---------------------------------------------------------------------
+export function initPesees() {
+  document.getElementById("openPoidsBtn")?.addEventListener("click", () => {
+    document.querySelector('.nav-item[data-page="inventaire"]')?.click();
+  });
+  refreshPeseesDashboard();
+}
+
+// Rafraîchit uniquement le contenu de la carte (appelable plusieurs
+// fois, ex. après chaque nouvelle pesée, sans jamais dupliquer d'écouteur).
+export async function refreshPeseesDashboard() {
+  const zone = document.getElementById("dashPoidsResume");
+  const voyant = document.getElementById("poidsVoyant");
+  if (!zone) return;
+  try {
+    const r = await resumeSuiviPonderal();
+    if (!r.total) {
+      zone.innerHTML = `<p class="subtle">Aucune pesée enregistrée pour l'instant — pesez un échantillon depuis la fiche d'un lot.</p>`;
+      if (voyant) voyant.classList.add("idle");
+      return;
+    }
+    const alerte = r.retard + r.surcroissance;
+    if (voyant) voyant.classList.toggle("idle", alerte === 0);
+    zone.innerHTML = `
+      <p class="subtle" style="margin-bottom:6px;">${r.total} lot(s) suivi(s) · dernière pesée ${formatDate(r.derniereDate)}</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <span class="tag ok">${r.normal} normal</span>
+        ${r.retard ? `<span class="tag danger">${r.retard} en retard</span>` : ""}
+        ${r.surcroissance ? `<span class="tag warn">${r.surcroissance} au-dessus</span>` : ""}
+      </div>
+    `;
+  } catch (e) {
+    zone.innerHTML = `<p class="subtle">Erreur de chargement : ${e.message}</p>`;
+  }
 }
 
 export function rendreHistoriquePeseesHtml(pesees) {
