@@ -9,6 +9,7 @@ import {
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
+import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml } from "./pesees.js";
 
 const ducksCol = collection(db, "ducks");
 let allDucks = [];
@@ -184,6 +185,17 @@ function formatInputDate(d) {
   const date = d?.toDate ? d.toDate() : new Date(d);
   const off = date.getTimezoneOffset();
   return new Date(date.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+async function chargerEtAfficherPesees(lotId) {
+  const zone = document.getElementById("fPeseesHistorique");
+  if (!zone) return;
+  try {
+    const pesees = await chargerHistoriquePesees(lotId);
+    zone.innerHTML = rendreHistoriquePeseesHtml(pesees);
+  } catch (e) {
+    zone.innerHTML = `<p class="subtle">Erreur de chargement des pesées : ${e.message}</p>`;
+  }
 }
 
 // Affiche l'archive de production de canetons (collection
@@ -467,6 +479,16 @@ function openEditModal(d) {
     </div>
     ` : ""}
 
+    ${isActif ? `
+    <div class="spacer-m"></div>
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <h3 style="font-size:14px; margin-bottom:8px;">Suivi pondéral</h3>
+      <button class="btn secondary" id="fPeserBtn">⚖️ Peser un échantillon</button>
+      <div class="spacer-s"></div>
+      <div id="fPeseesHistorique"><p class="subtle">Chargement…</p></div>
+    </div>
+    ` : ""}
+
     <div class="spacer-m"></div>
     <h3 style="font-size:14px; margin-bottom:8px;">Corriger cet enregistrement</h3>
     <div class="field">
@@ -512,6 +534,10 @@ function openEditModal(d) {
   `;
   openModal(`${TYPE_LABELS[d.type] || d.type}`, body, {
     onMount: () => {
+      const peserBtn = document.getElementById("fPeserBtn");
+      if (peserBtn) peserBtn.addEventListener("click", () => openPeseeModal(d, () => chargerEtAfficherPesees(d.id)));
+      chargerEtAfficherPesees(d.id);
+
       const requalBtn = document.getElementById("fRequalSave");
       if (requalBtn) requalBtn.addEventListener("click", async () => {
         const qte = Number(document.getElementById("fRequalQte").value) || 0;
