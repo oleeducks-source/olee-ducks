@@ -9,7 +9,7 @@ import {
   serverTimestamp, orderBy, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
-import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml } from "./pesees.js";
+import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard } from "./pesees.js";
 
 const ducksCol = collection(db, "ducks");
 let allDucks = [];
@@ -535,7 +535,7 @@ function openEditModal(d) {
   openModal(`${TYPE_LABELS[d.type] || d.type}`, body, {
     onMount: () => {
       const peserBtn = document.getElementById("fPeserBtn");
-      if (peserBtn) peserBtn.addEventListener("click", () => openPeseeModal(d, () => chargerEtAfficherPesees(d.id)));
+      if (peserBtn) peserBtn.addEventListener("click", () => openPeseeModal(d, () => { chargerEtAfficherPesees(d.id); refreshPeseesDashboard(); }));
       chargerEtAfficherPesees(d.id);
 
       const requalBtn = document.getElementById("fRequalSave");
