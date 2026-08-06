@@ -25,7 +25,7 @@
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
-  collection, addDoc, doc, getDocs, query, where, orderBy, serverTimestamp
+  collection, addDoc, doc, getDocs, query, where, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
 
@@ -151,8 +151,19 @@ export function openPeseeModal(lot, onSaved) {
 // (inventaire.js). Purement lecture, aucune donnée n'est créée ici.
 // ---------------------------------------------------------------------
 export async function chargerHistoriquePesees(lotId) {
-  const snap = await getDocs(query(peseesCol, where("duck_id", "==", lotId), orderBy("date", "desc")));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  // Tri effectué côté app plutôt que via Firestore orderBy : un filtre +
+  // tri sur deux champs différents demande un index composite à créer
+  // manuellement dans la console Firebase, ce qu'on évite ici (le nombre
+  // de pesées par lot reste toujours faible, donc trier en mémoire est
+  // largement suffisant et ne coûte rien en performance).
+  const snap = await getDocs(query(peseesCol, where("duck_id", "==", lotId)));
+  const pesees = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  pesees.sort((a, b) => {
+    const da = a.date?.toDate ? a.date.toDate().getTime() : new Date(a.date).getTime();
+    const db_ = b.date?.toDate ? b.date.toDate().getTime() : new Date(b.date).getTime();
+    return db_ - da;
+  });
+  return pesees;
 }
 
 export function rendreHistoriquePeseesHtml(pesees) {
