@@ -34,6 +34,11 @@ const DUREE_INCUBATION_JOURS = 36; // canard de Barbarie (muscovy) — 35 à 37 
 let premierChargementCycles = true;
 
 export function initNests() {
+  document.getElementById("openNestGridModalBtn")?.addEventListener("click", () => {
+    document.querySelector('.nav-item[data-page="elevage"]')?.click();
+    window.__setElevageTab?.("nids");
+  });
+
   ensureNestsExist().catch((e) => {
     console.error("Impossible d'initialiser les 100 nids :", e);
     toast("Erreur d'initialisation des nids : " + (e.code || e.message));
@@ -139,9 +144,8 @@ function animerGainOeufs(n, delta) {
 }
 
 function renderGrids() {
-  ["miniNestGrid", "fullNestGrid"].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
+  const el = document.getElementById("fullNestGrid");
+  if (el) {
     let html = "";
     for (let n = 1; n <= 100; n++) {
       const c = cycleForNest(n);
@@ -153,10 +157,33 @@ function renderGrids() {
     el.querySelectorAll(".nest-cell").forEach(cell => {
       cell.addEventListener("click", () => openNestModal(Number(cell.dataset.n)));
     });
-  });
+  }
   const occ = Object.keys(cyclesMap).length;
   const qc = document.getElementById("nestsQuickCount");
   if (qc) qc.textContent = `${occ}/100 occupés`;
+  renderDistributionBar();
+}
+
+// Résumé condensé pour le tableau de bord : une barre de répartition
+// Libre / Ponte / Couvaison, plutôt que la grille complète des 100 nids
+// (trop haute et peu cliquable sur mobile).
+function renderDistributionBar() {
+  const bar = document.getElementById("nestDistributionBar");
+  if (!bar) return;
+  let ponte = 0, couvaison = 0;
+  Object.values(cyclesMap).forEach(c => { if (c.statut === "couvaison") couvaison++; else ponte++; });
+  const libre = Math.max(0, 100 - ponte - couvaison);
+  bar.innerHTML = `
+    <div class="dist-bar">
+      ${libre ? `<div class="dist-seg" style="flex:${libre}; background:var(--sage-100);"></div>` : ""}
+      ${ponte ? `<div class="dist-seg" style="flex:${ponte}; background:var(--yolk-500);"></div>` : ""}
+      ${couvaison ? `<div class="dist-seg" style="flex:${couvaison}; background:var(--pond-600);"></div>` : ""}
+    </div>
+  `;
+  const setC = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  setC("nestCountLibre", libre);
+  setC("nestCountPonte", ponte);
+  setC("nestCountCouvaison", couvaison);
 }
 
 function renderDashboardNestKpi() {
