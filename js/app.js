@@ -15,8 +15,18 @@ import { initTaches, openAddTacheModal } from "./taches.js";
 import { initSauvegarde } from "./sauvegarde.js";
 import { initPesees } from "./pesees.js";
 
-const PAGES = ["dashboard", "inventaire", "nids", "finances", "stocks", "taches"];
+const PAGES = ["dashboard", "elevage", "finances", "stocks", "taches"];
 let currentPage = "dashboard";
+let elevageSousOnglet = "canards";
+
+function setElevageTab(tab) {
+  elevageSousOnglet = tab;
+  document.getElementById("elevage-canards-wrap").classList.toggle("hidden", tab !== "canards");
+  document.getElementById("elevage-nids-wrap").classList.toggle("hidden", tab !== "nids");
+  document.getElementById("elevageTitle").textContent = tab === "canards" ? "Inventaire des canards" : "Suivi des nids";
+  document.querySelectorAll("#elevageSubNav button").forEach(b => b.classList.toggle("active", b.dataset.v === tab));
+}
+window.__setElevageTab = setElevageTab; // pour le bouton "Ouvrir la carte des nids" du tableau de bord
 
 function setPage(page) {
   currentPage = page;
@@ -39,6 +49,9 @@ function initNav() {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.addEventListener("click", () => setPage(btn.dataset.page));
   });
+  document.querySelectorAll("#elevageSubNav button").forEach(btn => {
+    btn.addEventListener("click", () => setElevageTab(btn.dataset.v));
+  });
 }
 
 function initUserChip() {
@@ -50,13 +63,16 @@ function initUserChip() {
 function initFab() {
   document.getElementById("fabAdd").addEventListener("click", () => {
     switch (currentPage) {
-      case "inventaire": openAddDuckModal(); break;
+      case "elevage":
+        if (elevageSousOnglet === "nids") {
+          alert("Pour agir sur un nid, touchez directement sa case dans la grille.");
+        } else {
+          openAddDuckModal();
+        }
+        break;
       case "finances": openAddFinanceModal(); break;
       case "stocks": openAddStockItemModal(); break;
       case "taches": openAddTacheModal(); break;
-      case "nids":
-        alert("Pour agir sur un nid, touchez directement sa case dans la grille.");
-        break;
       default:
         // Sur le tableau de bord, propose l'action la plus fréquente
         openAddFinanceModal();
