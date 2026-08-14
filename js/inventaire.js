@@ -176,10 +176,12 @@ export function initInventaire() {
 
   document.getElementById("invFilterType")?.addEventListener("change", (e) => {
     filterType = e.target.value;
+    renderFilters(); // recalcule les compteurs croisés du menu Statut
     renderList();
   });
   document.getElementById("invFilterStatut")?.addEventListener("change", (e) => {
     filterStatut = e.target.value;
+    renderFilters(); // recalcule les compteurs croisés du menu Type
     renderList();
   });
   document.getElementById("invSearch")?.addEventListener("input", (e) => {
@@ -192,26 +194,41 @@ export function initInventaire() {
 }
 
 // Compte les effectifs (somme des quantités, hors suppressions en
-// attente) pour chaque valeur de type et de statut — sert à afficher
-// les badges "(N)" dans les menus déroulants de filtre.
+// attente) pour chaque valeur de type et de statut.
+//
+// ⚠️ CORRECTIF (août 2026) : les compteurs étaient calculés globalement,
+// indépendamment du filtre déjà actif dans l'AUTRE menu déroulant. Cela
+// produisait des chiffres incohérents avec les KPI (ex. "Tous (377)"
+// alors que les KPI n'affichent que les actifs = 334) et des compteurs
+// de statut qui ne correspondaient à rien pour un type sélectionné
+// (ex. sélectionner "Canardeaux" affichait quand même "Vendus (38)",
+// qui correspondait en réalité aux canards vendus, pas aux canardeaux).
+// Les compteurs sont maintenant croisés : le menu Type respecte le
+// statut actuellement sélectionné, et le menu Statut respecte le type
+// actuellement sélectionné — chacun ne recalculant QUE selon l'AUTRE
+// filtre, jamais selon lui-même (sinon son propre total resterait figé
+// sur l'option choisie).
 function computeFilterCounts() {
   const items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
   const sumBy = (predicate) => items.filter(predicate).reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  const matchesStatut = (d) => filterStatut === "all" || d.statut === filterStatut;
+  const matchesType = (d) => filterType === "all" || d.type === filterType;
+
   return {
     type: {
-      all: sumBy(() => true),
-      caneton: sumBy(d => d.type === "caneton"),
-      canardeau: sumBy(d => d.type === "canardeau"),
-      canard: sumBy(d => d.type === "canard"),
-      reproducteur_male: sumBy(d => d.type === "reproducteur_male"),
-      reproducteur_femelle: sumBy(d => d.type === "reproducteur_femelle")
+      all: sumBy(matchesStatut),
+      caneton: sumBy(d => d.type === "caneton" && matchesStatut(d)),
+      canardeau: sumBy(d => d.type === "canardeau" && matchesStatut(d)),
+      canard: sumBy(d => d.type === "canard" && matchesStatut(d)),
+      reproducteur_male: sumBy(d => d.type === "reproducteur_male" && matchesStatut(d)),
+      reproducteur_femelle: sumBy(d => d.type === "reproducteur_femelle" && matchesStatut(d))
     },
     statut: {
-      actif: sumBy(d => d.statut === "actif"),
-      all: sumBy(() => true),
-      vendu: sumBy(d => d.statut === "vendu"),
-      mort: sumBy(d => d.statut === "mort"),
-      reforme: sumBy(d => d.statut === "reforme")
+      actif: sumBy(d => d.statut === "actif" && matchesType(d)),
+      all: sumBy(matchesType),
+      vendu: sumBy(d => d.statut === "vendu" && matchesType(d)),
+      mort: sumBy(d => d.statut === "mort" && matchesType(d)),
+      reforme: sumBy(d => d.statut === "reforme" && matchesType(d))
     }
   };
 }
