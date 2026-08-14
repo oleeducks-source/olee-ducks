@@ -35,8 +35,7 @@ let premierChargementCycles = true;
 
 export function initNests() {
   document.getElementById("openNestGridModalBtn")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="elevage"]')?.click();
-    window.__setElevageTab?.("nids");
+    document.querySelector('.nav-item[data-page="nids"]')?.click();
   });
 
   ensureNestsExist().catch((e) => {
