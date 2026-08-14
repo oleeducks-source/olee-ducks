@@ -315,7 +315,7 @@ export async function resumeSuiviPonderal() {
 // ---------------------------------------------------------------------
 export function initPesees() {
   document.getElementById("openPoidsBtn")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="elevage"]')?.click();
+    document.querySelector('.nav-item[data-page="canards"]')?.click();
   });
   document.getElementById("voirTableauCroissanceBtn")?.addEventListener("click", ouvrirTableauCroissance);
   refreshPeseesDashboard();
