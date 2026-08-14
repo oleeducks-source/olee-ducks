@@ -500,6 +500,8 @@ function openNestModal(n) {
       <button class="btn secondary" id="fEclosAddBtn">🐣 Enregistrer (sans archiver)</button>
     </div>
     <div class="spacer-s"></div>
+    <div class="field"><label>Date d'éclosion (antidatable)</label><input type="date" id="fArchiveDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
+    <p class="subtle" style="margin:-4px 0 10px;">Utilisée comme date de naissance des canetons ajoutés à l'inventaire — modifiez-la si l'éclosion a eu lieu un autre jour que celui de la saisie.</p>
     <button class="btn yolk" id="fFinish">🏁 Archiver ce nid (cycle terminé)</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="fEchec">Déclarer un échec de couvaison</button>
@@ -588,12 +590,16 @@ function openNestModal(n) {
       const finish = document.getElementById("fFinish");
       if (finish) finish.addEventListener("click", async () => {
         const eclosSupp = Number(document.getElementById("fEclos").value) || 0;
-        await archiveCycle(n, cycle, "eclos", eclosSupp);
+        const dateArchiveInput = document.getElementById("fArchiveDate")?.value;
+        const dateArchive = dateArchiveInput ? new Date(dateArchiveInput) : new Date();
+        await archiveCycle(n, cycle, "eclos", eclosSupp, dateArchive);
       });
       const echec = document.getElementById("fEchec");
       if (echec) echec.addEventListener("click", async () => {
         if (!confirm("Confirmer l'échec de la couvaison pour ce nid ?")) return;
-        await archiveCycle(n, cycle, "echec", 0);
+        const dateArchiveInput = document.getElementById("fArchiveDate")?.value;
+        const dateArchive = dateArchiveInput ? new Date(dateArchiveInput) : new Date();
+        await archiveCycle(n, cycle, "echec", 0, dateArchive);
       });
     }
   });
@@ -602,23 +608,25 @@ function openNestModal(n) {
 // Archive définitivement le cycle. `eclosSupplementaires` est ajouté au
 // total déjà accumulé via les relevés successifs (fEclosAddBtn) — permet
 // d'enregistrer une dernière vague d'éclosion en même temps que
-// l'archivage, en un seul geste.
+// l'archivage, en un seul geste. `dateFinChoisie` est la date d'éclosion
+// (ou d'échec) saisie dans le formulaire — antidatable, elle sert aussi
+// de date de naissance pour les canetons créés dans l'inventaire.
 //
 // ⚠️ CORRECTIF (août 2026) : jusqu'ici, l'archivage d'un cycle "éclos" ne
 // créait AUCUN enregistrement dans l'inventaire des canards — les
 // canetons nés n'apparaissaient nulle part dans le décompte du cheptel.
 // Un lot de canetons est maintenant automatiquement créé dans
 // l'inventaire à l'archivage, avec le nid d'origine tracé.
-async function archiveCycle(n, cycle, statut, eclosSupplementaires) {
+async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChoisie) {
   try {
     const totalEclos = (Number(cycle.nombre_eclos) || 0) + (Number(eclosSupplementaires) || 0);
+    const dateFin = (dateFinChoisie instanceof Date && !isNaN(dateFinChoisie.getTime())) ? dateFinChoisie : new Date();
     if (eclosSupplementaires > 0) {
       await addDoc(eclosionsCol, {
-        nid_numero: n, cycle_id: cycle.id, date: new Date(),
+        nid_numero: n, cycle_id: cycle.id, date: dateFin,
         quantite: eclosSupplementaires, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
       });
     }
-    const dateFin = new Date();
     await updateDoc(doc(db, "nest_cycles", cycle.id), {
       statut, nombre_eclos: totalEclos, date_fin: dateFin, archive_par: getUserName() || "Inconnu"
     });
