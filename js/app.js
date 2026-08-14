@@ -15,18 +15,8 @@ import { initTaches, openAddTacheModal } from "./taches.js";
 import { initSauvegarde } from "./sauvegarde.js";
 import { initPesees } from "./pesees.js";
 
-const PAGES = ["dashboard", "elevage", "finances", "stocks", "taches"];
+const PAGES = ["dashboard", "canards", "nids", "finances", "stocks", "taches"];
 let currentPage = "dashboard";
-let elevageSousOnglet = "canards";
-
-function setElevageTab(tab) {
-  elevageSousOnglet = tab;
-  document.getElementById("elevage-canards-wrap").classList.toggle("hidden", tab !== "canards");
-  document.getElementById("elevage-nids-wrap").classList.toggle("hidden", tab !== "nids");
-  document.getElementById("elevageTitle").textContent = tab === "canards" ? "Inventaire des canards" : "Suivi des nids";
-  document.querySelectorAll("#elevageSubNav button").forEach(b => b.classList.toggle("active", b.dataset.v === tab));
-}
-window.__setElevageTab = setElevageTab; // pour le bouton "Ouvrir la carte des nids" du tableau de bord
 
 function setPage(page) {
   currentPage = page;
@@ -37,6 +27,9 @@ function setPage(page) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === page);
   });
+  // Le "+" n'a aucun sens dans le suivi des nids (les nids se gèrent en
+  // touchant directement une case de la grille) : on masque le bouton.
+  document.getElementById("fabAdd").classList.toggle("hidden", page === "nids");
   if (page === "dashboard") {
     const d = new Date();
     document.getElementById("dashDate").textContent =
@@ -49,9 +42,6 @@ function initNav() {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.addEventListener("click", () => setPage(btn.dataset.page));
   });
-  document.querySelectorAll("#elevageSubNav button").forEach(btn => {
-    btn.addEventListener("click", () => setElevageTab(btn.dataset.v));
-  });
 }
 
 function initUserChip() {
@@ -63,13 +53,7 @@ function initUserChip() {
 function initFab() {
   document.getElementById("fabAdd").addEventListener("click", () => {
     switch (currentPage) {
-      case "elevage":
-        if (elevageSousOnglet === "nids") {
-          alert("Pour agir sur un nid, touchez directement sa case dans la grille.");
-        } else {
-          openAddDuckModal();
-        }
-        break;
+      case "canards": openAddDuckModal(); break;
       case "finances": openAddFinanceModal(); break;
       case "stocks": openAddStockItemModal(); break;
       case "taches": openAddTacheModal(); break;
