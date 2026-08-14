@@ -15,6 +15,23 @@ const ducksCol = collection(db, "ducks");
 let allDucks = [];
 let filterType = "all";
 let filterStatut = "actif";
+let searchTerm = "";
+
+const TYPE_FILTER_OPTIONS = [
+  { v: "all", label: "Tous" },
+  { v: "caneton", label: "Canetons" },
+  { v: "canardeau", label: "Canardeaux" },
+  { v: "canard", label: "Canards" },
+  { v: "reproducteur_male", label: "Reprod. mâles" },
+  { v: "reproducteur_femelle", label: "Reprod. femelles" }
+];
+const STATUT_FILTER_OPTIONS = [
+  { v: "actif", label: "Actifs" },
+  { v: "all", label: "Tous statuts" },
+  { v: "vendu", label: "Vendus" },
+  { v: "mort", label: "Décédés" },
+  { v: "reforme", label: "Réformés" }
+];
 
 const TYPE_LABELS = {
   caneton: "Caneton",
@@ -152,29 +169,69 @@ export function initInventaire() {
   onSnapshot(query(ducksCol, orderBy("createdAt", "desc")), (snap) => {
     allDucks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderKpis();
+    renderFilters();
     renderList();
     autoRequalifierParAge(); // déclenche les écritures nécessaires ; le prochain snapshot rafraîchira l'affichage
   }, (err) => console.error("Erreur lecture inventaire :", err));
 
-  document.querySelectorAll("#invFilterType button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#invFilterType button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      filterType = btn.dataset.v;
-      renderList();
-    });
+  document.getElementById("invFilterType")?.addEventListener("change", (e) => {
+    filterType = e.target.value;
+    renderList();
   });
-  document.querySelectorAll("#invFilterStatut button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#invFilterStatut button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      filterStatut = btn.dataset.v;
-      renderList();
-    });
+  document.getElementById("invFilterStatut")?.addEventListener("change", (e) => {
+    filterStatut = e.target.value;
+    renderList();
+  });
+  document.getElementById("invSearch")?.addEventListener("input", (e) => {
+    searchTerm = e.target.value.trim().toLowerCase();
+    renderList();
   });
 
   const archiveBtn = document.getElementById("openCanetonsArchiveBtn");
   if (archiveBtn) archiveBtn.addEventListener("click", openCanetonsArchiveModal);
+}
+
+// Compte les effectifs (somme des quantités, hors suppressions en
+// attente) pour chaque valeur de type et de statut — sert à afficher
+// les badges "(N)" dans les menus déroulants de filtre.
+function computeFilterCounts() {
+  const items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
+  const sumBy = (predicate) => items.filter(predicate).reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  return {
+    type: {
+      all: sumBy(() => true),
+      caneton: sumBy(d => d.type === "caneton"),
+      canardeau: sumBy(d => d.type === "canardeau"),
+      canard: sumBy(d => d.type === "canard"),
+      reproducteur_male: sumBy(d => d.type === "reproducteur_male"),
+      reproducteur_femelle: sumBy(d => d.type === "reproducteur_femelle")
+    },
+    statut: {
+      actif: sumBy(d => d.statut === "actif"),
+      all: sumBy(() => true),
+      vendu: sumBy(d => d.statut === "vendu"),
+      mort: sumBy(d => d.statut === "mort"),
+      reforme: sumBy(d => d.statut === "reforme")
+    }
+  };
+}
+
+// Reconstruit les options des deux menus déroulants avec leurs
+// compteurs à jour, sans perdre la sélection en cours.
+function renderFilters() {
+  const counts = computeFilterCounts();
+  const typeEl = document.getElementById("invFilterType");
+  const statutEl = document.getElementById("invFilterStatut");
+  if (typeEl) {
+    typeEl.innerHTML = TYPE_FILTER_OPTIONS.map(o =>
+      `<option value="${o.v}" ${o.v === filterType ? "selected" : ""}>${o.label} (${counts.type[o.v]})</option>`
+    ).join("");
+  }
+  if (statutEl) {
+    statutEl.innerHTML = STATUT_FILTER_OPTIONS.map(o =>
+      `<option value="${o.v}" ${o.v === filterStatut ? "selected" : ""}>${o.label} (${counts.statut[o.v]})</option>`
+    ).join("");
+  }
 }
 
 function activeDucks() {
@@ -296,25 +353,40 @@ function renderKpis() {
   const bagues = { rouge: 0, vert: 0, violet: 0, bleu: 0 };
   actifs.forEach(d => { if (d.bague_couleur && bagues[d.bague_couleur] !== undefined) bagues[d.bague_couleur] += (Number(d.quantite) || 1); });
 
+  const vals = {
+    caneton: sum("caneton"),
+    canardeau: sum("canardeau"),
+    canard: sum("canard"),
+    reproducteur_male: sum("reproducteur_male"),
+    reproducteur_femelle: sum("reproducteur_femelle")
+  };
+  const totalActifCount = actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+
+  // Une catégorie à 0 est grisée (moins de bruit visuel qu'une carte
+  // colorée qui affiche juste "0").
+  const kpiCell = (label, value, variant) => {
+    const cls = value === 0 ? "kpi zero" : `kpi${variant ? " " + variant : ""}`;
+    return `<div class="${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`;
+  };
+
   const el = document.getElementById("invKpis");
   if (!el) return;
-  el.innerHTML = `
-    <div class="kpi"><div class="kpi-label">Canetons</div><div class="kpi-value">${sum("caneton")}</div></div>
-    <div class="kpi"><div class="kpi-label">Canardeaux</div><div class="kpi-value">${sum("canardeau")}</div></div>
-    <div class="kpi"><div class="kpi-label">Canards</div><div class="kpi-value">${sum("canard")}</div></div>
-    <div class="kpi alt"><div class="kpi-label">Reprod. mâles</div><div class="kpi-value">${sum("reproducteur_male")}</div></div>
-    <div class="kpi alt"><div class="kpi-label">Reprod. femelles</div><div class="kpi-value">${sum("reproducteur_femelle")}</div></div>
-    <div class="kpi yolk"><div class="kpi-label">Total actif</div><div class="kpi-value">${actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0)}</div></div>
-  `;
+  el.innerHTML = [
+    kpiCell("Canetons", vals.caneton),
+    kpiCell("Canardeaux", vals.canardeau),
+    kpiCell("Canards", vals.canard),
+    kpiCell("Reprod. mâles", vals.reproducteur_male, "alt"),
+    kpiCell("Reprod. femelles", vals.reproducteur_femelle, "alt"),
+    kpiCell("Total actif", totalActifCount, "yolk")
+  ].join("");
   const totalEl = document.getElementById("kpiTotalCanards");
   const subEl = document.getElementById("kpiCanardsSub");
-  const totalActifCount = actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0);
   if (totalEl) animateCountUp("kpiTotalCanards", totalActifCount);
-  if (subEl) subEl.textContent = `${sum("reproducteur_male") + sum("reproducteur_femelle")} reproducteurs · ${sum("canard")} canards · ${sum("canardeau")} canardeaux · ${sum("caneton")} canetons`;
+  if (subEl) subEl.textContent = `${vals.reproducteur_male + vals.reproducteur_femelle} reproducteurs · ${vals.canard} canards · ${vals.canardeau} canardeaux · ${vals.caneton} canetons`;
 
   const dashEl = document.getElementById("dashInventaireBreakdown");
   if (dashEl) {
-    const total = actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0) || 1;
+    const total = totalActifCount || 1;
     dashEl.innerHTML = ["rouge", "vert", "violet", "bleu"].map(c => `
       <div class="row">
         <div class="row-main"><span class="row-title">Bague ${BAGUE_LABELS[c]}</span></div>
@@ -330,6 +402,14 @@ function renderList() {
   let items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
   if (filterType !== "all") items = items.filter(d => d.type === filterType);
   if (filterStatut !== "all") items = items.filter(d => d.statut === filterStatut);
+  if (searchTerm) {
+    items = items.filter(d => {
+      const haystack = [
+        d.numero_bague, d.cree_par, d.motif_sortie, d.notes, TYPE_LABELS[d.type]
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(searchTerm);
+    });
+  }
 
   if (!items.length) {
     el.innerHTML = `<div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div>`;
@@ -337,12 +417,17 @@ function renderList() {
   }
   el.innerHTML = items.map(d => {
     const bagueColorVar = { rouge: "var(--clay-500)", vert: "var(--pond-600)", violet: "#8B5FBF", bleu: "#3D6FBF" }[d.bague_couleur] || "var(--pond-600)";
+    // Un lot vendu affiche la date effective de vente plutôt que sa
+    // date d'entrée d'origine, plus pertinente pour le suivi.
+    const dateLabel = d.statut === "vendu" && d.date_sortie
+      ? `Vente : ${formatDate(d.date_sortie)}`
+      : `entrée ${formatDate(d.date_entree)}`;
     return `
     <div class="row with-icon">
       <div class="row-icon" style="color:${bagueColorVar}"><svg><use href="#${TYPE_ICONS[d.type] || 'ic-duck-canard'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}</span>
-        <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · entrée ${formatDate(d.date_entree)}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
+        <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · ${dateLabel}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
       </div>
       <span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span>
     </div>
