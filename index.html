@@ -284,87 +284,71 @@
     <div class="card" id="dashRecentActivity"></div>
   </section>
 
-  <!-- ===================== INVENTAIRE ===================== -->
-  <!-- ===================== ÉLEVAGE (Canards + Nids fusionnés) ===================== -->
-  <section id="page-elevage" class="page hidden">
+  <!-- ===================== CANARDS (onglet indépendant) ===================== -->
+  <section id="page-canards" class="page hidden">
     <div class="section-title">
-      <div><span class="eyebrow">Élevage</span><h2 id="elevageTitle">Inventaire des canards</h2></div>
+      <div><span class="eyebrow">Élevage</span><h2>Inventaire des canards</h2></div>
+      <button class="btn secondary small" id="openCanetonsArchiveBtn">Archive des canetons →</button>
     </div>
-    <div class="segmented" id="elevageSubNav">
-      <button data-v="canards" class="active">🦆 Canards</button>
-      <button data-v="nids">🥚 Nids</button>
+    <div class="kpi-grid" id="invKpis"></div>
+    <div class="spacer-m"></div>
+
+    <div class="filters-row">
+      <select id="invFilterType" class="filter-select"></select>
+      <select id="invFilterStatut" class="filter-select"></select>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="field"><input type="text" id="invSearch" placeholder="🔎 N° de bague, lot, intervenant…"></div>
+    <div class="spacer-m"></div>
+    <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
+  </section>
+
+  <!-- ===================== NIDS (onglet indépendant) ===================== -->
+  <section id="page-nids" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">Élevage</span><h2>Suivi des nids</h2></div>
+    </div>
+    <p class="subtle" style="margin:0 0 10px;">100 nids numérotés</p>
+    <div class="segmented" id="nidsView">
+      <button data-v="grille" class="active">Grille</button>
+      <button data-v="encours">En cours</button>
+      <button data-v="stats">Statistiques</button>
+      <button data-v="archives">Archives</button>
     </div>
     <div class="spacer-m"></div>
 
-    <div id="elevage-canards-wrap">
-      <div class="section-title" style="margin-top:0;">
-        <div></div>
-        <button class="btn secondary small" id="openCanetonsArchiveBtn">Archive des canetons →</button>
+    <div id="nidsGrilleWrap">
+      <div class="card">
+        <div id="fullNestGrid" class="nest-grid"></div>
+        <div class="legend">
+          <span><svg width="14" height="14" style="color:#AEBDAF"><use href="#ic-nest-libre"/></svg> Libre</span>
+          <span><svg width="14" height="14" style="color:var(--yolk-600)"><use href="#ic-nest-ponte"/></svg> Ponte en cours</span>
+          <span><svg width="14" height="14" style="color:var(--pond-600)"><use href="#ic-nest-couvaison"/></svg> Couvaison</span>
+        </div>
       </div>
-      <div class="kpi-grid" id="invKpis"></div>
-      <div class="spacer-m"></div>
-      <div class="segmented" id="invFilterType">
-        <button data-v="all" class="active">Tous</button>
-        <button data-v="caneton">Canetons</button>
-        <button data-v="canardeau">Canardeaux</button>
-        <button data-v="canard">Canards</button>
-        <button data-v="reproducteur_male">Mâles</button>
-        <button data-v="reproducteur_femelle">Femelles</button>
-      </div>
-      <div class="spacer-s"></div>
-      <div class="segmented" id="invFilterStatut">
-        <button data-v="actif" class="active">Actifs</button>
-        <button data-v="all">Tous statuts</button>
-        <button data-v="vendu">Vendus</button>
-        <button data-v="mort">Décédés</button>
-      </div>
-      <div class="spacer-m"></div>
-      <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
     </div>
 
-    <div id="elevage-nids-wrap" class="hidden">
-      <p class="subtle" style="margin:0 0 10px;">100 nids numérotés</p>
-      <div class="segmented" id="nidsView">
-        <button data-v="grille" class="active">Grille</button>
-        <button data-v="encours">En cours</button>
-        <button data-v="stats">Statistiques</button>
-        <button data-v="archives">Archives</button>
-      </div>
-      <div class="spacer-m"></div>
+    <div id="nidsEnCoursWrap" class="hidden">
+      <div class="card"><div id="nidsEnCoursList"></div></div>
+    </div>
 
-      <div id="nidsGrilleWrap">
-        <div class="card">
-          <div id="fullNestGrid" class="nest-grid"></div>
-          <div class="legend">
-            <span><svg width="14" height="14" style="color:#AEBDAF"><use href="#ic-nest-libre"/></svg> Libre</span>
-            <span><svg width="14" height="14" style="color:var(--yolk-600)"><use href="#ic-nest-ponte"/></svg> Ponte en cours</span>
-            <span><svg width="14" height="14" style="color:var(--pond-600)"><use href="#ic-nest-couvaison"/></svg> Couvaison</span>
-          </div>
-        </div>
+    <div id="nidsStatsWrap" class="hidden">
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Moyennes quotidiennes</h3>
+        <div id="dailyAverageStats"></div>
       </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Nids les plus productifs</h3>
+        <div id="topNestsList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Taux d'éclosion global</h3>
+        <div id="globalHatchStats"></div>
+      </div>
+    </div>
 
-      <div id="nidsEnCoursWrap" class="hidden">
-        <div class="card"><div id="nidsEnCoursList"></div></div>
-      </div>
-
-      <div id="nidsStatsWrap" class="hidden">
-        <div class="card">
-          <h3 style="font-size:15px; margin-bottom:10px;">Moyennes quotidiennes</h3>
-          <div id="dailyAverageStats"></div>
-        </div>
-        <div class="card">
-          <h3 style="font-size:15px; margin-bottom:10px;">Nids les plus productifs</h3>
-          <div id="topNestsList"></div>
-        </div>
-        <div class="card">
-          <h3 style="font-size:15px; margin-bottom:10px;">Taux d'éclosion global</h3>
-          <div id="globalHatchStats"></div>
-        </div>
-      </div>
-
-      <div id="nidsArchivesWrap" class="hidden">
-        <div class="card"><div id="nidsArchivesList"></div></div>
-      </div>
+    <div id="nidsArchivesWrap" class="hidden">
+      <div class="card"><div id="nidsArchivesList"></div></div>
     </div>
   </section>
 
@@ -553,9 +537,13 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg>
       Accueil
     </button>
-    <button class="nav-item" data-page="elevage">
+    <button class="nav-item" data-page="canards">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg>
-      Élevage
+      Canards
+    </button>
+    <button class="nav-item" data-page="nids">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="13" rx="7" ry="8"/><path d="M6.5 8.5c1.5-3 4-4.5 5.5-4.5"/></svg>
+      Nids
     </button>
     <button class="nav-item" data-page="finances">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg>
