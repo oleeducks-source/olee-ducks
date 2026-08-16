@@ -6,7 +6,7 @@
 import { db } from "./firebase-config.js";
 import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs,
-  serverTimestamp, orderBy, query
+  serverTimestamp, orderBy, query, where, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard } from "./pesees.js";
@@ -276,6 +276,14 @@ async function chargerEtAfficherPesees(lotId) {
 // "canetons_production"). Lecture seule, ne modifie rien ; le total
 // affiché est purement informatif ("combien de canetons ai-je produits
 // au total") et n'entre dans aucun calcul de cheptel actif.
+//
+// ⚠️ CORRECTIF (août 2026) : cette archive était jusqu'ici modifiable et
+// supprimable (quantité corrigible, entrée supprimable comme "doublon").
+// Un historique de production doit rester un compteur cumulé fiable et
+// non altérable — les entrées sont maintenant strictement en lecture
+// seule. Toute correction nécessaire (date de naissance erronée) se
+// fait désormais depuis la fiche du lot d'origine dans "Canards", qui
+// répercute automatiquement la correction sur l'archive liée.
 async function openCanetonsArchiveModal() {
   openModal("Archive des canetons produits", `<p class="subtle">Chargement…</p>`, { onMount: () => {} });
   try {
@@ -286,10 +294,10 @@ async function openCanetonsArchiveModal() {
       <div class="card" style="background:var(--sage-100); border:none;">
         <div class="row"><div class="row-main"><span class="row-title">Total de canetons produits (cumulé)</span><span class="row-sub">Ne compte pas dans le cheptel actif actuel</span></div><span class="row-value pos">${total}</span></div>
       </div>
-      <p class="subtle" style="margin:10px 0 4px;">Touchez une ligne pour corriger la quantité ou supprimer une entrée en doublon.</p>
+      <p class="subtle" style="margin:10px 0 4px;">Historique en lecture seule. Pour corriger une date de naissance, modifiez le lot d'origine dans l'onglet Canards.</p>
       <div class="spacer-s"></div>
       ${entries.length ? entries.map(e => `
-        <div class="row with-icon archive-entry" data-id="${e.id}" style="cursor:pointer;">
+        <div class="row with-icon">
           <div class="row-icon"><svg><use href="#ic-duck-canardeau"/></svg></div>
           <div class="row-main">
             <span class="row-title">${e.quantite} caneton(s) passés en canardeau</span>
@@ -298,56 +306,11 @@ async function openCanetonsArchiveModal() {
         </div>
       `).join("") : `<div class="empty-state"><div class="glyph">🐥</div><p>Aucun passage caneton → canardeau archivé pour l'instant.</p></div>`}
     `;
-    openModal("Archive des canetons produits", body, {
-      onMount: () => {
-        document.querySelectorAll(".archive-entry").forEach(rowEl => {
-          rowEl.addEventListener("click", () => {
-            const entry = entries.find(en => en.id === rowEl.dataset.id);
-            if (entry) openArchiveEntryModal(entry);
-          });
-        });
-      }
-    });
+    openModal("Archive des canetons produits", body, { onMount: () => {} });
   } catch (e) {
     console.error(e);
     openModal("Archive des canetons produits", `<p class="subtle">Erreur de chargement : ${e.message}</p>`, { onMount: () => {} });
   }
-}
-
-// Correction d'une entrée d'archive (quantité erronée, doublon à
-// supprimer). Après action, on rouvre l'archive pour refléter le
-// changement — la liste n'est pas branchée en temps réel (getDocs
-// ponctuel), donc on la recharge explicitement ici.
-function openArchiveEntryModal(entry) {
-  const body = `
-    <div class="row"><div class="row-main"><span class="row-title">Date</span></div><span class="row-value">${formatDate(entry.date_transition)}</span></div>
-    ${entry.date_naissance ? `<div class="row"><div class="row-main"><span class="row-title">Date de naissance</span></div><span class="row-value">${formatDate(entry.date_naissance)}</span></div>` : ""}
-    <div class="field"><label>Quantité de canetons</label><input type="number" id="eArchQte" min="0" value="${entry.quantite}"></div>
-    <button class="btn secondary" id="eArchSave">Enregistrer la correction</button>
-    <div class="spacer-s"></div>
-    <button class="btn danger" id="eArchDelete">Supprimer cette entrée (doublon)</button>
-  `;
-  openModal("Corriger l'archive", body, {
-    onMount: () => {
-      document.getElementById("eArchSave").addEventListener("click", async () => {
-        const qte = Number(document.getElementById("eArchQte").value);
-        if (isNaN(qte) || qte < 0) { toast("Quantité invalide"); return; }
-        try {
-          await updateDoc(doc(db, "canetons_production", entry.id), {
-            quantite: qte,
-            corrige_par: getUserName() || "Inconnu",
-            corrige_le: serverTimestamp()
-          });
-          toast("Entrée corrigée ✓");
-          openCanetonsArchiveModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-      document.getElementById("eArchDelete").addEventListener("click", () => {
-        closeModal();
-        confirmerSuppression(entry.id, "Entrée d'archive", () => deleteDoc(doc(db, "canetons_production", entry.id)), openCanetonsArchiveModal);
-      });
-    }
-  });
 }
 
 // Utilisé par stocks.js pour la prévision de consommation basée sur le
@@ -733,12 +696,14 @@ function openEditModal(d) {
       document.getElementById("eDuckSave").addEventListener("click", async () => {
         const statut = document.getElementById("eDuckStatut").value;
         const nouveauType = document.getElementById("eDuckType").value;
+        const dateNaissanceVal = document.getElementById("eDuckDateNaissance").value;
+        const nouvelleDateNaissance = dateNaissanceVal ? new Date(dateNaissanceVal) : null;
         try {
-          await updateDoc(doc(db, "ducks", d.id), {
+          const updatePayload = {
             type: nouveauType,
             statut,
             bague_couleur: document.getElementById("eDuckBague").value || null,
-            date_naissance: document.getElementById("eDuckDateNaissance").value ? new Date(document.getElementById("eDuckDateNaissance").value) : null,
+            date_naissance: nouvelleDateNaissance,
             verrouille_type: document.getElementById("eDuckLock").checked,
             quantite: Number(document.getElementById("eDuckQte").value) || 1,
             motif_sortie: document.getElementById("eDuckMotif").value.trim() || null,
@@ -746,7 +711,45 @@ function openEditModal(d) {
             date_sortie: statut !== "actif" && document.getElementById("eDuckDateSortie").value ? new Date(document.getElementById("eDuckDateSortie").value) : null,
             modifie_par: getUserName() || "Inconnu",
             modifie_le: serverTimestamp()
-          });
+          };
+          // ⚠️ CORRECTIF (août 2026) : la date d'entrée ("entrée [date]"
+          // affichée dans la liste) ne suivait pas la date de naissance
+          // exacte quand celle-ci était corrigée ici — les deux dates
+          // pouvaient diverger après une correction. La date d'entrée
+          // s'aligne désormais sur la date de naissance dès qu'elle est
+          // renseignée, puisqu'un lot dont on connaît la naissance exacte
+          // est par définition "entré" ce jour-là.
+          if (nouvelleDateNaissance) {
+            updatePayload.date_entree = nouvelleDateNaissance;
+          }
+          await updateDoc(doc(db, "ducks", d.id), updatePayload);
+
+          // Répercute la correction de date sur les archives liées à ce
+          // lot, pour qu'elles restent cohérentes avec le cheptel actif :
+          // - le cycle de nid d'origine (date d'éclosion affichée dans
+          //   Nids > Archives), si ce lot est issu d'une éclosion ;
+          // - les entrées "caneton → canardeau" déjà archivées à partir
+          //   de ce lot (Canards > Archive des canetons produits).
+          if (nouvelleDateNaissance && d.issu_du_cycle_id) {
+            try {
+              await updateDoc(doc(db, "nest_cycles", d.issu_du_cycle_id), {
+                date_fin: nouvelleDateNaissance,
+                corrige_par: getUserName() || "Inconnu",
+                corrige_le: serverTimestamp()
+              });
+            } catch (e) { console.error("Erreur mise à jour du cycle de nid lié :", e); }
+          }
+          if (nouvelleDateNaissance) {
+            try {
+              const liees = await getDocs(query(canetonsProductionCol, where("lot_origine_id", "==", d.id)));
+              if (!liees.empty) {
+                const batch = writeBatch(db);
+                liees.docs.forEach(docSnap => batch.update(docSnap.ref, { date_naissance: nouvelleDateNaissance }));
+                await batch.commit();
+              }
+            } catch (e) { console.error("Erreur mise à jour des archives de production liées :", e); }
+          }
+
           // Si la correction fait passer le lot en "canardeau" et qu'il ne
           // l'était pas déjà, on archive ce passage — même logique que la
           // requalification automatique ou le bouton dédié, pour que
