@@ -28,6 +28,9 @@ let cyclesMap = {};  // cycle id -> cycle doc (cycles en cours, indexées par id
 let archivedCycles = []; // cycles terminées (eclos / echec)
 let pontesLog = []; // tous les relevés de ponte datés (tous nids, tous cycles)
 let currentNidsView = "grille";
+let nidsGroupBy = "numero";   // "numero" | "ponte" | "couvaison" | "eclosion_prevue"
+let nidsSortDir = "desc";     // "desc" (plus récent d'abord) | "asc" (plus ancien d'abord)
+let nidsFilterDate = "";      // "YYYY-MM-DD" ou "" (aucun filtre)
 
 const DUREE_INCUBATION_JOURS = 36; // canard de Barbarie (muscovy) — 35 à 37 jours, 36 en moyenne
 
@@ -98,6 +101,29 @@ export function initNests() {
       currentNidsView = btn.dataset.v;
       showNidsView();
     });
+  });
+
+  // ------ Filtres de la vue "En cours" : regroupement par date de
+  // ponte / de couvaison / d'éclosion prévue, tri chrono, et filtre sur
+  // une date précise. ------
+  document.getElementById("nidsGroupBy")?.addEventListener("change", (e) => {
+    nidsGroupBy = e.target.value;
+    document.getElementById("nidsSortDirWrap")?.classList.toggle("hidden", nidsGroupBy === "numero");
+    renderEnCoursList();
+  });
+  document.getElementById("nidsSortDir")?.addEventListener("change", (e) => {
+    nidsSortDir = e.target.value;
+    renderEnCoursList();
+  });
+  document.getElementById("nidsFilterDate")?.addEventListener("change", (e) => {
+    nidsFilterDate = e.target.value;
+    renderEnCoursList();
+  });
+  document.getElementById("nidsFilterDateClear")?.addEventListener("click", () => {
+    nidsFilterDate = "";
+    const inp = document.getElementById("nidsFilterDate");
+    if (inp) inp.value = "";
+    renderEnCoursList();
   });
 }
 
@@ -194,27 +220,109 @@ function renderDashboardNestKpi() {
   if (elS) elS.textContent = `${occ} nids occupés sur 100`;
 }
 
-function renderEnCoursList() {
-  const el = document.getElementById("nidsEnCoursList");
-  if (!el) return;
-  const list = Object.values(cyclesMap).sort((a, b) => a.nid_numero - b.nid_numero);
-  if (!list.length) {
-    el.innerHTML = `<div class="empty-state"><div class="glyph">🪺</div><p>Aucun nid occupé actuellement.</p></div>`;
-    return;
-  }
-  el.innerHTML = list.map(c => `
-    <div class="row with-icon">
+// Date d'éclosion projetée pour un cycle en couvaison : point de départ
+// de la couvaison + durée moyenne d'incubation du canard de Barbarie.
+// Retourne null tant que la couvaison n'a pas commencé (une ponte seule
+// n'a pas encore de date de référence pour projeter une éclosion).
+function predictedHatchDate(c) {
+  if (!c.date_debut_couvaison) return null;
+  const start = c.date_debut_couvaison?.toDate ? c.date_debut_couvaison.toDate() : new Date(c.date_debut_couvaison);
+  if (isNaN(start.getTime())) return null;
+  return new Date(start.getTime() + DUREE_INCUBATION_JOURS * 86400000);
+}
+
+// Clé de regroupement "jour civil" (YYYY-MM-DD, sans heure) pour un
+// cycle, selon le mode demandé — sert à la fois au regroupement visuel
+// et au filtre "date précise".
+function dateKeyFor(c, mode) {
+  let raw;
+  if (mode === "couvaison") raw = c.date_debut_couvaison;
+  else if (mode === "eclosion_prevue") raw = predictedHatchDate(c);
+  else raw = c.date_debut; // "ponte" et "numero" (filtre date) retombent sur le début du cycle
+  if (!raw) return null;
+  const d = raw?.toDate ? raw.toDate() : new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+function renderCycleRows(list) {
+  return list.map(c => {
+    const hatch = predictedHatchDate(c);
+    return `
+    <div class="row with-icon" data-nid="${c.nid_numero}">
       <div class="row-icon ${c.statut === 'couvaison' ? 'warn' : 'pos'}"><svg><use href="#${c.statut === 'couvaison' ? 'ic-nest-couvaison' : 'ic-nest-ponte'}"/></svg></div>
       <div class="row-main">
         <span class="row-title">Nid n° ${c.nid_numero}</span>
-        <span class="row-sub">${c.nombre_oeufs || 0} œuf(s) · depuis ${formatDate(c.date_debut)}${c.cree_par ? " · par " + escapeHtml(c.cree_par) : ""}${c.nombre_eclos ? ` · 🐣 ${c.nombre_eclos} déjà éclos` : ""}</span>
+        <span class="row-sub">${c.nombre_oeufs || 0} œuf(s) · ponte depuis ${formatDate(c.date_debut)}${c.statut === "couvaison" && c.date_debut_couvaison ? " · couvaison depuis " + formatDate(c.date_debut_couvaison) : ""}${hatch ? " · éclosion prévue " + formatDate(hatch) : ""}${c.cree_par ? " · par " + escapeHtml(c.cree_par) : ""}${c.nombre_eclos ? ` · 🐣 ${c.nombre_eclos} déjà éclos` : ""}</span>
       </div>
       <span class="tag ${c.statut === 'couvaison' ? (c.nombre_eclos ? 'ok' : 'warn') : 'ok'}">${c.statut === "couvaison" ? (c.nombre_eclos ? "Éclosion en cours" : "Couvaison") : "Ponte"}</span>
     </div>
-  `).join("");
-  el.querySelectorAll(".row").forEach((rowEl, idx) => {
+  `;
+  }).join("");
+}
+
+// ⚠️ NOUVEAU (août 2026) : la liste "En cours" peut désormais être
+// regroupée par date de ponte, date de couvaison, ou éclosion prévue —
+// pour voir en un coup d'œil quels nids ont démarré ensemble, ou quels
+// nids vont éclore à la même période. Un filtre optionnel restreint
+// l'affichage à une date précise. Le tri par n° de nid reste le
+// comportement par défaut (identique à avant ce correctif).
+function renderEnCoursList() {
+  const el = document.getElementById("nidsEnCoursList");
+  if (!el) return;
+  let list = Object.values(cyclesMap);
+
+  // Regrouper/filtrer par éclosion prévue n'a de sens que pour les nids
+  // déjà en couvaison (une ponte seule n'a pas encore de date de départ
+  // de couvaison à partir de laquelle projeter une éclosion).
+  if (nidsGroupBy === "eclosion_prevue") {
+    list = list.filter(c => c.statut === "couvaison" && c.date_debut_couvaison);
+  }
+
+  if (nidsFilterDate) {
+    list = list.filter(c => dateKeyFor(c, nidsGroupBy) === nidsFilterDate);
+  }
+
+  if (!list.length) {
+    el.innerHTML = `<div class="empty-state"><div class="glyph">🪺</div><p>${nidsFilterDate || nidsGroupBy !== "numero" ? "Aucun nid ne correspond à ce filtre." : "Aucun nid occupé actuellement."}</p></div>`;
+    return;
+  }
+
+  if (nidsGroupBy === "numero") {
+    list.sort((a, b) => a.nid_numero - b.nid_numero);
+    el.innerHTML = renderCycleRows(list);
+  } else {
+    const groups = {};
+    list.forEach(c => {
+      const key = dateKeyFor(c, nidsGroupBy) || "inconnue";
+      (groups[key] = groups[key] || []).push(c);
+    });
+    const keys = Object.keys(groups).sort((a, b) => {
+      if (a === "inconnue") return 1;
+      if (b === "inconnue") return -1;
+      return nidsSortDir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
+    });
+    const groupLabel = nidsGroupBy === "eclosion_prevue" ? "Éclosion prévue" : nidsGroupBy === "couvaison" ? "Couvaison débutée" : "Ponte débutée";
+    el.innerHTML = keys.map(key => {
+      const groupList = groups[key].sort((a, b) => a.nid_numero - b.nid_numero);
+      const totalOeufs = groupList.reduce((a, c) => a + (Number(c.nombre_oeufs) || 0), 0);
+      const label = key === "inconnue" ? "date inconnue" : formatDate(new Date(key + "T00:00:00"));
+      return `
+        <div class="nid-date-group">
+          <div class="nid-date-group-head">
+            <span class="row-title">${groupLabel} : ${label}</span>
+            <span class="tag ok">${groupList.length} nid${groupList.length > 1 ? "s" : ""} · ${totalOeufs} œuf${totalOeufs > 1 ? "s" : ""}</span>
+          </div>
+          ${renderCycleRows(groupList)}
+        </div>
+      `;
+    }).join("");
+  }
+
+  el.querySelectorAll(".row[data-nid]").forEach(rowEl => {
     rowEl.style.cursor = "pointer";
-    rowEl.addEventListener("click", () => openNestModal(list[idx].nid_numero));
+    rowEl.addEventListener("click", () => openNestModal(Number(rowEl.dataset.nid)));
   });
 }
 
