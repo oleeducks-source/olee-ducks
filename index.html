@@ -329,6 +329,26 @@
     </div>
 
     <div id="nidsEnCoursWrap" class="hidden">
+      <div class="filters-row">
+        <select id="nidsGroupBy" class="filter-select">
+          <option value="numero">Trier par n° de nid</option>
+          <option value="ponte">Grouper par date de ponte</option>
+          <option value="couvaison">Grouper par date de couvaison</option>
+          <option value="eclosion_prevue">Grouper par éclosion prévue</option>
+        </select>
+        <div id="nidsSortDirWrap" class="hidden" style="flex:1 1 140px;">
+          <select id="nidsSortDir" class="filter-select">
+            <option value="desc">Plus récent d'abord</option>
+            <option value="asc">Plus ancien d'abord</option>
+          </select>
+        </div>
+      </div>
+      <div class="spacer-s"></div>
+      <div class="field-row" style="align-items:flex-end;">
+        <div class="field" style="margin-bottom:0;"><label>Filtrer une date précise (optionnel)</label><input type="date" id="nidsFilterDate"></div>
+        <button class="btn secondary" id="nidsFilterDateClear" style="flex:0 0 auto; white-space:nowrap;">✕ Effacer</button>
+      </div>
+      <div class="spacer-m"></div>
       <div class="card"><div id="nidsEnCoursList"></div></div>
     </div>
 
