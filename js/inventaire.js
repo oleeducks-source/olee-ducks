@@ -15,7 +15,10 @@ const ducksCol = collection(db, "ducks");
 let allDucks = [];
 let filterType = "all";
 let filterStatut = "actif";
+let filterLot = "all";
 let searchTerm = "";
+let selectionMode = false;
+let selectedIds = new Set();
 
 const TYPE_FILTER_OPTIONS = [
   { v: "all", label: "Tous" },
@@ -176,12 +179,17 @@ export function initInventaire() {
 
   document.getElementById("invFilterType")?.addEventListener("change", (e) => {
     filterType = e.target.value;
-    renderFilters(); // recalcule les compteurs croisés du menu Statut
+    renderFilters(); // recalcule les compteurs croisés des autres menus
     renderList();
   });
   document.getElementById("invFilterStatut")?.addEventListener("change", (e) => {
     filterStatut = e.target.value;
-    renderFilters(); // recalcule les compteurs croisés du menu Type
+    renderFilters();
+    renderList();
+  });
+  document.getElementById("invFilterLot")?.addEventListener("change", (e) => {
+    filterLot = e.target.value;
+    renderFilters();
     renderList();
   });
   document.getElementById("invSearch")?.addEventListener("input", (e) => {
@@ -191,54 +199,68 @@ export function initInventaire() {
 
   const archiveBtn = document.getElementById("openCanetonsArchiveBtn");
   if (archiveBtn) archiveBtn.addEventListener("click", openCanetonsArchiveModal);
+
+  // ------ Sélection multiple + regroupement en lot ------
+  document.getElementById("invLotModeBtn")?.addEventListener("click", toggleSelectionMode);
+  document.getElementById("invCancelSelectionBtn")?.addEventListener("click", () => setSelectionMode(false));
+  document.getElementById("invAssignLotBtn")?.addEventListener("click", openAssignLotModal);
 }
 
 // Compte les effectifs (somme des quantités, hors suppressions en
-// attente) pour chaque valeur de type et de statut.
+// attente) pour chaque valeur de type, de statut et de lot.
 //
 // ⚠️ CORRECTIF (août 2026) : les compteurs étaient calculés globalement,
-// indépendamment du filtre déjà actif dans l'AUTRE menu déroulant. Cela
-// produisait des chiffres incohérents avec les KPI (ex. "Tous (377)"
+// indépendamment du filtre déjà actif dans les AUTRES menus déroulants.
+// Cela produisait des chiffres incohérents avec les KPI (ex. "Tous (377)"
 // alors que les KPI n'affichent que les actifs = 334) et des compteurs
-// de statut qui ne correspondaient à rien pour un type sélectionné
-// (ex. sélectionner "Canardeaux" affichait quand même "Vendus (38)",
-// qui correspondait en réalité aux canards vendus, pas aux canardeaux).
-// Les compteurs sont maintenant croisés : le menu Type respecte le
-// statut actuellement sélectionné, et le menu Statut respecte le type
-// actuellement sélectionné — chacun ne recalculant QUE selon l'AUTRE
-// filtre, jamais selon lui-même (sinon son propre total resterait figé
-// sur l'option choisie).
+// qui ne correspondaient à rien pour le type sélectionné (ex.
+// sélectionner "Canardeaux" affichait quand même "Vendus (38)", qui
+// correspondait en réalité aux canards vendus, pas aux canardeaux).
+// Les 3 menus sont maintenant croisés : chacun respecte les DEUX AUTRES
+// filtres actifs, mais jamais lui-même (sinon son propre total resterait
+// figé sur l'option choisie).
 function computeFilterCounts() {
   const items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
   const sumBy = (predicate) => items.filter(predicate).reduce((a, d) => a + (Number(d.quantite) || 1), 0);
   const matchesStatut = (d) => filterStatut === "all" || d.statut === filterStatut;
   const matchesType = (d) => filterType === "all" || d.type === filterType;
+  const matchesLot = (d) => filterLot === "all" || (d.lot || "") === filterLot;
+
+  const lotValues = Array.from(new Set(items.map(d => d.lot).filter(Boolean))).sort();
+  const lots = { all: sumBy(d => matchesType(d) && matchesStatut(d)) };
+  lotValues.forEach(l => { lots[l] = sumBy(d => (d.lot || "") === l && matchesType(d) && matchesStatut(d)); });
 
   return {
     type: {
-      all: sumBy(matchesStatut),
-      caneton: sumBy(d => d.type === "caneton" && matchesStatut(d)),
-      canardeau: sumBy(d => d.type === "canardeau" && matchesStatut(d)),
-      canard: sumBy(d => d.type === "canard" && matchesStatut(d)),
-      reproducteur_male: sumBy(d => d.type === "reproducteur_male" && matchesStatut(d)),
-      reproducteur_femelle: sumBy(d => d.type === "reproducteur_femelle" && matchesStatut(d))
+      all: sumBy(d => matchesStatut(d) && matchesLot(d)),
+      caneton: sumBy(d => d.type === "caneton" && matchesStatut(d) && matchesLot(d)),
+      canardeau: sumBy(d => d.type === "canardeau" && matchesStatut(d) && matchesLot(d)),
+      canard: sumBy(d => d.type === "canard" && matchesStatut(d) && matchesLot(d)),
+      reproducteur_male: sumBy(d => d.type === "reproducteur_male" && matchesStatut(d) && matchesLot(d)),
+      reproducteur_femelle: sumBy(d => d.type === "reproducteur_femelle" && matchesStatut(d) && matchesLot(d))
     },
     statut: {
-      actif: sumBy(d => d.statut === "actif" && matchesType(d)),
-      all: sumBy(matchesType),
-      vendu: sumBy(d => d.statut === "vendu" && matchesType(d)),
-      mort: sumBy(d => d.statut === "mort" && matchesType(d)),
-      reforme: sumBy(d => d.statut === "reforme" && matchesType(d))
-    }
+      actif: sumBy(d => d.statut === "actif" && matchesType(d) && matchesLot(d)),
+      all: sumBy(d => matchesType(d) && matchesLot(d)),
+      vendu: sumBy(d => d.statut === "vendu" && matchesType(d) && matchesLot(d)),
+      mort: sumBy(d => d.statut === "mort" && matchesType(d) && matchesLot(d)),
+      reforme: sumBy(d => d.statut === "reforme" && matchesType(d) && matchesLot(d))
+    },
+    lots,
+    lotValues
   };
 }
 
-// Reconstruit les options des deux menus déroulants avec leurs
-// compteurs à jour, sans perdre la sélection en cours.
+// Reconstruit les options des menus déroulants avec leurs compteurs à
+// jour, sans perdre la sélection en cours. Le menu "Lot" ne s'affiche
+// que si au moins un lot a été créé (voir "Regrouper en lot") — pour ne
+// pas encombrer l'écran tant que la fonctionnalité n'est pas utilisée.
 function renderFilters() {
   const counts = computeFilterCounts();
   const typeEl = document.getElementById("invFilterType");
   const statutEl = document.getElementById("invFilterStatut");
+  const lotWrap = document.getElementById("invFilterLotWrap");
+  const lotEl = document.getElementById("invFilterLot");
   if (typeEl) {
     typeEl.innerHTML = TYPE_FILTER_OPTIONS.map(o =>
       `<option value="${o.v}" ${o.v === filterType ? "selected" : ""}>${o.label} (${counts.type[o.v]})</option>`
@@ -248,6 +270,18 @@ function renderFilters() {
     statutEl.innerHTML = STATUT_FILTER_OPTIONS.map(o =>
       `<option value="${o.v}" ${o.v === filterStatut ? "selected" : ""}>${o.label} (${counts.statut[o.v]})</option>`
     ).join("");
+  }
+  if (lotWrap && lotEl) {
+    if (counts.lotValues.length) {
+      lotWrap.classList.remove("hidden");
+      const opts = [`<option value="all" ${filterLot === "all" ? "selected" : ""}>Tous les lots (${counts.lots.all})</option>`]
+        .concat(counts.lotValues.map(l => `<option value="${escapeHtml(l)}" ${l === filterLot ? "selected" : ""}>${escapeHtml(l)} (${counts.lots[l]})</option>`));
+      lotEl.innerHTML = opts.join("");
+      if (filterLot !== "all" && !counts.lotValues.includes(filterLot)) { filterLot = "all"; lotEl.value = "all"; }
+    } else {
+      lotWrap.classList.add("hidden");
+      filterLot = "all";
+    }
   }
 }
 
@@ -382,10 +416,11 @@ function renderList() {
   let items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
   if (filterType !== "all") items = items.filter(d => d.type === filterType);
   if (filterStatut !== "all") items = items.filter(d => d.statut === filterStatut);
+  if (filterLot !== "all") items = items.filter(d => (d.lot || "") === filterLot);
   if (searchTerm) {
     items = items.filter(d => {
       const haystack = [
-        d.numero_bague, d.cree_par, d.motif_sortie, d.notes, TYPE_LABELS[d.type]
+        d.numero_bague, d.cree_par, d.motif_sortie, d.notes, d.lot, TYPE_LABELS[d.type]
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(searchTerm);
     });
@@ -402,11 +437,13 @@ function renderList() {
     const dateLabel = d.statut === "vendu" && d.date_sortie
       ? `Vente : ${formatDate(d.date_sortie)}`
       : `entrée ${formatDate(d.date_entree)}`;
+    const checked = selectedIds.has(d.id) ? "checked" : "";
     return `
-    <div class="row with-icon">
+    <div class="row with-icon" data-id="${d.id}">
+      ${selectionMode ? `<input type="checkbox" class="row-select-checkbox" data-id="${d.id}" ${checked}>` : ""}
       <div class="row-icon" style="color:${bagueColorVar}"><svg><use href="#${TYPE_ICONS[d.type] || 'ic-duck-canard'}"/></svg></div>
       <div class="row-main">
-        <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}</span>
+        <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}${d.lot ? `<span class="lot-chip">🏷️ ${escapeHtml(d.lot)}</span>` : ""}</span>
         <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · ${dateLabel}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
       </div>
       <span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span>
@@ -414,10 +451,110 @@ function renderList() {
   `;
   }).join("");
 
+  // En mode sélection, un clic sur la ligne (ou sur la case) bascule la
+  // sélection au lieu d'ouvrir la fiche d'édition — pour ne pas ouvrir
+  // un modal par erreur pendant qu'on constitue un lot.
   el.querySelectorAll(".row").forEach((rowEl, idx) => {
     rowEl.style.cursor = "pointer";
-    rowEl.addEventListener("click", () => openEditModal(items[idx]));
+    if (selectionMode) {
+      rowEl.addEventListener("click", (e) => {
+        if (e.target.classList.contains("row-select-checkbox")) return; // la case gère déjà son propre clic
+        toggleSelected(items[idx].id);
+      });
+      rowEl.querySelector(".row-select-checkbox")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleSelected(items[idx].id);
+      });
+    } else {
+      rowEl.addEventListener("click", () => openEditModal(items[idx]));
+    }
   });
+}
+
+// ---------------------------------------------------------------------
+// Sélection multiple + regroupement en lot
+// ---------------------------------------------------------------------
+function toggleSelectionMode() {
+  setSelectionMode(!selectionMode);
+}
+
+function setSelectionMode(on) {
+  selectionMode = on;
+  if (!on) selectedIds.clear();
+  const btn = document.getElementById("invLotModeBtn");
+  if (btn) btn.textContent = on ? "✕ Annuler la sélection" : "🏷️ Regrouper en lot";
+  updateSelectionBar();
+  renderList();
+}
+
+function toggleSelected(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  updateSelectionBar();
+  // On ne redessine que la case concernée (pas toute la liste) pour ne
+  // pas perdre la position de défilement pendant qu'on coche plusieurs
+  // lignes d'affilée.
+  const cb = document.querySelector(`.row-select-checkbox[data-id="${id}"]`);
+  if (cb) cb.checked = selectedIds.has(id);
+}
+
+function updateSelectionBar() {
+  const bar = document.getElementById("invSelectionBar");
+  const countEl = document.getElementById("invSelectionCount");
+  if (!bar || !countEl) return;
+  bar.classList.toggle("hidden", !selectionMode || selectedIds.size === 0);
+  countEl.textContent = `${selectedIds.size} sélectionné(s)`;
+}
+
+// Ouvre la boîte de dialogue d'assignation de lot pour les entrées
+// actuellement sélectionnées. Propose les lots déjà existants (créés
+// précédemment par n'importe qui) via une liste suggérée, pour éviter
+// de créer deux lots au nom quasi identique par erreur de frappe.
+function openAssignLotModal() {
+  if (!selectedIds.size) { toast("Sélectionnez au moins un lot de canards"); return; }
+  const lotsExistants = Array.from(new Set(allDucks.map(d => d.lot).filter(Boolean))).sort();
+  const selectedItems = allDucks.filter(d => selectedIds.has(d.id));
+  const lotCommun = selectedItems.every(d => (d.lot || "") === (selectedItems[0].lot || "")) ? (selectedItems[0].lot || "") : "";
+
+  const body = `
+    <p class="subtle">${selectedIds.size} enregistrement(s) sélectionné(s). Attribuez-leur un nom de lot commun (ex. "Abri A", "Éclosion 04-14 août") pour les retrouver d'un coup dans les filtres et la recherche.</p>
+    <div class="field">
+      <label>Nom du lot</label>
+      <input type="text" id="fLotName" list="fLotSuggestions" value="${escapeHtml(lotCommun)}" placeholder="Ex. Abri A">
+      <datalist id="fLotSuggestions">${lotsExistants.map(l => `<option value="${escapeHtml(l)}"></option>`).join("")}</datalist>
+    </div>
+    <button class="btn yolk" id="fLotSave">Assigner à ce lot</button>
+    <div class="spacer-s"></div>
+    <button class="btn secondary" id="fLotClear">Retirer l'étiquette de lot</button>
+  `;
+  openModal("Regrouper en lot", body, {
+    onMount: () => {
+      document.getElementById("fLotSave").addEventListener("click", async () => {
+        const nom = document.getElementById("fLotName").value.trim();
+        if (!nom) { toast("Indiquez un nom de lot"); return; }
+        await appliquerLotSurSelection(nom);
+      });
+      document.getElementById("fLotClear").addEventListener("click", async () => {
+        await appliquerLotSurSelection(null);
+      });
+    }
+  });
+}
+
+async function appliquerLotSurSelection(nomLotOuNull) {
+  try {
+    const batch = writeBatch(db);
+    selectedIds.forEach(id => {
+      batch.update(doc(db, "ducks", id), {
+        lot: nomLotOuNull,
+        modifie_par: getUserName() || "Inconnu",
+        modifie_le: serverTimestamp()
+      });
+    });
+    await batch.commit();
+    toast(nomLotOuNull ? `Lot "${nomLotOuNull}" appliqué à ${selectedIds.size} enregistrement(s) ✓` : `Étiquette de lot retirée ✓`);
+    closeModal();
+    setSelectionMode(false);
+  } catch (e) { toast("Erreur : " + e.message); }
 }
 
 export function openAddDuckModal() {
@@ -576,6 +713,9 @@ function openEditModal(d) {
       </select>
     </div>
     <div class="field"><label>Date de naissance exacte (optionnel — prioritaire sur la date d'entrée pour le calcul d'âge)</label><input type="date" id="eDuckDateNaissance" value="${d.date_naissance ? formatInputDate(d.date_naissance) : ""}"></div>
+    <div class="field"><label>Lot (optionnel — ex. "Abri A")</label><input type="text" id="eDuckLot" list="eDuckLotSuggestions" value="${escapeHtml(d.lot || "")}" placeholder="Non affecté à un lot">
+      <datalist id="eDuckLotSuggestions">${Array.from(new Set(allDucks.map(x => x.lot).filter(Boolean))).sort().map(l => `<option value="${escapeHtml(l)}"></option>`).join("")}</datalist>
+    </div>
     <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;">
       <input type="checkbox" id="eDuckLock" style="width:auto;" ${d.verrouille_type ? "checked" : ""}>
       <label style="margin:0;">Verrouiller ce stade (bloque toute requalification automatique par âge)</label>
@@ -704,6 +844,7 @@ function openEditModal(d) {
             statut,
             bague_couleur: document.getElementById("eDuckBague").value || null,
             date_naissance: nouvelleDateNaissance,
+            lot: document.getElementById("eDuckLot").value.trim() || null,
             verrouille_type: document.getElementById("eDuckLock").checked,
             quantite: Number(document.getElementById("eDuckQte").value) || 1,
             motif_sortie: document.getElementById("eDuckMotif").value.trim() || null,
