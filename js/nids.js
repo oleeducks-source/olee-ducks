@@ -36,6 +36,17 @@ const DUREE_INCUBATION_JOURS = 36; // canard de Barbarie (muscovy) — 35 à 37 
 
 let premierChargementCycles = true;
 
+// Un cycle de nid produit AU PLUS un seul lot de canetons dans
+// l'inventaire — identifié par un ID dérivé du cycle lui-même. Toutes les
+// vagues d'éclosion successives (relevés partiels + archivage final)
+// s'accumulent dans CE MÊME document via `increment`, plutôt que de créer
+// un nouveau lot à chaque relevé. Cela permet de récupérer / mettre à
+// jour ce lot de façon fiable, sans requête, depuis n'importe quel point
+// du code (relevé partiel, archivage, rattrapage manuel).
+function cycleDuckDocRef(cycle) {
+  return doc(db, "ducks", `eclosion_${cycle.id}`);
+}
+
 export function initNests() {
   document.getElementById("openNestGridModalBtn")?.addEventListener("click", () => {
     document.querySelector('.nav-item[data-page="nids"]')?.click();
@@ -125,6 +136,10 @@ export function initNests() {
     if (inp) inp.value = "";
     renderEnCoursList();
   });
+
+  // ------ Historique brut des pontes (onglet Statistiques) ------
+  document.getElementById("pHistFrom")?.addEventListener("change", renderPonteHistory);
+  document.getElementById("pHistTo")?.addEventListener("change", renderPonteHistory);
 }
 
 function showNidsView() {
@@ -388,19 +403,13 @@ async function openArchiveDetailModal(c) {
     onMount: async () => {
       if (c.statut !== "eclos" || !(c.nombre_eclos > 0)) return;
       const zone = document.getElementById("fArchInventaireZone");
-      // Détecte un ajout déjà fait — soit via le lien automatique
-      // (issu_du_cycle_id), soit un ajout manuel antérieur à cette
-      // fonctionnalité (même date d'entrée que l'archivage + même
-      // quantité que le nombre de canetons éclos ce jour-là).
-      const canetonsSnap = await getDocs(query(ducksCol, where("type", "==", "caneton")));
-      const dateFinCycle = c.date_fin?.toDate ? c.date_fin.toDate() : new Date(c.date_fin);
-      const dejaAjoute = canetonsSnap.docs.some(docSnap => {
-        const dd = docSnap.data();
-        if (dd.issu_du_cycle_id === c.id) return true;
-        if (!dd.date_entree || Number(dd.quantite) !== Number(c.nombre_eclos)) return false;
-        const de = dd.date_entree?.toDate ? dd.date_entree.toDate() : new Date(dd.date_entree);
-        return de.getFullYear() === dateFinCycle.getFullYear() && de.getMonth() === dateFinCycle.getMonth() && de.getDate() === dateFinCycle.getDate();
-      });
+      // ⚠️ SIMPLIFIÉ (août 2026) : depuis le passage au lot d'inventaire
+      // unique par cycle (voir cycleDuckDocRef), il suffit de vérifier si
+      // ce document précis existe déjà — plus besoin d'une recherche
+      // heuristique par date/quantité sur toute la collection.
+      const duckRef = cycleDuckDocRef(c);
+      const existing = await getDoc(duckRef);
+      const dejaAjoute = existing.exists();
       zone.innerHTML = `
         <div class="spacer-m"></div>
         <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
@@ -414,7 +423,7 @@ async function openArchiveDetailModal(c) {
       const addBtn = document.getElementById("fArchAddInventaire");
       if (addBtn) addBtn.addEventListener("click", async () => {
         try {
-          await addDoc(ducksCol, {
+          await setDoc(duckRef, {
             type: "caneton", quantite: Number(c.nombre_eclos) || 0,
             date_entree: c.date_fin || new Date(), date_naissance: c.date_fin || new Date(),
             bague_couleur: null, numero_bague: null,
@@ -474,8 +483,64 @@ function renderDailyAverages() {
   `;
 }
 
+// ⚠️ NOUVEAU (août 2026) : historique BRUT du nombre d'œufs pondus dans
+// le temps, indépendant des éclosions et des pertes. S'appuie sur
+// "pontes_journalieres" (déjà tenu à jour à chaque relevé de nid), en ne
+// retenant QUE les mouvements positifs (ponte initiale + relevés
+// quotidiens) — les corrections négatives (erreurs de saisie) sont
+// exclues, car elles ne représentent pas des œufs réellement pondus.
+// Permet de répondre à "combien d'œufs avons-nous eu entre telle et
+// telle date ?", peu importe ce qu'ils sont devenus depuis (éclos,
+// perdus, encore en couvaison).
+function renderPonteHistory() {
+  const fromEl = document.getElementById("pHistFrom");
+  const toEl = document.getElementById("pHistTo");
+  const summaryEl = document.getElementById("ponteHistorySummary");
+  const breakdownEl = document.getElementById("ponteHistoryBreakdown");
+  if (!summaryEl || !breakdownEl) return;
+  if (toEl && !toEl.value) toEl.value = todayInputValue(); // par défaut : jusqu'à aujourd'hui
+
+  const ajouts = pontesLog.filter(p => (Number(p.quantite) || 0) > 0);
+
+  const fromVal = fromEl?.value ? new Date(fromEl.value + "T00:00:00") : null;
+  const toVal = toEl?.value ? new Date(toEl.value + "T23:59:59") : null;
+  const filtered = ajouts.filter(p => {
+    const d = toDateObj(p.date);
+    if (fromVal && d < fromVal) return false;
+    if (toVal && d > toVal) return false;
+    return true;
+  });
+
+  const total = filtered.reduce((a, p) => a + (Number(p.quantite) || 0), 0);
+  const periodeLabel = fromVal && toVal
+    ? `du ${formatDate(fromVal)} au ${formatDate(toVal)}`
+    : fromVal ? `depuis le ${formatDate(fromVal)}`
+    : toVal ? `jusqu'au ${formatDate(toVal)}`
+    : "sur toute la période enregistrée";
+
+  summaryEl.innerHTML = `
+    <div class="row"><div class="row-main"><span class="row-title">Total d'œufs enregistrés</span><span class="row-sub">${periodeLabel}</span></div><span class="row-value pos">${total}</span></div>
+  `;
+
+  // Répartition mensuelle pour une lecture rapide des tendances sur les
+  // périodes un peu longues.
+  const byMonth = {};
+  filtered.forEach(p => {
+    const d = toDateObj(p.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    byMonth[key] = (byMonth[key] || 0) + (Number(p.quantite) || 0);
+  });
+  const months = Object.keys(byMonth).sort();
+  breakdownEl.innerHTML = months.length ? months.map(key => {
+    const [y, m] = key.split("-");
+    const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    return `<div class="row"><div class="row-main"><span class="row-title">${label.charAt(0).toUpperCase() + label.slice(1)}</span></div><span class="row-value">${byMonth[key]}</span></div>`;
+  }).join("") : `<p class="subtle">Aucun enregistrement de ponte sur cette période.</p>`;
+}
+
 function renderStats() {
   renderDailyAverages();
+  renderPonteHistory();
   const topEl = document.getElementById("topNestsList");
   const globalEl = document.getElementById("globalHatchStats");
   if (!topEl || !globalEl) return;
@@ -602,14 +667,17 @@ function openNestModal(n) {
     <button class="btn yolk" id="fToCouvaison">Démarrer la couvaison</button>
     ` : `
     ${cycle.nombre_eclos ? `<p class="subtle" style="margin-bottom:8px;">Déjà enregistré pour ce cycle : <b>${cycle.nombre_eclos}</b> caneton(s) éclos.</p>` : ""}
-    <div class="field"><label>Canetons éclos à ce relevé</label><input type="number" id="fEclos" value="0" min="0"></div>
-    <p class="subtle" style="margin:-4px 0 10px;">Une couvée de canard de Barbarie éclot souvent en plusieurs vagues, étalées sur plusieurs jours. Enregistrez chaque relevé au fur et à mesure — le nid ne sera archivé que lorsque vous cliquerez sur "Archiver".</p>
+    <div class="field-row">
+      <div class="field"><label>Canetons éclos à ce relevé</label><input type="number" id="fEclos" value="0" min="0"></div>
+      <div class="field"><label>Date de ce relevé</label><input type="date" id="fEclosDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
+    </div>
+    <p class="subtle" style="margin:-4px 0 10px;">Une couvée de canard de Barbarie éclot souvent en plusieurs vagues, étalées sur plusieurs jours. Enregistrez chaque relevé au fur et à mesure — <b>les canetons sont ajoutés au cheptel (tableau de bord inclus) dès ce relevé</b>, sans attendre l'archivage du nid.</p>
     <div class="field-row">
       <button class="btn secondary" id="fEclosAddBtn">🐣 Enregistrer (sans archiver)</button>
     </div>
     <div class="spacer-s"></div>
-    <div class="field"><label>Date d'éclosion (antidatable)</label><input type="date" id="fArchiveDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
-    <p class="subtle" style="margin:-4px 0 10px;">Utilisée comme date de naissance des canetons ajoutés à l'inventaire — modifiez-la si l'éclosion a eu lieu un autre jour que celui de la saisie.</p>
+    <div class="field"><label>Date d'éclosion finale (antidatable)</label><input type="date" id="fArchiveDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
+    <p class="subtle" style="margin:-4px 0 10px;">À l'archivage, cette date devient la date de naissance définitive de TOUS les canetons de ce nid (toutes vagues confondues) — modifiez-la si la dernière éclosion a eu lieu un autre jour que celui de la saisie.</p>
     <button class="btn yolk" id="fFinish">🏁 Archiver ce nid (cycle terminé)</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="fEchec">Déclarer un échec de couvaison</button>
@@ -660,6 +728,11 @@ function openNestModal(n) {
           const snap = await getDocs(query(pontesCol, where("cycle_id", "==", cycle.id)));
           const batch = writeBatch(db);
           snap.docs.forEach(d => batch.delete(d.ref));
+          // Les canetons déjà versés au cheptel depuis ce cycle (relevés
+          // partiels — voir fEclosAddBtn) doivent disparaître avec lui : un
+          // nid réinitialisé est une erreur de saisie pure, pas un vrai
+          // événement d'élevage.
+          batch.delete(cycleDuckDocRef(cycle));
           batch.delete(doc(db, "nest_cycles", cycle.id));
           batch.set(doc(db, "nests", String(n)), { numero: n, statut_actuel: "libre", cycle_actuel_id: null });
           await batch.commit();
@@ -677,20 +750,45 @@ function openNestModal(n) {
         } catch (e) { toast("Erreur : " + e.message); }
       });
 
-      // Enregistre une vague d'éclosion SANS archiver le nid — le cycle
-      // reste actif ("couvaison") pour permettre d'autres relevés les
-      // jours suivants, jusqu'à l'archivage explicite.
+      // ⚠️ NOUVEAU (août 2026) : enregistre une vague d'éclosion SANS
+      // archiver le nid — le cycle reste actif ("couvaison") pour
+      // permettre d'autres relevés les jours suivants. Les canetons de
+      // cette vague sont désormais versés IMMÉDIATEMENT dans l'inventaire
+      // (donc dans le total du tableau de bord), avec la date du relevé
+      // comme date de naissance provisoire. Toutes les vagues d'un même
+      // cycle partagent un seul lot d'inventaire (voir cycleDuckDocRef),
+      // dont la quantité s'incrémente à chaque relevé ; sa date de
+      // naissance sera figée définitivement à l'archivage du nid.
       const eclosAddBtn = document.getElementById("fEclosAddBtn");
       if (eclosAddBtn) eclosAddBtn.addEventListener("click", async () => {
         const q = Number(document.getElementById("fEclos").value) || 0;
+        const dateReleveInput = document.getElementById("fEclosDate")?.value;
+        const dateReleve = dateReleveInput ? new Date(dateReleveInput) : new Date();
         if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
         try {
           await updateDoc(doc(db, "nest_cycles", cycle.id), { nombre_eclos: increment(q) });
           await addDoc(eclosionsCol, {
-            nid_numero: n, cycle_id: cycle.id, date: new Date(),
+            nid_numero: n, cycle_id: cycle.id, date: dateReleve,
             quantite: q, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
           });
-          toast(`${q} éclosion(s) enregistrée(s) — nid ${n} toujours actif ✓`);
+
+          const duckRef = cycleDuckDocRef(cycle);
+          const existing = await getDoc(duckRef);
+          if (existing.exists()) {
+            await updateDoc(duckRef, { quantite: increment(q) });
+          } else {
+            await setDoc(duckRef, {
+              type: "caneton", quantite: q,
+              date_entree: dateReleve, date_naissance: dateReleve,
+              bague_couleur: null, numero_bague: null,
+              notes: `Éclosion nid n° ${n}`,
+              statut: "actif", date_sortie: null, motif_sortie: null,
+              issu_du_nid: n, issu_du_cycle_id: cycle.id,
+              cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+            });
+          }
+
+          toast(`${q} éclosion(s) enregistrée(s) et ajoutée(s) au cheptel — nid ${n} toujours actif ✓`);
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
@@ -717,14 +815,17 @@ function openNestModal(n) {
 // total déjà accumulé via les relevés successifs (fEclosAddBtn) — permet
 // d'enregistrer une dernière vague d'éclosion en même temps que
 // l'archivage, en un seul geste. `dateFinChoisie` est la date d'éclosion
-// (ou d'échec) saisie dans le formulaire — antidatable, elle sert aussi
-// de date de naissance pour les canetons créés dans l'inventaire.
+// (ou d'échec) saisie dans le formulaire — antidatable.
 //
-// ⚠️ CORRECTIF (août 2026) : jusqu'ici, l'archivage d'un cycle "éclos" ne
-// créait AUCUN enregistrement dans l'inventaire des canards — les
-// canetons nés n'apparaissaient nulle part dans le décompte du cheptel.
-// Un lot de canetons est maintenant automatiquement créé dans
-// l'inventaire à l'archivage, avec le nid d'origine tracé.
+// ⚠️ CORRECTIF (août 2026) : l'archivage n'est plus la condition pour que
+// les canetons apparaissent dans le cheptel — c'est fait dès le premier
+// relevé (voir fEclosAddBtn). L'archivage a maintenant deux rôles :
+// 1) ajouter, si besoin, une toute dernière vague saisie ici sans passer
+//    par "Enregistrer (sans archiver)" ;
+// 2) FIGER la date de naissance définitive de TOUS les canetons de ce
+//    nid (toutes vagues confondues, un seul lot d'inventaire) sur la
+//    date d'éclosion finale choisie — même en cas d'échec partiel, les
+//    canetons déjà nés avant l'échec conservent leur place au cheptel.
 async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChoisie) {
   try {
     const totalEclos = (Number(cycle.nombre_eclos) || 0) + (Number(eclosSupplementaires) || 0);
@@ -740,19 +841,29 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChois
     });
     await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
 
-    if (statut === "eclos" && totalEclos > 0) {
-      await addDoc(ducksCol, {
-        type: "caneton", quantite: totalEclos,
-        date_entree: dateFin, date_naissance: dateFin,
-        bague_couleur: null, numero_bague: null,
-        notes: `Éclosion nid n° ${n}`,
-        statut: "actif", date_sortie: null, motif_sortie: null,
-        issu_du_nid: n, issu_du_cycle_id: cycle.id,
-        cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-      });
+    if (totalEclos > 0) {
+      const duckRef = cycleDuckDocRef(cycle);
+      const existing = await getDoc(duckRef);
+      if (existing.exists()) {
+        const updatePayload = { date_naissance: dateFin, date_entree: dateFin };
+        if (eclosSupplementaires > 0) updatePayload.quantite = increment(eclosSupplementaires);
+        await updateDoc(duckRef, updatePayload);
+      } else {
+        // Aucun relevé partiel n'avait été fait pour ce cycle : toute la
+        // couvée est déclarée d'un coup à l'archivage.
+        await setDoc(duckRef, {
+          type: "caneton", quantite: totalEclos,
+          date_entree: dateFin, date_naissance: dateFin,
+          bague_couleur: null, numero_bague: null,
+          notes: `Éclosion nid n° ${n}`,
+          statut: "actif", date_sortie: null, motif_sortie: null,
+          issu_du_nid: n, issu_du_cycle_id: cycle.id,
+          cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+        });
+      }
     }
 
-    toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) ajoutés à l'inventaire ✓` : `Échec enregistré — nid ${n} archivé`);
+    toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) au total, naissance fixée au ${formatDate(dateFin)} ✓` : `Échec enregistré — nid ${n} archivé (${totalEclos} caneton(s) déjà nés conservés au cheptel)`);
     closeModal();
   } catch (e) { toast("Erreur : " + e.message); }
 }
