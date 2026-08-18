@@ -667,6 +667,7 @@ function openNestModal(n) {
     <button class="btn yolk" id="fToCouvaison">Démarrer la couvaison</button>
     ` : `
     ${cycle.nombre_eclos ? `<p class="subtle" style="margin-bottom:8px;">Déjà enregistré pour ce cycle : <b>${cycle.nombre_eclos}</b> caneton(s) éclos.</p>` : ""}
+    <div id="fRattrapageZone"></div>
     <div class="field-row">
       <div class="field"><label>Canetons éclos à ce relevé</label><input type="number" id="fEclos" value="0" min="0"></div>
       <div class="field"><label>Date de ce relevé</label><input type="date" id="fEclosDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
@@ -686,6 +687,47 @@ function openNestModal(n) {
     <button class="btn danger" id="fResetNest">↺ Réinitialiser ce nid (mauvais nid sélectionné)</button>
   `, {
     onMount: () => {
+      // ⚠️ RATTRAPAGE (août 2026) : pour un cycle déjà en couvaison AVANT
+      // la mise en place du versement immédiat au cheptel (voir
+      // fEclosAddBtn), des canetons ont pu être enregistrés sur le
+      // cycle (nombre_eclos) sans jamais atterrir dans l'inventaire. On
+      // détecte ce cas précis — et uniquement celui-là, pour ne jamais
+      // créer de doublon — afin de proposer un rattrapage en un clic,
+      // avec une date choisie (par défaut aujourd'hui, antidatable).
+      if (cycle.statut === "couvaison" && Number(cycle.nombre_eclos) > 0) {
+        const zone = document.getElementById("fRattrapageZone");
+        if (zone) {
+          getDoc(cycleDuckDocRef(cycle)).then(existing => {
+            if (existing.exists()) return; // déjà au cheptel, rien à faire
+            zone.innerHTML = `
+              <div class="card" style="background:#FCEBD9; border:none; margin-bottom:12px;">
+                <h3 style="font-size:14px; margin-bottom:2px;">🐥 Canetons pas encore au cheptel</h3>
+                <p class="subtle" style="margin:0 0 10px;"><b>${cycle.nombre_eclos}</b> caneton(s) ont été enregistrés sur ce nid avant la mise en place du versement automatique — ils ne figurent pas encore dans l'inventaire ni le tableau de bord. Ajoutez-les maintenant, avec la date de naissance de votre choix.</p>
+                <div class="field"><label>Date de naissance à utiliser</label><input type="date" id="fRattrapageDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
+                <button class="btn yolk" id="fRattrapageBtn">Ajouter ${cycle.nombre_eclos} caneton(s) au cheptel</button>
+              </div>
+            `;
+            document.getElementById("fRattrapageBtn").addEventListener("click", async () => {
+              const dateVal = document.getElementById("fRattrapageDate").value;
+              const dateChoisie = dateVal ? new Date(dateVal) : new Date();
+              try {
+                await setDoc(cycleDuckDocRef(cycle), {
+                  type: "caneton", quantite: Number(cycle.nombre_eclos) || 0,
+                  date_entree: dateChoisie, date_naissance: dateChoisie,
+                  bague_couleur: null, numero_bague: null,
+                  notes: `Éclosion nid n° ${n} (rattrapage manuel)`,
+                  statut: "actif", date_sortie: null, motif_sortie: null,
+                  issu_du_nid: n, issu_du_cycle_id: cycle.id,
+                  cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+                });
+                toast(`${cycle.nombre_eclos} caneton(s) ajoutés au cheptel ✓`);
+                closeModal();
+              } catch (e) { toast("Erreur : " + e.message); }
+            });
+          }).catch(e => console.error("Erreur vérification rattrapage :", e));
+        }
+      }
+
       const addBtn = document.getElementById("fAddBtn");
       if (addBtn) addBtn.addEventListener("click", async () => {
         const q = Number(document.getElementById("fAddOeufs").value) || 0;
@@ -777,8 +819,15 @@ function openNestModal(n) {
           if (existing.exists()) {
             await updateDoc(duckRef, { quantite: increment(q) });
           } else {
+            // Cas limite : si ce cycle avait déjà des canetons enregistrés
+            // (cycle.nombre_eclos) AVANT ce relevé mais qu'aucun lot
+            // d'inventaire n'existe encore (données antérieures au
+            // versement immédiat), on les inclut dans la création du lot
+            // pour ne rien perdre — plutôt que de ne compter que cette
+            // seule vague.
+            const eclosDejaSurLeCycle = Number(cycle.nombre_eclos) || 0;
             await setDoc(duckRef, {
-              type: "caneton", quantite: q,
+              type: "caneton", quantite: eclosDejaSurLeCycle + q,
               date_entree: dateReleve, date_naissance: dateReleve,
               bague_couleur: null, numero_bague: null,
               notes: `Éclosion nid n° ${n}`,
