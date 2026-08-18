@@ -288,7 +288,10 @@
   <section id="page-canards" class="page hidden">
     <div class="section-title">
       <div><span class="eyebrow">Élevage</span><h2>Inventaire des canards</h2></div>
-      <button class="btn secondary small" id="openCanetonsArchiveBtn">Archive des canetons →</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+        <button class="btn secondary small" id="invLotModeBtn">🏷️ Regrouper en lot</button>
+        <button class="btn secondary small" id="openCanetonsArchiveBtn">Archive des canetons →</button>
+      </div>
     </div>
     <div class="kpi-grid" id="invKpis"></div>
     <div class="spacer-m"></div>
@@ -296,11 +299,22 @@
     <div class="filters-row">
       <select id="invFilterType" class="filter-select"></select>
       <select id="invFilterStatut" class="filter-select"></select>
+      <div id="invFilterLotWrap" class="hidden" style="flex:1 1 140px;">
+        <select id="invFilterLot" class="filter-select"></select>
+      </div>
     </div>
     <div class="spacer-s"></div>
     <div class="field"><input type="text" id="invSearch" placeholder="🔎 N° de bague, lot, intervenant…"></div>
     <div class="spacer-m"></div>
     <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
+    <div class="spacer-m"></div>
+    <div id="invSelectionBar" class="selection-bar hidden">
+      <span id="invSelectionCount">0 sélectionné(s)</span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn secondary small" id="invCancelSelectionBtn">Annuler</button>
+        <button class="btn yolk small" id="invAssignLotBtn">Assigner à un lot</button>
+      </div>
+    </div>
   </section>
 
   <!-- ===================== NIDS (onglet indépendant) ===================== -->
@@ -364,6 +378,17 @@
       <div class="card">
         <h3 style="font-size:15px; margin-bottom:10px;">Taux d'éclosion global</h3>
         <div id="globalHatchStats"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:4px;">📜 Historique brut des pontes</h3>
+        <p class="subtle" style="margin:0 0 10px;">Comptage purement historique : additionne uniquement les œufs enregistrés comme pondus sur la période choisie, sans tenir compte des éclosions ni des pertes. Sert à savoir combien d'œufs la ferme a produits entre deux dates.</p>
+        <div class="field-row">
+          <div class="field"><label>Du</label><input type="date" id="pHistFrom"></div>
+          <div class="field"><label>Au</label><input type="date" id="pHistTo"></div>
+        </div>
+        <div id="ponteHistorySummary"></div>
+        <div class="spacer-s"></div>
+        <div id="ponteHistoryBreakdown"></div>
       </div>
     </div>
 
