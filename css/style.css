@@ -260,6 +260,24 @@ select.filter-select:focus{border-color:var(--pond-400);}
 }
 .nid-date-group-head .row-title{font-size:13.5px;}
 
+/* ---------- Sélection multiple + regroupement en lot (Canards) ---------- */
+.selection-bar{
+  position:sticky; bottom:74px; z-index:5;
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  background:var(--pond-950); color:var(--white);
+  border-radius:var(--radius-m); padding:12px 16px;
+  box-shadow:0 6px 20px rgba(0,0,0,.18);
+}
+.selection-bar #invSelectionCount{font-size:13px; font-weight:700;}
+.row-select-checkbox{
+  width:20px; height:20px; margin-right:2px; accent-color:var(--pond-600); flex:0 0 auto;
+}
+.lot-chip{
+  display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.02em;
+  padding:2px 7px; border-radius:99px; background:var(--sage-100); color:var(--pond-600);
+  margin-left:6px; vertical-align:middle;
+}
+
 .btn{
   display:inline-flex; align-items:center; justify-content:center; gap:6px;
   border:none; border-radius:var(--radius-s); padding:11px 16px;
