@@ -808,6 +808,8 @@ function openFormulationDetail(f) {
     <div class="spacer-m"></div>
     <button class="btn secondary" id="fFormPdf">📤 Exporter en PDF</button>
     <div class="spacer-s"></div>
+    <button class="btn secondary" id="fFormScale">⚖️ Mettre à l'échelle (changer la quantité)</button>
+    <div class="spacer-s"></div>
     <button class="btn secondary" id="fFormEdit">✏️ Modifier</button>
     <div class="spacer-s"></div>
     <button class="btn secondary" id="fFormDuplicate">📄 Dupliquer</button>
@@ -817,11 +819,162 @@ function openFormulationDetail(f) {
   openModal(f.nom, body, {
     onMount: () => {
       document.getElementById("fFormPdf").addEventListener("click", () => exporterFormulationPDF(f));
+      document.getElementById("fFormScale").addEventListener("click", () => openFormulationScaleModal(f));
       document.getElementById("fFormEdit").addEventListener("click", () => openFormulationModal(f, "edit"));
       document.getElementById("fFormDuplicate").addEventListener("click", () => openFormulationModal(f, "duplicate"));
       document.getElementById("fFormDelete").addEventListener("click", () => {
         closeModal();
         confirmerSuppression(f.id, `Formulation "${f.nom}"`, () => deleteDoc(doc(db, "formulations", f.id)), renderFormulationsList);
+      });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------
+// ⚖️ Mise à l'échelle d'une formulation existante (août 2026)
+//
+// Recalcule automatiquement la quantité de CHAQUE ingrédient au prorata
+// exact de la recette d'origine, pour atteindre une nouvelle quantité
+// totale choisie (ex. passer de 500 kg à 1000 ou 1500 kg) — sans jamais
+// avoir à ressaisir manuellement un seul ingrédient. Le prix de revient
+// au kg reste strictement identique à la recette d'origine (ingrédients
+// ET main d'œuvre sont mis à l'échelle par le même facteur), seul le
+// volume produit change.
+//
+// Le résultat est enregistré comme une NOUVELLE formulation (jamais en
+// écrasant l'originale, qui reste consultable telle quelle), avec les
+// mêmes options de liaison Finances / Stock qu'une création classique.
+// ---------------------------------------------------------------------
+function recalcScalePreview(f) {
+  const totalKgOriginal = f.total_kg || 0;
+  const targetKg = Number(document.getElementById("fScaleKg").value) || 0;
+  const factor = totalKgOriginal > 0 ? targetKg / totalKgOriginal : 0;
+
+  const lignesScaled = (f.lignes || []).map(l => {
+    const qte = Math.round((Number(l.quantite_kg) || 0) * factor * 100) / 100;
+    const pu = Number(l.prix_unitaire) || 0;
+    return { ingredient: l.ingredient, prix_unitaire: pu, quantite_kg: qte, cout_total: Math.round(pu * qte) };
+  });
+  const totalMatieres = lignesScaled.reduce((a, l) => a + l.cout_total, 0);
+  const totalKg = lignesScaled.reduce((a, l) => a + l.quantite_kg, 0);
+  const mainOeuvreScaled = Math.round((Number(f.main_oeuvre) || 0) * factor);
+  const totalGeneral = totalMatieres + mainOeuvreScaled;
+  const prixRevientKg = totalKg ? totalGeneral / totalKg : 0;
+
+  const previewEl = document.getElementById("fScalePreview");
+  if (previewEl) {
+    previewEl.innerHTML = totalKgOriginal > 0 ? lignesScaled.map(l => {
+      const pct = totalKg ? (l.quantite_kg / totalKg) * 100 : 0;
+      return `<div class="row"><div class="row-main"><span class="row-title">${escapeHtml(l.ingredient)}</span><span class="row-sub">${pct.toFixed(1)}% du mélange (identique à l'original)</span></div><span class="row-value">${l.quantite_kg} kg</span></div>`;
+    }).join("") : `<p class="subtle">Cette formulation n'a pas de quantité totale connue — impossible de calculer un facteur d'échelle.</p>`;
+  }
+  const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setTxt("fScaleTotalMatieres", formatFCFA(totalMatieres));
+  setTxt("fScaleTotalKg", totalKg.toFixed(1) + " kg");
+  setTxt("fScaleTotalGeneral", formatFCFA(totalGeneral));
+  setTxt("fScalePrixKg", formatFCFA(Math.round(prixRevientKg)));
+
+  return { lignesScaled, totalMatieres, totalKg, mainOeuvreScaled, totalGeneral, prixRevientKg };
+}
+
+function openFormulationScaleModal(f) {
+  const totalKgOriginal = f.total_kg || 0;
+  const aliments = allItems.filter(i => i.type === "aliment");
+  const matchAuto = aliments.find(i => i.nom.toLowerCase() === f.nom.toLowerCase());
+
+  const body = `
+    <p class="subtle">Change la quantité totale de <b>${escapeHtml(f.nom)}</b> (actuellement <b>${totalKgOriginal.toFixed(1)} kg</b>) en conservant exactement les proportions de chaque ingrédient — aucune saisie manuelle nécessaire, le prix de revient au kg reste identique.</p>
+    <div class="field"><label>Nouvelle quantité totale (kg)</label><input type="number" id="fScaleKg" min="0" step="0.1" value="${(totalKgOriginal * 2).toFixed(1)}"></div>
+    <div class="field"><label>Nom de la nouvelle formulation</label><input type="text" id="fScaleNom" value="${escapeHtml(f.nom)}"></div>
+    <div class="field"><label>Date</label><input type="date" id="fScaleDate" value="${todayInputValue()}"></div>
+    <div class="spacer-s"></div>
+    <h3 style="font-size:13.5px; margin-bottom:6px;">Aperçu des quantités recalculées</h3>
+    <div id="fScalePreview"></div>
+    <div class="spacer-m"></div>
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <div class="row"><div class="row-main"><span class="row-title">Total matières premières</span></div><span class="row-value" id="fScaleTotalMatieres">—</span></div>
+      <div class="row"><div class="row-main"><span class="row-title">Total kg</span></div><span class="row-value" id="fScaleTotalKg">—</span></div>
+      <div class="row"><div class="row-main"><span class="row-title">Total général</span></div><span class="row-value" id="fScaleTotalGeneral">—</span></div>
+      <div class="row"><div class="row-main"><span class="row-title">Prix de revient / kg</span></div><span class="row-value pos" id="fScalePrixKg">—</span></div>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fScaleLinkFinance" style="width:auto;" checked><label style="margin:0;">Enregistrer aussi la dépense correspondante dans Finances</label></div>
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" id="fScaleLinkStock" style="width:auto;" checked><label style="margin:0;">Ajouter la quantité produite au stock</label></div>
+    <div class="field" id="fScaleStockTargetWrap">
+      <label>Article de stock à approvisionner</label>
+      <select id="fScaleStockTarget">
+        <option value="__new__" ${!matchAuto ? "selected" : ""}>+ Créer un nouvel article de stock</option>
+        ${aliments.map(i => `<option value="${i.id}" ${matchAuto && matchAuto.id === i.id ? "selected" : ""}>${escapeHtml(i.nom)} — ${i.quantite_actuelle} ${i.unite} actuellement</option>`).join("")}
+      </select>
+    </div>
+    <button class="btn yolk" id="fScaleSave">Enregistrer la formulation mise à l'échelle</button>
+  `;
+
+  openModal(`Mettre à l'échelle : ${f.nom}`, body, {
+    onMount: () => {
+      recalcScalePreview(f);
+      document.getElementById("fScaleKg").addEventListener("input", () => recalcScalePreview(f));
+      document.getElementById("fScaleLinkStock").addEventListener("change", (e) => {
+        const wrap = document.getElementById("fScaleStockTargetWrap");
+        if (wrap) wrap.style.display = e.target.checked ? "" : "none";
+      });
+
+      document.getElementById("fScaleSave").addEventListener("click", async () => {
+        const nom = document.getElementById("fScaleNom").value.trim();
+        if (!nom) { toast("Indiquez un nom pour cette formulation"); return; }
+        const targetKg = Number(document.getElementById("fScaleKg").value) || 0;
+        if (targetKg <= 0) { toast("Indiquez une quantité totale supérieure à 0"); return; }
+        if (totalKgOriginal <= 0) { toast("La formulation d'origine n'a pas de quantité totale exploitable"); return; }
+
+        const { lignesScaled, totalMatieres, totalKg, mainOeuvreScaled, totalGeneral, prixRevientKg } = recalcScalePreview(f);
+        const dateVal = new Date(document.getElementById("fScaleDate").value);
+
+        try {
+          await addDoc(formulationsCol, {
+            nom, date: dateVal, lignes: lignesScaled, main_oeuvre: mainOeuvreScaled,
+            total_matieres: totalMatieres, total_kg: totalKg,
+            total_general: totalGeneral, prix_revient_kg: prixRevientKg,
+            mis_a_lechelle_depuis: f.id, facteur_echelle: totalKgOriginal > 0 ? targetKg / totalKgOriginal : null,
+            cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+          });
+
+          if (document.getElementById("fScaleLinkFinance").checked) {
+            await addDoc(collection(db, "finance_transactions"), {
+              type: "depense", categorie: "aliments", montant: Math.round(totalGeneral),
+              date: dateVal, description: `Formulation : ${nom} (${totalKg.toFixed(1)} kg, mise à l'échelle)`,
+              cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+            });
+          }
+
+          if (document.getElementById("fScaleLinkStock").checked) {
+            const target = document.getElementById("fScaleStockTarget").value;
+            if (target !== "__new__") {
+              await addDoc(movCol, {
+                item_id: target, type_mouvement: "entree", quantite: totalKg, date: dateVal,
+                motif: "formulation", cout_total: totalGeneral,
+                cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+              });
+              await updateDoc(doc(db, "stock_items", target), {
+                quantite_actuelle: increment(totalKg),
+                cout_unitaire_moyen: Math.round(prixRevientKg)
+              });
+            } else {
+              const newItemRef = await addDoc(itemsCol, {
+                nom, type: "aliment", unite: "kg", quantite_actuelle: totalKg,
+                seuil_alerte: 0, cout_unitaire_moyen: Math.round(prixRevientKg),
+                cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+              });
+              await addDoc(movCol, {
+                item_id: newItemRef.id, type_mouvement: "entree", quantite: totalKg, date: dateVal,
+                motif: "formulation", cout_total: totalGeneral,
+                cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+              });
+            }
+          }
+
+          toast(`Formulation "${nom}" créée à ${totalKg.toFixed(1)} kg ✓`);
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
       });
     }
   });
