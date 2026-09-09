@@ -50,25 +50,6 @@ function initUserChip() {
   document.getElementById("userChip").addEventListener("click", promptChangeUserName);
 }
 
-// Actions rapides du tableau de bord : chacune réutilise soit une modale
-// déjà exportée par son module métier, soit le bouton de navigation
-// existant (même convention que openPoidsBtn / openTachesBtn ci-dessus
-// dans pesees.js / taches.js). Aucune logique métier n'est dupliquée ici.
-function initQuickActions() {
-  document.getElementById("qaAddRecette")?.addEventListener("click", () => openAddFinanceModal("recette"));
-  document.getElementById("qaAddDepense")?.addEventListener("click", () => openAddFinanceModal("depense"));
-  document.getElementById("qaAddTache")?.addEventListener("click", () => openAddTacheModal());
-  document.getElementById("qaAddPesee")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="canards"]')?.click();
-  });
-  document.getElementById("openStocksFromWatchBtn")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="stocks"]')?.click();
-  });
-  document.getElementById("openInventaireFromDashBtn")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="canards"]')?.click();
-  });
-}
-
 function initFab() {
   document.getElementById("fabAdd").addEventListener("click", () => {
     switch (currentPage) {
@@ -131,7 +112,6 @@ function maskKey(k) {
 async function boot() {
   initNav();
   initFab();
-  initQuickActions();
   initUserChip();
   initConnectionStatus();
   setPage("dashboard");
