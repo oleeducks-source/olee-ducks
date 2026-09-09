@@ -202,36 +202,78 @@
       </div>
     </div>
 
-    <div class="spacer-m"></div>
-    <div class="card tasks-card" id="dashTasksCard">
-      <div class="tasks-card-top">
-        <div class="tasks-card-title">
-          <span class="voyant" id="tachesVoyant"></span>
-          <span class="eyebrow">Organisation</span>
-        </div>
-        <button class="btn secondary small" id="openTachesBtn">Voir tout →</button>
-      </div>
-      <h3 style="margin:4px 0 2px;">Tâches à faire</h3>
-      <div id="dashTachesResume"><p class="subtle">Chargement…</p></div>
+    <div class="section-title">
+      <div><span class="eyebrow">Aller vite</span><h2>Actions rapides</h2></div>
+    </div>
+    <div class="quick-actions">
+      <button class="quick-action" id="qaAddRecette">
+        <span class="qa-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+        <span>Recette</span>
+      </button>
+      <button class="quick-action" id="qaAddDepense">
+        <span class="qa-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg></span>
+        <span>Dépense</span>
+      </button>
+      <button class="quick-action" id="qaAddPesee">
+        <span class="qa-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-poids"/></svg></span>
+        <span>Pesée</span>
+      </button>
+      <button class="quick-action" id="qaAddTache">
+        <span class="qa-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>
+        <span>Tâche</span>
+      </button>
     </div>
 
-    <div class="spacer-m"></div>
-    <div class="card tasks-card" id="dashPoidsCard">
-      <div class="tasks-card-top">
-        <div class="tasks-card-title">
-          <span class="voyant idle" id="poidsVoyant"></span>
-          <span class="eyebrow">Santé du cheptel</span>
+    <div class="section-title">
+      <div><span class="eyebrow">Organisation &amp; santé</span><h2>À surveiller</h2></div>
+    </div>
+    <div class="watch-group">
+      <div class="card tasks-card" id="dashTasksCard">
+        <div class="tasks-card-top">
+          <div class="tasks-card-title">
+            <span class="voyant" id="tachesVoyant"></span>
+            <span class="eyebrow">Organisation</span>
+          </div>
+          <button class="btn secondary small" id="openTachesBtn">Voir tout →</button>
         </div>
-        <button class="btn secondary small" id="openPoidsBtn">Voir les lots →</button>
+        <h3 style="margin:4px 0 2px;">Tâches à faire</h3>
+        <div id="dashTachesResume">
+          <div class="skeleton-row"><div class="skeleton" style="width:34px;height:34px;"></div><div style="flex:1;"><div class="skeleton skeleton-line" style="width:70%;"></div><div class="skeleton skeleton-line" style="width:40%;"></div></div></div>
+        </div>
       </div>
-      <h3 style="margin:4px 0 2px;">Suivi pondéral</h3>
-      <div id="dashPoidsResume"><p class="subtle">Chargement…</p></div>
-      <div class="spacer-s"></div>
-      <button class="btn secondary small" id="voirTableauCroissanceBtn">📊 Tableau de croissance</button>
+
+      <div class="card tasks-card" id="dashPoidsCard">
+        <div class="tasks-card-top">
+          <div class="tasks-card-title">
+            <span class="voyant idle" id="poidsVoyant"></span>
+            <span class="eyebrow">Santé du cheptel</span>
+          </div>
+          <button class="btn secondary small" id="openPoidsBtn">Voir les lots →</button>
+        </div>
+        <h3 style="margin:4px 0 2px;">Suivi pondéral</h3>
+        <div id="dashPoidsResume">
+          <div class="skeleton-row"><div class="skeleton" style="width:34px;height:34px;"></div><div style="flex:1;"><div class="skeleton skeleton-line" style="width:65%;"></div><div class="skeleton skeleton-line" style="width:35%;"></div></div></div>
+        </div>
+        <div class="spacer-s"></div>
+        <button class="btn secondary small" id="voirTableauCroissanceBtn">📊 Tableau de croissance</button>
+      </div>
+
+      <div class="card watch-mini" id="dashStockWatchCard">
+        <div class="row-main" style="flex-direction:row; align-items:center;">
+          <div class="row-icon warn"><svg viewBox="0 0 40 40"><use href="#ic-cat-aliment"/></svg></div>
+          <div class="row-main">
+            <span class="row-title">Alertes stock</span>
+            <span class="row-sub"><b class="mono" id="kpiAlertesStockMirror">—</b> article(s) sous le seuil</span>
+          </div>
+        </div>
+        <button class="btn secondary small" id="openStocksFromWatchBtn">Voir →</button>
+      </div>
     </div>
 
-    <div class="spacer-m"></div>
-    <div class="kpi-grid">
+    <div class="section-title">
+      <div><span class="eyebrow">Vue d'ensemble</span><h2>Indicateurs clés</h2></div>
+    </div>
+    <div class="kpi-grid compact">
       <div class="kpi">
         <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-duck-canard"/></svg>
         <div class="kpi-label">Canards au total</div>
@@ -275,13 +317,14 @@
 
     <div class="section-title">
       <div><span class="eyebrow">Répartition</span><h2>Inventaire des canards</h2></div>
+      <button class="btn secondary small" id="openInventaireFromDashBtn">Voir tout →</button>
     </div>
     <div class="card" id="dashInventaireBreakdown"></div>
 
     <div class="section-title">
       <div><span class="eyebrow">Dernier mouvement</span><h2>Activité récente</h2></div>
     </div>
-    <div class="card" id="dashRecentActivity"></div>
+    <div class="card timeline" id="dashRecentActivity"></div>
   </section>
 
   <!-- ===================== CANARDS (onglet indépendant) ===================== -->
@@ -579,23 +622,23 @@
   <!-- Bottom nav -->
   <nav class="bottom-nav">
     <button class="nav-item active" data-page="dashboard">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg></span>
       Accueil
     </button>
     <button class="nav-item" data-page="canards">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg></span>
       Canards
     </button>
     <button class="nav-item" data-page="nids">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="13" rx="7" ry="8"/><path d="M6.5 8.5c1.5-3 4-4.5 5.5-4.5"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="13" rx="7" ry="8"/><path d="M6.5 8.5c1.5-3 4-4.5 5.5-4.5"/></svg></span>
       Nids
     </button>
     <button class="nav-item" data-page="finances">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg></span>
       Finances
     </button>
     <button class="nav-item" data-page="stocks">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></span>
       Stocks
     </button>
     <button class="nav-item" data-page="taches">
