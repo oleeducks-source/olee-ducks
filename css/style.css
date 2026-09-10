@@ -119,17 +119,22 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 .topbar .status{font-size:10.5px; opacity:.85; display:flex; align-items:center; gap:6px;}
 .user-chip{
   background:rgba(255,255,255,.1); border:none; color:var(--sage-50);
-  font-size:11px; font-weight:600; padding:4px 10px; border-radius:20px;
+  font-size:11px; font-weight:600; padding:8px 12px; border-radius:20px; min-height:38px;
   cursor:pointer; display:flex; align-items:center; gap:4px;
   transition:background .15s ease, transform .1s ease;
 }
 .user-chip:active{background:rgba(255,255,255,.2); transform:scale(.96);}
+/* Cercle de 38px pour l'aspect, zone tactile portée à 44px par le
+   ::after transparent — le seuil confortable pour un doigt, debout,
+   une main occupée. Même principe sur .eye-toggle et .modal-close. */
 .notif-bell{
   background:rgba(255,255,255,.1); border:none; color:var(--sage-50);
-  width:27px; height:27px; border-radius:50%; font-size:12.5px;
+  width:38px; height:38px; border-radius:50%; font-size:15px;
   cursor:pointer; display:flex; align-items:center; justify-content:center;
+  position:relative;
   opacity:.6; transition:background .15s ease, opacity .15s ease, transform .1s ease;
 }
+.notif-bell::after{content:""; position:absolute; inset:-3px; border-radius:50%;}
 .notif-bell:active{transform:scale(.9);}
 .notif-bell.on{opacity:1; background:var(--yolk-500); color:var(--pond-950);}
 
@@ -225,11 +230,13 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
 .balance-banner .kpi-label{font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; opacity:.9; font-weight:600;}
 .balance-banner-top{display:flex; align-items:center; justify-content:space-between; gap:8px;}
 .eye-toggle{
-  flex:none; width:30px; height:30px; border-radius:50%; border:none;
+  flex:none; width:36px; height:36px; border-radius:50%; border:none;
+  position:relative;
   background:rgba(255,255,255,.1); color:var(--sage-50);
   display:flex; align-items:center; justify-content:center; cursor:pointer;
   transition:background .15s ease, transform .1s ease;
 }
+.eye-toggle::after{content:""; position:absolute; inset:-4px; border-radius:50%;}
 .eye-toggle:active{background:rgba(255,255,255,.2); transform:scale(.9);}
 .balance-banner .amount{font-family:var(--font-display); font-size:36px; margin-top:8px; font-weight:700; letter-spacing:-.01em;}
 .balance-flash{
@@ -478,7 +485,8 @@ select.filter-select:focus{border-color:var(--pond-400);}
 @keyframes slideup{from{transform:translateY(40px); opacity:.4;} to{transform:none; opacity:1;}}
 .modal-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;}
 .modal-header h3{font-size:17.5px; font-weight:700;}
-.modal-close{background:var(--sage-100); border:none; width:30px; height:30px; border-radius:50%; font-size:16px; cursor:pointer; color:var(--ink-600); transition:background .15s ease, transform .1s ease;}
+.modal-close{background:var(--sage-100); border:none; width:36px; height:36px; border-radius:50%; font-size:16px; cursor:pointer; color:var(--ink-600); position:relative; transition:background .15s ease, transform .1s ease;}
+.modal-close::after{content:""; position:absolute; inset:-4px; border-radius:50%;}
 .modal-close:active{transform:scale(.9); background:var(--line-soft);}
 
 .empty-state{
