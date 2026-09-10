@@ -193,6 +193,7 @@ function renderList() {
     `;
   }
   animateCountUp("kpiAlertesStock", alerts.length);
+  animateCountUp("kpiAlertesStockMirror", alerts.length); // même valeur, reflétée dans la carte "À surveiller" du tableau de bord
 
   const listEl = document.getElementById("stockList");
   if (!listEl) return;
