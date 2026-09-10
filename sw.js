@@ -8,7 +8,7 @@
 // IMPORTANT : le numéro de version ci-dessous doit être incrémenté à
 // chaque mise à jour de ce fichier pour forcer le navigateur à détecter
 // un nouveau service worker et à vider l'ancien cache.
-const CACHE_NAME = "oleeducks-shell-v18";
+const CACHE_NAME = "oleeducks-shell-v19";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -28,8 +28,12 @@ const SHELL_FILES = [
   "./js/taches.js",
   "./js/pesees.js",
   "./js/sauvegarde.js",
+  "./js/restauration.js",
   "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./icons/icon-512.png",
+  "./icons/icon-512-maskable.png",
+  "./icons/icon.svg",
+  "./import-comptabilite.html"
 ];
 
 self.addEventListener("install", (event) => {
