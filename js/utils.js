@@ -333,7 +333,11 @@ export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+    // L'apostrophe simple et l'accent grave manquaient : plusieurs
+    // valeurs sont injectées dans des attributs HTML délimités par des
+    // apostrophes simples ou dans des gabarits de chaînes.
+    .replaceAll("'", "&#39;").replaceAll("`", "&#96;");
 }
 
 export function debounce(fn, ms) {

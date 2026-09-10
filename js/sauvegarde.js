@@ -1,36 +1,58 @@
 // =====================================================================
 // MODULE : SAUVEGARDE
 // Exporte l'intégralité des données de la ferme (toutes les collections
-// Firestore) dans un seul fichier JSON téléchargeable. Filet de sécurité
-// en cas de problème avec le projet Firebase — à faire une fois par mois
-// par exemple, et à conserver quelque part (email à soi-même, Drive…).
+// Firestore, sous-collections comprises) dans un seul fichier JSON
+// téléchargeable. Filet de sécurité en cas de problème avec le projet
+// Firebase — à faire une fois par semaine, et à conserver quelque part
+// (email à soi-même, Drive…).
 //
-// Après un export réussi, la date est enregistrée dans "app_meta/sauvegarde"
-// (partagée entre les 3 téléphones) et tout rappel de sauvegarde en
-// attente dans le module Tâches est automatiquement clôturé — voir
-// js/taches.js pour le rappel mensuel automatique associé.
+// Le bouton 💾 de la barre du haut ouvre une feuille qui rappelle la
+// date de la dernière sauvegarde (partagée entre les téléphones via
+// app_meta/sauvegarde) et propose les deux sens : télécharger, ou
+// restaurer depuis un fichier (voir js/restauration.js).
+//
+// Après un export réussi, la date est enregistrée dans
+// "app_meta/sauvegarde" et tout rappel de sauvegarde en attente dans le
+// module Tâches est automatiquement clôturé — voir js/taches.js pour le
+// rappel mensuel automatique associé.
 //
 // Écriture Firestore limitée à ces deux effets de bord ci-dessus ;
 // aucune donnée métier de la ferme n'est modifiée.
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
-  collection, getDocs, doc, setDoc, updateDoc, query, where, serverTimestamp
+  collection, getDocs, doc, getDoc, setDoc, updateDoc, query, where, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { toast, getUserName } from "./utils.js";
+import { toast, getUserName, openModal, closeModal, formatDateTime, escapeHtml } from "./utils.js";
 
-const COLLECTIONS = [
-  "ducks", "nests", "nest_cycles", "pontes_journalieres",
+// Liste complète des collections écrites par l'application. Trois
+// d'entre elles manquaient et n'étaient donc PAS sauvegardées :
+// eclosions_journalieres (js/nids.js), pesees_journalieres (js/pesees.js)
+// et app_meta. Toute nouvelle collection doit être ajoutée ici — sans
+// quoi le fichier présenté comme « l'intégralité des données » est
+// incomplet sans que rien ne le signale.
+export const COLLECTIONS = [
+  "ducks", "nests", "nest_cycles",
+  "pontes_journalieres", "eclosions_journalieres", "pesees_journalieres",
   "finance_transactions", "stock_items", "stock_mouvements", "formulations",
-  "accounts", "exercises", "journal_ecritures", "taches", "canetons_production"
+  "accounts", "exercises", "journal_ecritures",
+  "taches", "canetons_production", "app_meta"
+];
+
+// Sous-collections rattachées à un document parent : un getDocs sur une
+// collection ne les rapporte jamais. Les relevés quotidiens de ponte
+// vivent ici (voir README §9 : nest_cycles/{id}/suivi).
+const SOUS_COLLECTIONS = [
+  { parent: "nest_cycles", nom: "suivi" }
 ];
 
 export function initSauvegarde() {
-  document.getElementById("exportDonneesBtn")?.addEventListener("click", exporterToutesLesDonnees);
+  document.getElementById("exportDonneesBtn")?.addEventListener("click", ouvrirSauvegardeModal);
 }
 
 // Convertit récursivement les Timestamp Firestore en texte ISO lisible
 // (un JSON classique ne sait pas représenter un Timestamp Firestore).
+// js/restauration.js effectue la conversion inverse.
 function serialiser(valeur) {
   if (valeur && typeof valeur.toDate === "function") return valeur.toDate().toISOString();
   if (Array.isArray(valeur)) return valeur.map(serialiser);
@@ -42,31 +64,85 @@ function serialiser(valeur) {
   return valeur;
 }
 
-async function exporterToutesLesDonnees() {
-  const maintenant = new Date();
-  const estSamedi = maintenant.getDay() === 6;
-  if (!estSamedi) {
-    const confirme = confirm(
-      "Pour rappel, la sauvegarde se fait normalement chaque samedi à 12h.\n\n" +
-      "Vous êtes sur le point de sauvegarder un autre jour — si c'est volontaire, continuez ; sinon, annulez et revenez samedi."
-    );
-    if (!confirme) return;
-  }
+async function ouvrirSauvegardeModal() {
+  openModal("Sauvegarde des données", `
+    <div id="sauvDerniere"><p class="subtle">Lecture de la dernière sauvegarde…</p></div>
+    <div class="spacer-m"></div>
+    <button class="btn yolk" id="sauvExportBtn">Télécharger la sauvegarde</button>
+    <div class="spacer-s"></div>
+    <button class="btn secondary" id="sauvRestoreBtn">Restaurer depuis un fichier…</button>
+    <div class="spacer-m"></div>
+    <p class="subtle" style="margin:0;">Le fichier obtenu contient toutes les données de la ferme au format texte. Conservez-le hors du téléphone : envoyé par email à vous-même, il est déjà à l'abri.</p>
+  `, {
+    onMount: async () => {
+      document.getElementById("sauvExportBtn").addEventListener("click", exporterToutesLesDonnees);
+      document.getElementById("sauvRestoreBtn").addEventListener("click", async () => {
+        const { ouvrirRestaurationModal } = await import("./restauration.js");
+        ouvrirRestaurationModal();
+      });
 
+      const zone = document.getElementById("sauvDerniere");
+      try {
+        const snap = await getDoc(doc(db, "app_meta", "sauvegarde"));
+        if (!zone) return;
+        if (snap.exists() && snap.data().date) {
+          const d = snap.data();
+          const jours = Math.floor((Date.now() - d.date.toDate().getTime()) / 86400000);
+          const enRetard = jours >= 7;
+          zone.innerHTML = `
+            <div class="state-banner ${enRetard ? "warn" : "success"}">
+              <span class="glyph">${enRetard ? "⚠️" : "✓"}</span>
+              <span>Dernière sauvegarde ${formatDateTime(d.date)}${d.par ? " par " + escapeHtml(d.par) : ""}${jours > 0 ? ` — il y a ${jours} jour(s)` : " — aujourd'hui"}.${enRetard ? " Une sauvegarde hebdomadaire est recommandée." : ""}</span>
+            </div>`;
+        } else {
+          zone.innerHTML = `
+            <div class="state-banner warn">
+              <span class="glyph">⚠️</span>
+              <span>Aucune sauvegarde enregistrée pour l'instant.</span>
+            </div>`;
+        }
+      } catch (e) {
+        if (zone) zone.innerHTML = `<p class="subtle">Date de la dernière sauvegarde indisponible (${escapeHtml(e.message)}).</p>`;
+      }
+    }
+  });
+}
+
+async function exporterToutesLesDonnees() {
+  closeModal();
   toast("Préparation de la sauvegarde…");
   try {
     const data = {};
     let totalDocs = 0;
+
     for (const nomCollection of COLLECTIONS) {
       const snap = await getDocs(collection(db, nomCollection));
       data[nomCollection] = snap.docs.map(d => ({ id: d.id, ...serialiser(d.data()) }));
       totalDocs += snap.docs.length;
     }
+
+    // Sous-collections : parcourues à partir des documents parents déjà
+    // récupérés ci-dessus, et rangées à part pour que la restauration
+    // sache où les réécrire.
+    const sousCollections = {};
+    for (const { parent, nom } of SOUS_COLLECTIONS) {
+      for (const parentDoc of data[parent] || []) {
+        const snap = await getDocs(collection(db, parent, parentDoc.id, nom));
+        if (!snap.docs.length) continue;
+        sousCollections[`${parent}/${parentDoc.id}/${nom}`] =
+          snap.docs.map(d => ({ id: d.id, ...serialiser(d.data()) }));
+        totalDocs += snap.docs.length;
+      }
+    }
+    data._sous_collections = sousCollections;
+
     data._meta = {
       application: "Olee Ducks",
       exporte_le: new Date().toISOString(),
+      exporte_par: getUserName() || "Inconnu",
       nombre_total_enregistrements: totalDocs,
-      version_format: 1
+      collections: COLLECTIONS,
+      version_format: 2
     };
 
     const json = JSON.stringify(data, null, 2);
@@ -81,9 +157,9 @@ async function exporterToutesLesDonnees() {
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     toast(`Sauvegarde générée ✓ (${totalDocs} enregistrements) — conservez ce fichier en lieu sûr`);
 
-    // Trace partagée (visible par les 3 téléphones) pour que le rappel
-    // mensuel automatique de js/taches.js sache qu'une sauvegarde vient
-    // d'être faite ce mois-ci, et clôture toute tâche de rappel en attente.
+    // Trace partagée (visible par les autres téléphones) pour que le
+    // rappel automatique de js/taches.js sache qu'une sauvegarde vient
+    // d'être faite, et clôture toute tâche de rappel en attente.
     await setDoc(doc(db, "app_meta", "sauvegarde"), {
       date: serverTimestamp(),
       par: getUserName() || "Inconnu"

@@ -1,7 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
+  initializeFirestore,
   getFirestore,
-  enableIndexedDbPersistence
+  persistentLocalCache,
+  persistentMultipleTabManager
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getAuth,
@@ -19,14 +21,40 @@ const firebaseConfig = {
 };
 
 export const firebaseApp = initializeApp(firebaseConfig);
-export const db = getFirestore(firebaseApp);
-export const auth = getAuth(firebaseApp);
 
+// ---------------------------------------------------------------------
+// Cache persistant (IndexedDB) déclaré à l'initialisation de Firestore.
+//
+// Remplace enableIndexedDbPersistence(db), déprécié depuis Firebase 10 :
+// cette fonction renvoyait une promesse, donc le try/catch synchrone qui
+// l'entourait ne pouvait rien attraper. Un échec d'activation partait en
+// rejet non géré et le mode hors ligne — argument central de l'app pour
+// un usage en bâtiment sans réseau — était silencieusement absent.
+//
+// persistentMultipleTabManager autorise en plus plusieurs onglets
+// simultanés, ce que l'ancienne API refusait (elle désactivait alors la
+// persistance sur le deuxième onglet ouvert).
+//
+// persistanceHorsLigne indique à l'application si le cache est réellement
+// actif : app.js s'en sert pour avertir l'utilisateur au lieu de laisser
+// croire que la saisie hors réseau est protégée (fenêtre privée, stockage
+// refusé, navigateur non compatible).
+// ---------------------------------------------------------------------
+export let persistanceHorsLigne = true;
+
+let firestoreInstance;
 try {
-  enableIndexedDbPersistence(db);
+  firestoreInstance = initializeFirestore(firebaseApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
 } catch (e) {
-  console.warn("Persistance hors-ligne non disponible sur cet onglet :", e.code);
+  console.warn("Cache persistant indisponible — repli sur le cache mémoire :", e?.code || e);
+  persistanceHorsLigne = false;
+  firestoreInstance = getFirestore(firebaseApp);
 }
+
+export const db = firestoreInstance;
+export const auth = getAuth(firebaseApp);
 
 export const authReady = new Promise((resolve, reject) => {
   onAuthStateChanged(auth, (user) => {
