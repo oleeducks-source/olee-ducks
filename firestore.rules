@@ -1,14 +1,78 @@
 rules_version = '2';
+
+// =====================================================================
+// RÈGLES FIRESTORE — Olee Ducks
+// =====================================================================
+// Le README demandait de coller « le contenu du fichier firestore.rules
+// fourni dans ce projet » : ce fichier n'existait pas dans le dépôt.
+// Le voici, versionné, pour que les règles réellement en vigueur soient
+// vérifiables et redéployables :
+//
+//     firebase deploy --only firestore:rules
+//
+// Principe : l'application se connecte en Anonyme (voir
+// js/firebase-config.js). Toute lecture et toute écriture exigent donc
+// une session authentifiée, et SEULES les collections réellement
+// utilisées par l'application sont ouvertes. Tout le reste est refusé
+// par la règle finale — sans elle, une collection créée par erreur
+// resterait accessible.
+//
+// Limite assumée de l'authentification anonyme : quiconque connaît
+// l'URL de l'application peut obtenir un jeton valide. Ces règles
+// protègent contre l'accès direct à la base par un tiers, PAS contre un
+// visiteur de l'application elle-même. C'est la raison pour laquelle
+// l'audit recommande, en vague 3, de passer à des comptes nommés avec
+// deux rôles (saisie / validation) : les emplacements prévus pour ces
+// contrôles sont marqués ci-dessous.
+// =====================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Seuls les utilisateurs authentifiés (même anonymement) peuvent lire
-    // et écrire. L'authentification anonyme est activée automatiquement
-    // par l'application (voir js/firebase-config.js) : les 3 personnes
-    // de la ferme n'ont pas d'écran de connexion à remplir, mais un
-    // inconnu qui tomberait sur le lien sans jamais ouvrir l'app ne
-    // pourra pas lire ni modifier les données.
+
+    function connecte() {
+      return request.auth != null;
+    }
+
+    // ----- Élevage -------------------------------------------------
+    match /ducks/{doc}                  { allow read, write: if connecte(); }
+    match /nests/{doc}                  { allow read, write: if connecte(); }
+    match /canetons_production/{doc}    { allow read, write: if connecte(); }
+    match /pontes_journalieres/{doc}    { allow read, write: if connecte(); }
+    match /eclosions_journalieres/{doc} { allow read, write: if connecte(); }
+    match /pesees_journalieres/{doc}    { allow read, write: if connecte(); }
+
+    // Cycles de nid + relevés quotidiens rattachés (sous-collection)
+    match /nest_cycles/{cycle} {
+      allow read, write: if connecte();
+      match /suivi/{releve} {
+        allow read, write: if connecte();
+      }
+    }
+
+    // ----- Finances & stocks ---------------------------------------
+    match /finance_transactions/{doc} { allow read, write: if connecte(); }
+    match /stock_items/{doc}          { allow read, write: if connecte(); }
+    match /stock_mouvements/{doc}     { allow read, write: if connecte(); }
+    match /formulations/{doc}         { allow read, write: if connecte(); }
+
+    // ----- Comptabilité SYSCOHADA ----------------------------------
+    // À l'arrivée des rôles : restreindre `delete` et la validation
+    // d'une écriture au seul rôle « validation », la contre-passation
+    // (voir reverserEcriture dans js/comptabilite.js) restant ouverte
+    // à tous. Aujourd'hui les fonctions de renumérotation et de
+    // nettoyage du journal ont besoin de supprimer : ne pas fermer
+    // `delete` avant de les avoir adaptées.
+    match /accounts/{doc}          { allow read, write: if connecte(); }
+    match /exercises/{doc}         { allow read, write: if connecte(); }
+    match /journal_ecritures/{doc} { allow read, write: if connecte(); }
+
+    // ----- Organisation & métadonnées ------------------------------
+    match /taches/{doc}   { allow read, write: if connecte(); }
+    match /app_meta/{doc} { allow read, write: if connecte(); }
+
+    // ----- Tout le reste est refusé --------------------------------
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }
