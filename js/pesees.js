@@ -27,7 +27,8 @@ import { db } from "./firebase-config.js";
 import {
   collection, addDoc, doc, getDocs, query, where, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setAttentionItems } from "./utils.js";
+import { getActiveDucksList } from "./inventaire.js";
 
 const peseesCol = collection(db, "pesees_journalieres");
 const SEMAINE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -314,11 +315,10 @@ export async function resumeSuiviPonderal() {
 // Initialisation unique (bouton de navigation) + premier chargement.
 // ---------------------------------------------------------------------
 export function initPesees() {
-  document.getElementById("openPoidsBtn")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="canards"]')?.click();
-  });
-  document.getElementById("voirTableauCroissanceBtn")?.addEventListener("click", ouvrirTableauCroissance);
-  refreshPeseesDashboard();
+  // Rien à initialiser ici : l'écran "Pesées & croissance" (onglet de
+  // Cheptel, voir inventaire.js) et son bouton "Tableau de croissance"
+  // sont câblés depuis inventaire.js, qui déclenche aussi
+  // renderPeseesScreen() à chaque mise à jour du cheptel.
 }
 
 // Rafraîchit uniquement le contenu de la carte (appelable plusieurs
@@ -347,6 +347,132 @@ export async function refreshPeseesDashboard() {
   } catch (e) {
     zone.innerHTML = `<p class="subtle">Erreur de chargement : ${e.message}</p>`;
   }
+}
+
+// ---------------------------------------------------------------------
+// Écran "Pesées & croissance" (E8) : un lot par ligne — poids moyen à la
+// dernière pesée, écart à la référence, tendance sur les trois derniers
+// relevés. Le diagnostic reste toujours une phrase (voir diagnosticCroissance),
+// jamais un simple code couleur. Les lots sans pesée enregistrée sont
+// affichés en fin de liste, non triés par gravité.
+// ---------------------------------------------------------------------
+function tendanceSymbole(pesees) {
+  if (pesees.length < 2) return "";
+  const recentes = pesees.slice(0, 3).slice().reverse(); // du plus ancien au plus récent
+  const poids = recentes.map(p => p.poids_moyen_g);
+  const delta = poids[poids.length - 1] - poids[0];
+  if (Math.abs(delta) < poids[0] * 0.02) return "→ stable";
+  return delta > 0 ? "↗ en hausse" : "↘ en baisse";
+}
+
+export async function renderPeseesScreen() {
+  const el = document.getElementById("peseesScreenList");
+  if (!el) return;
+  el.innerHTML = `<p class="subtle">Chargement…</p>`;
+  try {
+    const lots = getActiveDucksList().filter(d => (d.quantite || 1) > 0);
+    const rows = await Promise.all(lots.map(async (lot) => {
+      const pesees = await chargerHistoriquePesees(lot.id);
+      const derniere = pesees[0] || null;
+      const diag = derniere && derniere.age_semaines !== null && derniere.age_semaines !== undefined
+        ? diagnosticCroissance(derniere.poids_moyen_g, derniere.age_semaines) : null;
+      return { lot, pesees, derniere, diag };
+    }));
+
+    // Le plus grave d'abord ; les lots jamais pesés en dernier.
+    const ordre = { danger: 0, warn: 1, ok: 2 };
+    rows.sort((a, b) => {
+      const ra = a.diag ? (ordre[a.diag.cls] ?? 3) : 4;
+      const rb = b.diag ? (ordre[b.diag.cls] ?? 3) : 4;
+      return ra - rb;
+    });
+
+    if (!rows.length) {
+      el.innerHTML = `<div class="empty-state"><div class="glyph">⚖️</div><p>Aucun lot actif au cheptel pour l'instant.</p></div>`;
+    } else {
+      el.innerHTML = rows.map((r, i) => {
+        const label = TYPE_LABELS_LOCAL[r.lot.type] || r.lot.type;
+        if (!r.derniere) {
+          return `<div class="row with-icon" data-i="${i}"><div class="row-icon"><svg><use href="#ic-poids"/></svg></div><div class="row-main"><span class="row-title">${label} × ${r.lot.quantite || 1}${r.lot.lot ? ` · ${escapeHtml(r.lot.lot)}` : ""}</span><span class="row-sub">Jamais pesé</span></div><span class="tag">Non suivi</span></div>`;
+        }
+        const tendance = tendanceSymbole(r.pesees);
+        return `
+        <div class="row with-icon" data-i="${i}" style="cursor:pointer;">
+          <div class="row-icon ${r.diag ? r.diag.cls : ''}"><svg><use href="#ic-poids"/></svg></div>
+          <div class="row-main">
+            <span class="row-title">${label} × ${r.lot.quantite || 1}${r.lot.lot ? ` · ${escapeHtml(r.lot.lot)}` : ""}</span>
+            <span class="row-sub">${r.derniere.poids_moyen_g} g · ${formatDate(r.derniere.date)}${tendance ? " · " + tendance : ""}</span>
+          </div>
+          <span class="tag ${r.diag ? r.diag.cls : ''}">${r.diag ? (r.diag.ecartPct >= 0 ? "+" : "") + r.diag.ecartPct + "%" : "—"}</span>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".row[data-i]").forEach(rowEl => {
+        rowEl.addEventListener("click", () => {
+          const r = rows[Number(rowEl.dataset.i)];
+          if (r.derniere) openLotCroissanceDetail(r);
+        });
+      });
+    }
+
+    // Alimente "À traiter" (Aujourd'hui) : un lot en retard ou en
+    // surcroissance mérite une action, un lot jamais pesé n'en est pas
+    // une (c'est un état normal en début de suivi).
+    setAttentionItems("pesees", rows.filter(r => r.diag && r.diag.cls !== "ok").map(r => ({
+      severity: r.diag.cls === "danger" ? "danger" : "warn",
+      title: `${TYPE_LABELS_LOCAL[r.lot.type] || r.lot.type}${r.lot.lot ? " · " + r.lot.lot : ""} — ${r.diag.label.replace(/^[^\wÀ-ÿ]+\s*/, "")}`,
+      sub: `${r.derniere.poids_moyen_g} g mesurés, ${r.diag.satisfaisante} g attendus`,
+      action: "Peser",
+      onClick: () => openPeseeModal(r.lot, () => { renderPeseesScreen(); refreshPeseesDashboard(); })
+    })));
+  } catch (e) {
+    console.error("Erreur écran pesées :", e);
+    el.innerHTML = `<p class="subtle">Erreur de chargement : ${e.message}</p>`;
+  }
+}
+
+const TYPE_LABELS_LOCAL = {
+  caneton: "Caneton", canardeau: "Canardeau", canard: "Canard",
+  reproducteur_male: "Reproducteur mâle", reproducteur_femelle: "Reproductrice femelle"
+};
+
+// Détail d'un lot : réel vs référence en deux barres simples (jamais de
+// SVG dessiné à la main pour un graphique — deux jauges suffisent à
+// montrer l'écart), plus le diagnostic en phrase et l'historique complet.
+function openLotCroissanceDetail(r) {
+  const { lot, derniere, diag, pesees } = r;
+  const label = TYPE_LABELS_LOCAL[lot.type] || lot.type;
+  const maxRef = diag ? Math.max(diag.satisfaisante, derniere.poids_moyen_g) * 1.15 : derniere.poids_moyen_g * 1.15;
+  const pctReel = Math.min(100, Math.round((derniere.poids_moyen_g / maxRef) * 100));
+  const pctRef = diag ? Math.min(100, Math.round((diag.satisfaisante / maxRef) * 100)) : 0;
+  const body = `
+    <div class="row"><div class="row-main"><span class="row-title">Diagnostic</span></div><span class="tag ${diag ? diag.cls : ''}">${diag ? diag.label : 'Âge inconnu'}</span></div>
+    ${diag ? `
+    <div class="spacer-s"></div>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <div>
+        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;"><span style="font-weight:500;">Réel</span><span class="mono">${derniere.poids_moyen_g} g</span></div>
+        <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${pctReel}%; background:${diag.cls === 'danger' ? 'var(--clay-500)' : diag.cls === 'warn' ? 'var(--yolk-500)' : 'var(--pond-600)'};"></div></div>
+      </div>
+      <div>
+        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;"><span style="font-weight:500;">Référence (${derniere.age_semaines} sem.)</span><span class="mono">${diag.satisfaisante} g</span></div>
+        <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${pctRef}%; background:var(--line);"></div></div>
+      </div>
+    </div>
+    ${diag.conseils.length ? `<div class="spacer-s"></div><p class="subtle">${diag.conseils[0]}</p>` : ""}
+    ` : ""}
+    <div class="spacer-m"></div>
+    <button class="btn yolk" id="fPeserDepuisDetail">Peser un nouvel échantillon</button>
+    <div class="spacer-m"></div>
+    <h3 style="font-size:13.5px; margin-bottom:6px;">Historique</h3>
+    <div>${rendreHistoriquePeseesHtml(pesees)}</div>
+  `;
+  openModal(`${label}${lot.lot ? " · " + lot.lot : ""}`, body, {
+    onMount: () => {
+      document.getElementById("fPeserDepuisDetail").addEventListener("click", () => {
+        openPeseeModal(lot, () => { renderPeseesScreen(); refreshPeseesDashboard(); });
+      });
+    }
+  });
 }
 
 export function rendreHistoriquePeseesHtml(pesees) {

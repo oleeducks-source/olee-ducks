@@ -103,6 +103,14 @@ function renderAll() {
   setMaskableText("kpiRecettes", formatFCFA(allRecettes));
   setMaskableText("kpiDepenses", formatFCFA(allDepenses));
 
+  // 30 derniers jours uniquement, pour la bande d'indicateurs de l'écran
+  // "Aujourd'hui" (E1) — indépendant du filtre de période de la page
+  // Finances, qui peut être réglé sur 7 j / 1 an / tout.
+  const cutoff30 = Date.now() - 30 * 86400000;
+  const items30 = allTx.filter(t => !estEnAttenteSuppression(t.id) && (t.date?.toDate ? t.date.toDate() : new Date(t.date)).getTime() >= cutoff30);
+  const balance30 = items30.reduce((a, t) => a + (t.type === "recette" ? 1 : -1) * Number(t.montant || 0), 0);
+  animateBalanceCountUp("kpiBalanceStrip", balance30);
+
   const listEl = document.getElementById("finList");
   if (listEl) {
     if (!items.length) {

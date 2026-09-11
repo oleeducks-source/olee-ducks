@@ -25,27 +25,93 @@ export function initRapport() {
   if (btn) btn.addEventListener("click", openRapportChoiceModal);
 }
 
-function openRapportChoiceModal() {
-  openModal("Rapport de la ferme", `
-    <p class="subtle">Un document PDF avec une lecture globale et chiffrée de l'état actuel de la ferme.</p>
+// ---------------------------------------------------------------------
+// Écran "Rapports & exports" (E10) : trois choix successifs sur un seul
+// écran (quel rapport, quelle période, quel format) puis un aperçu du
+// contenu inclus avant génération. La sauvegarde JSON complète et un
+// renvoi vers les exports comptables (FEC / Excel, propres à un exercice
+// et donc rattachés à Comptabilité) partagent la même page.
+// ---------------------------------------------------------------------
+const PERIODES_RAPPORT = [
+  { v: "30", label: "30 jours" },
+  { v: "90", label: "90 jours" },
+  { v: "365", label: "1 an" },
+  { v: "all", label: "Tout l'historique" }
+];
+
+export function openRapportChoiceModal() {
+  let type = "simple";
+  let periode = "365";
+
+  const contenuPreview = () => {
+    const items = ["Cheptel (effectifs actuels)", "Production — nids (ponte, couvaison, éclosions)", "Stocks (niveaux, alertes)"];
+    if (type === "complet") {
+      items.push(`Finances — recettes/dépenses sur ${PERIODES_RAPPORT.find(p => p.v === periode).label.toLowerCase()}`, "Comptabilité OHADA (balance, résultat, bilan)", "Formulations alimentaires détaillées");
+    }
+    return items.map(i => `<li>${i}</li>`).join("");
+  };
+
+  const body = `
+    <div class="field">
+      <label>Quel rapport</label>
+      <div class="segmented" id="fRapportType">
+        <button data-v="simple" class="active">Simple</button>
+        <button data-v="complet">Complet</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Quelle période <span class="subtle">(finances, si incluses)</span></label>
+      <div class="segmented" id="fRapportPeriode">
+        ${PERIODES_RAPPORT.map(p => `<button data-v="${p.v}" class="${p.v === periode ? "active" : ""}">${p.label}</button>`).join("")}
+      </div>
+    </div>
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <h3 style="font-size:13px; margin-bottom:8px;">Contenu inclus</h3>
+      <ul id="fRapportContenu" style="margin:0; padding-left:18px; display:flex; flex-direction:column; gap:5px; font-size:13.5px; color:var(--ink-body);">${contenuPreview()}</ul>
+    </div>
     <div class="spacer-m"></div>
-    <button class="btn yolk" id="btnRapportSimple" style="display:block; width:100%;">📋 Rapport simple</button>
-    <p class="subtle" style="margin:6px 0 16px;">Cheptel, production (nids), stocks — sans finances et sans comptabilité.</p>
-    <button class="btn secondary" id="btnRapportComplet" style="display:block; width:100%;">📚 Rapport complet</button>
-    <p class="subtle" style="margin:6px 0 0;">Tout le rapport simple, plus finances, comptabilité OHADA, formulations détaillées et graphiques.</p>
-  `, {
+    <div class="field">
+      <label>Quel format</label>
+    </div>
+    <button class="btn yolk" id="btnRapportPdf" style="margin-bottom:8px;">Générer le PDF</button>
+    <button class="btn secondary" id="btnRapportJson">Sauvegarde complète (JSON)</button>
+    <p class="subtle" style="margin:14px 0 0;">Les exports comptables FEC et Excel sont rattachés à un exercice précis — retrouvez-les dans Finances → Comptabilité → États.</p>
+  `;
+
+  openModal("Rapports & exports", body, {
     onMount: () => {
-      document.getElementById("btnRapportSimple").addEventListener("click", () => genererRapport("simple"));
-      document.getElementById("btnRapportComplet").addEventListener("click", () => genererRapport("complet"));
+      const refreshContenu = () => { document.getElementById("fRapportContenu").innerHTML = contenuPreview(); };
+      document.querySelectorAll("#fRapportType button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("#fRapportType button").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          type = btn.dataset.v;
+          refreshContenu();
+        });
+      });
+      document.querySelectorAll("#fRapportPeriode button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("#fRapportPeriode button").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          periode = btn.dataset.v;
+          refreshContenu();
+        });
+      });
+      document.getElementById("btnRapportPdf").addEventListener("click", () => genererRapport(type, periode));
+      document.getElementById("btnRapportJson").addEventListener("click", async () => {
+        closeModal();
+        const { ouvrirSauvegardeModal } = await import("./sauvegarde.js");
+        ouvrirSauvegardeModal();
+      });
     }
   });
 }
 
-async function genererRapport(mode) {
+async function genererRapport(mode, periode) {
   closeModal();
   toast("Génération du rapport en cours…");
   try {
-    const data = await collecterDonnees(mode);
+    const data = await collecterDonnees(mode, periode);
     const agg = calculerAgregats(data, mode);
     const pdf = construirePdf(agg, mode);
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -60,9 +126,12 @@ async function genererRapport(mode) {
 // ---------------------------------------------------------------------
 // Collecte (lecture seule). En mode "simple", les collections
 // financières/comptables ne sont même pas interrogées — c'est une
-// garantie structurelle, pas juste un choix d'affichage.
+// garantie structurelle, pas juste un choix d'affichage. Le paramètre
+// `periode` (jours, ou "all") ne restreint que les transactions
+// financières : le cheptel, les nids et les stocks sont toujours l'état
+// actuel, pas un flux sur une période.
 // ---------------------------------------------------------------------
-async function collecterDonnees(mode) {
+async function collecterDonnees(mode, periode = "all") {
   const [ducksSnap, nestsSnap, cyclesSnap, pontesSnap, itemsSnap, formsSnap] = await Promise.all([
     getDocs(collection(db, "ducks")),
     getDocs(collection(db, "nests")),
@@ -87,7 +156,12 @@ async function collecterDonnees(mode) {
       getDocs(collection(db, "exercises")),
       getDocs(collection(db, "journal_ecritures"))
     ]);
-    out.tx = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let tx = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (periode !== "all") {
+      const cutoff = Date.now() - Number(periode) * 86400000;
+      tx = tx.filter(t => toDateObj(t.date).getTime() >= cutoff);
+    }
+    out.tx = tx;
     out.compta = {
       accounts: accSnap.docs.map(d => ({ id: d.id, ...d.data() })),
       exercises: exSnap.docs.map(d => ({ id: d.id, ...d.data() })),
