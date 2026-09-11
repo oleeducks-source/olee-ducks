@@ -307,19 +307,31 @@ async function chargerEtAfficherPesees(lotId) {
 }
 
 // Affiche l'archive de production de canetons (collection
-// "canetons_production"). Lecture seule, ne modifie rien ; le total
-// affiché est purement informatif ("combien de canetons ai-je produits
-// au total") et n'entre dans aucun calcul de cheptel actif.
+// "canetons_production"). Le total affiché est purement informatif
+// ("combien de canetons ai-je produits au total") et n'entre dans aucun
+// calcul de cheptel actif.
 //
-// ⚠️ CORRECTIF (août 2026) : cette archive était jusqu'ici modifiable et
-// supprimable (quantité corrigible, entrée supprimable comme "doublon").
-// Un historique de production doit rester un compteur cumulé fiable et
-// non altérable — les entrées sont maintenant strictement en lecture
-// seule. Toute correction nécessaire (date de naissance erronée) se
-// fait désormais depuis la fiche du lot d'origine dans "Canards", qui
-// répercute automatiquement la correction sur l'archive liée.
+// ⚠️ CORRECTIF (août 2026) : cette archive était modifiable et supprimable
+// en un tap sur n'importe quelle ligne (quantité corrigible depuis un
+// simple clic). Un historique de production doit rester un compteur
+// cumulé fiable — la quantité et la date ne sont donc plus éditables en
+// un tap ; toute correction de date se fait depuis le lot d'origine dans
+// "Canards", qui répercute automatiquement la correction ici.
+//
+// ⚠️ AJOUT (septembre 2026) : une entrée peut toutefois rester erronée
+// dans un cas précis — une requalification automatique par âge que
+// l'éleveur annule ensuite manuellement (le lot repasse en "caneton").
+// L'archive du passage ne se corrige pas toute seule dans ce cas précis
+// (ce n'est pas une simple correction de date), donc un geste de
+// suppression EXPLICITE et VOLONTAIRE reste possible — via une icône
+// dédiée avec confirmation et 5 secondes pour annuler — plutôt qu'un tap
+// accidentel sur la ligne.
 async function openCanetonsArchiveModal() {
   openModal("Archive des canetons produits", `<p class="subtle">Chargement…</p>`, { onMount: () => {} });
+  await chargerEtRenderArchiveCanetons();
+}
+
+async function chargerEtRenderArchiveCanetons() {
   try {
     const snap = await getDocs(query(canetonsProductionCol, orderBy("date_transition", "desc")));
     const entries = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(e => !estEnAttenteSuppression(e.id));
@@ -328,19 +340,35 @@ async function openCanetonsArchiveModal() {
       <div class="card" style="background:var(--sage-100); border:none;">
         <div class="row"><div class="row-main"><span class="row-title">Total de canetons produits (cumulé)</span><span class="row-sub">Ne compte pas dans le cheptel actif actuel</span></div><span class="row-value pos">${total}</span></div>
       </div>
-      <p class="subtle" style="margin:10px 0 4px;">Historique en lecture seule. Pour corriger une date de naissance, modifiez le lot d'origine dans l'onglet Canards.</p>
+      <p class="subtle" style="margin:10px 0 4px;">Historique non modifiable. Pour corriger une date de naissance, modifiez le lot d'origine dans l'onglet Canards. Une entrée erronée (ex. requalification automatique annulée) peut être supprimée avec l'icône 🗑️.</p>
       <div class="spacer-s"></div>
       ${entries.length ? entries.map(e => `
-        <div class="row with-icon">
+        <div class="row with-icon" data-id="${e.id}">
           <div class="row-icon"><svg><use href="#ic-duck-canardeau"/></svg></div>
           <div class="row-main">
             <span class="row-title">${e.quantite} caneton(s) passés en canardeau</span>
             <span class="row-sub">${formatDate(e.date_transition)}${e.date_naissance ? " · né(s) le " + formatDate(e.date_naissance) : ""} · ${escapeHtml(e.enregistre_par || "")}</span>
           </div>
+          <button class="icon-btn danger archive-delete-btn" data-id="${e.id}" title="Supprimer cette entrée">🗑️</button>
         </div>
       `).join("") : `<div class="empty-state"><div class="glyph">🐥</div><p>Aucun passage caneton → canardeau archivé pour l'instant.</p></div>`}
     `;
-    openModal("Archive des canetons produits", body, { onMount: () => {} });
+    openModal("Archive des canetons produits", body, {
+      onMount: () => {
+        document.querySelectorAll(".archive-delete-btn").forEach(btn => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const id = btn.dataset.id;
+            confirmerSuppression(
+              id,
+              "Entrée d'archive",
+              () => deleteDoc(doc(db, "canetons_production", id)),
+              chargerEtRenderArchiveCanetons
+            );
+          });
+        });
+      }
+    });
   } catch (e) {
     console.error(e);
     openModal("Archive des canetons produits", `<p class="subtle">Erreur de chargement : ${e.message}</p>`, { onMount: () => {} });
