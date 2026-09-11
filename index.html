@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Olee Ducks — Gestion de ferme</title>
 <meta name="theme-color" content="#0E2E2C">
 <link rel="manifest" href="manifest.json">
@@ -190,6 +190,24 @@
       <button class="btn secondary small" id="openRapportBtn">📄 Rapport de la ferme</button>
     </div>
 
+    <div class="card pilot-card" id="pilotageCard">
+      <div class="pilot-head">
+        <div><span class="eyebrow">Intelligence de ferme</span><h3>Centre de pilotage</h3></div>
+        <button class="btn secondary small" id="refreshPilotageBtn">↻ Actualiser</button>
+      </div>
+      <div class="pilot-score-row">
+        <div><div class="pilot-score" id="pilotScore">—</div><div class="subtle" id="pilotScoreSub">Analyse…</div></div>
+        <div class="pilot-facts" id="pilotFacts"></div>
+      </div>
+      <div class="pilot-section-title">Priorités</div>
+      <div id="pilotActions"><p class="subtle">Analyse en cours…</p></div>
+      <div class="pilot-section-title">Lecture économique</div>
+      <div class="pilot-finance" id="pilotFinance"><div><span>30 derniers jours</span><b>—</b></div></div>
+      <div class="pilot-weight" id="pilotWeight">—</div>
+      <div class="pilot-status" id="pilotageStatus">Lecture seule · aucune modification des données</div>
+    </div>
+
+    <div class="spacer-m"></div>
     <div class="balance-banner">
       <div class="balance-banner-top">
         <div class="kpi-label">Balance commerciale</div>
