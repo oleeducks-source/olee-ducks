@@ -9,7 +9,7 @@ import {
   serverTimestamp, orderBy, query, where, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
-import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard } from "./pesees.js";
+import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard, renderPeseesScreen, ouvrirTableauCroissance } from "./pesees.js";
 
 const ducksCol = collection(db, "ducks");
 let allDucks = [];
@@ -174,6 +174,7 @@ export function initInventaire() {
     renderKpis();
     renderFilters();
     renderList();
+    renderPeseesScreen(); // tient "À traiter" (Aujourd'hui) et l'écran Pesées à jour même sans y être allé
     autoRequalifierParAge(); // déclenche les écritures nécessaires ; le prochain snapshot rafraîchira l'affichage
   }, (err) => console.error("Erreur lecture inventaire :", err));
 
@@ -204,6 +205,26 @@ export function initInventaire() {
   document.getElementById("invLotModeBtn")?.addEventListener("click", toggleSelectionMode);
   document.getElementById("invCancelSelectionBtn")?.addEventListener("click", () => setSelectionMode(false));
   document.getElementById("invAssignLotBtn")?.addEventListener("click", openAssignLotModal);
+
+  // ------ Onglets Cheptel (E3) / Pesées & croissance (E8) ------
+  document.querySelectorAll("#canardsView button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#canardsView button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const v = btn.dataset.v;
+      document.getElementById("canardsCheptelWrap")?.classList.toggle("hidden", v !== "cheptel");
+      document.getElementById("canardsPeseesWrap")?.classList.toggle("hidden", v !== "pesees");
+      if (v === "pesees") renderPeseesScreen();
+    });
+  });
+  document.getElementById("peseesVoirTableauBtn")?.addEventListener("click", ouvrirTableauCroissance);
+}
+
+// Utilisé par pesees.js pour construire l'écran "Pesées & croissance"
+// (E8) : un lot par ligne, y compris les lots sans pesée enregistrée
+// (affichés comme "non suivi" plutôt qu'omis). Lecture seule.
+export function getActiveDucksList() {
+  return activeDucks();
 }
 
 // Compte les effectifs (somme des quantités, hors suppressions en
@@ -510,7 +531,7 @@ function setSelectionMode(on) {
   selectionMode = on;
   if (!on) selectedIds.clear();
   const btn = document.getElementById("invLotModeBtn");
-  if (btn) btn.textContent = on ? "✕ Annuler la sélection" : "🏷️ Regrouper en lot";
+  if (btn) btn.textContent = on ? "Annuler la sélection" : "Regrouper en lot";
   updateSelectionBar();
   renderList();
 }

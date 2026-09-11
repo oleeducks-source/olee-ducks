@@ -9,7 +9,7 @@
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -150,6 +150,15 @@
     <circle cx="20" cy="7" r="2" fill="currentColor"/>
   </symbol>
 
+  <!-- Icônes d'interface (en-tête, menus) : mêmes conventions que le
+       document de direction design — traits simples, currentColor. -->
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 17V11a5.5 5.5 0 0 1 11 0v6"/><path d="M4.5 17h15"/><path d="M10 20h4"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.3" r="3.3"/><path d="M5 19.5c0-3.6 3.1-6 7-6s7 2.4 7 6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6.5 11 12 16.5 17.5 11"/><path d="M4.5 19.5h15"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+
   <!-- Comptabilité : une icône par classe de compte SYSCOHADA -->
   <symbol id="ic-cls-1" viewBox="0 0 40 40"><path d="M20 6 L34 15 L34 34 L6 34 L6 15 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
   <symbol id="ic-cls-2" viewBox="0 0 40 40"><rect x="8" y="10" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="8" y1="17" x2="32" y2="17" stroke="currentColor" stroke-width="1.6"/></symbol>
@@ -162,6 +171,28 @@
 </defs>
 </svg>
 
+<div class="shell">
+
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="2"/><path d="M6 17c0 2 2 3 6 3s6-1 6-3"/></svg>
+    Olee Ducks
+  </div>
+  <nav class="sidebar-nav" id="sidebarNav">
+    <button class="sidebar-link active" data-page="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg>Aujourd'hui</button>
+    <button class="sidebar-link" data-page="nids"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="13" rx="7" ry="8"/><path d="M6.5 8.5c1.5-3 4-4.5 5.5-4.5"/></svg>Nids</button>
+    <button class="sidebar-link" data-page="canards"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg>Cheptel</button>
+    <button class="sidebar-link" data-page="stocks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>Stocks</button>
+    <button class="sidebar-link" data-page="finances"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg>Finances</button>
+    <div class="sidebar-section-label">Organisation</div>
+    <button class="sidebar-link" id="sidebarOpenTaches"><svg><use href="#i-tasks"/></svg>Tâches<span class="sidebar-count hidden" id="sidebarTachesCount"></span></button>
+    <button class="sidebar-link" id="sidebarOpenNotifs"><svg><use href="#i-bell"/></svg>Notifications</button>
+  </nav>
+  <div class="sidebar-foot">
+    <button class="sidebar-link" id="sidebarAccountBtn"><svg><use href="#i-person"/></svg><span id="sidebarAccountLabel">…</span></button>
+  </div>
+</aside>
+
 <div id="app">
 
   <div class="topbar">
@@ -170,9 +201,9 @@
       Olee Ducks
     </div>
     <div class="status">
-      <button id="exportDonneesBtn" class="notif-bell" aria-label="Sauvegarder les données" title="Sauvegarde">💾</button>
-      <button id="notifBell" class="notif-bell" aria-label="Activer les notifications" title="Notifications">🔔</button>
-      <button id="userChip" class="user-chip">👤 <span id="userChipLabel">…</span></button>
+      <button id="tasksBell" class="topbar-icon-btn" aria-label="Tâches" title="Tâches"><svg><use href="#i-tasks"/></svg><span class="nav-badge hidden" id="tachesNavBadge" style="top:-3px; right:-5px;"></span></button>
+      <button id="notifBell" class="topbar-icon-btn" aria-label="Notifications" title="Notifications"><svg><use href="#i-bell"/></svg></button>
+      <button id="userChip" class="user-chip"><svg width="12" height="12"><use href="#i-person"/></svg> <span id="userChipLabel">…</span></button>
       <span id="syncDot" class="sync-dot"></span>
       <span id="syncLabel">Connexion…</span>
     </div>
@@ -180,81 +211,57 @@
 
   <div id="errorBanner" class="hidden" style="background:#F8DFDA; color:#8A2E1E; padding:10px 16px; font-size:12.5px; line-height:1.5;"></div>
 
-  <!-- ===================== DASHBOARD ===================== -->
+  <!-- ===================== DASHBOARD ("Aujourd'hui") ===================== -->
   <section id="page-dashboard" class="page">
     <div class="section-title">
       <div>
-        <span class="eyebrow">Aujourd'hui</span>
-        <h2 id="dashDate">Tableau de bord</h2>
+        <span class="eyebrow" id="dashDate">Aujourd'hui</span>
+        <h2>Aujourd'hui</h2>
       </div>
-      <button class="btn secondary small" id="openRapportBtn">📄 Rapport de la ferme</button>
+      <button class="btn secondary small" id="openRapportBtn">Rapport de la ferme</button>
     </div>
 
+    <!-- Verdict en une phrase + bande d'indicateurs alignés (pas des cartes) -->
+    <div class="card" id="dashVerdictCard">
+      <h2 id="dashVerdictHeadline" style="font-size:22px; letter-spacing:-.02em;">Chargement…</h2>
+      <div class="kpi-strip">
+        <div><div class="kpi-strip-value mono" id="kpiTotalCanards">—</div><div class="kpi-strip-label" id="kpiCanardsSub">canards</div></div>
+        <div><div class="kpi-strip-value mono" id="kpiOeufsNids">—</div><div class="kpi-strip-label" id="kpiNidsOccupesSub">œufs en nid</div></div>
+        <div><div class="kpi-strip-value mono" id="kpiTauxEclosion">—</div><div class="kpi-strip-label">taux d'éclosion</div></div>
+        <div><div class="kpi-strip-value mono" id="kpiBalanceStrip">—</div><div class="kpi-strip-label">solde (30 j)</div></div>
+      </div>
+    </div>
+
+    <!-- Ce qui exige une action, avant tout le reste -->
+    <div class="section-title">
+      <div><span class="eyebrow">Priorité</span><h2>À traiter</h2></div>
+    </div>
+    <div class="attn-list" id="dashAttnList">
+      <div class="attn-row"><div class="row-main"><span class="attn-title">Chargement…</span></div></div>
+    </div>
+
+    <!-- Production du jour -->
+    <div class="section-title">
+      <div><span class="eyebrow">Ce jour</span><h2>Production du jour</h2></div>
+      <button class="btn secondary small" id="openNestGridModalBtn">Nids →</button>
+    </div>
+    <div class="card" id="dashProductionCard">
+      <div class="skeleton-row"><div style="flex:1;"><div class="skeleton skeleton-line" style="width:40%; height:22px;"></div></div></div>
+    </div>
+
+    <!-- Détail financier (repris ici, sous la synthèse — plus la première chose vue) -->
+    <div class="section-title">
+      <div><span class="eyebrow">Détail</span><h2>Balance commerciale</h2></div>
+    </div>
     <div class="balance-banner">
       <div class="balance-banner-top">
-        <div class="kpi-label">Balance commerciale</div>
+        <div class="kpi-label">Balance commerciale (30 j)</div>
         <button class="eye-toggle" id="kpiBalanceEye" aria-label="Afficher/masquer les montants"></button>
       </div>
       <div class="amount" id="kpiBalance">—</div>
       <div class="breakdown">
         <div><span class="subtle" style="color:inherit; opacity:.8; font-size:11px;">Recettes</span><b id="kpiRecettes">—</b></div>
         <div><span class="subtle" style="color:inherit; opacity:.8; font-size:11px;">Dépenses</span><b id="kpiDepenses">—</b></div>
-      </div>
-    </div>
-
-    <div class="spacer-m"></div>
-    <div class="card tasks-card" id="dashTasksCard">
-      <div class="tasks-card-top">
-        <div class="tasks-card-title">
-          <span class="voyant" id="tachesVoyant"></span>
-          <span class="eyebrow">Organisation</span>
-        </div>
-        <button class="btn secondary small" id="openTachesBtn">Voir tout →</button>
-      </div>
-      <h3 style="margin:4px 0 2px;">Tâches à faire</h3>
-      <div id="dashTachesResume"><p class="subtle">Chargement…</p></div>
-    </div>
-
-    <div class="spacer-m"></div>
-    <div class="card tasks-card" id="dashPoidsCard">
-      <div class="tasks-card-top">
-        <div class="tasks-card-title">
-          <span class="voyant idle" id="poidsVoyant"></span>
-          <span class="eyebrow">Santé du cheptel</span>
-        </div>
-        <button class="btn secondary small" id="openPoidsBtn">Voir les lots →</button>
-      </div>
-      <h3 style="margin:4px 0 2px;">Suivi pondéral</h3>
-      <div id="dashPoidsResume"><p class="subtle">Chargement…</p></div>
-      <div class="spacer-s"></div>
-      <button class="btn secondary small" id="voirTableauCroissanceBtn">📊 Tableau de croissance</button>
-    </div>
-
-    <div class="spacer-m"></div>
-    <div class="kpi-grid">
-      <div class="kpi">
-        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-duck-canard"/></svg>
-        <div class="kpi-label">Canards au total</div>
-        <div class="kpi-value" id="kpiTotalCanards">—</div>
-        <div class="kpi-sub" id="kpiCanardsSub">—</div>
-      </div>
-      <div class="kpi yolk">
-        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-nest-ponte"/></svg>
-        <div class="kpi-label">Œufs dans les nids</div>
-        <div class="kpi-value" id="kpiOeufsNids">—</div>
-        <div class="kpi-sub" id="kpiNidsOccupesSub">—</div>
-      </div>
-      <div class="kpi alt">
-        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-nest-eclos"/></svg>
-        <div class="kpi-label">Taux d'éclosion moyen</div>
-        <div class="kpi-value" id="kpiTauxEclosion">—</div>
-        <div class="kpi-sub">30 derniers cycles</div>
-      </div>
-      <div class="kpi">
-        <svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#ic-cat-aliment"/></svg>
-        <div class="kpi-label">Alertes stock</div>
-        <div class="kpi-value" id="kpiAlertesStock">—</div>
-        <div class="kpi-sub">sous le seuil</div>
       </div>
     </div>
 
@@ -269,8 +276,6 @@
         <span><i style="background:var(--yolk-500)"></i> Ponte <b id="nestCountPonte" class="mono">—</b></span>
         <span><i style="background:var(--pond-600)"></i> Couvaison <b id="nestCountCouvaison" class="mono">—</b></span>
       </div>
-      <div class="spacer-s"></div>
-      <button class="btn secondary" id="openNestGridModalBtn" style="width:100%;">🗺️ Ouvrir la carte des 100 nids</button>
     </div>
 
     <div class="section-title">
@@ -284,36 +289,51 @@
     <div class="card" id="dashRecentActivity"></div>
   </section>
 
-  <!-- ===================== CANARDS (onglet indépendant) ===================== -->
+  <!-- ===================== CHEPTEL (onglet indépendant) ===================== -->
   <section id="page-canards" class="page hidden">
     <div class="section-title">
-      <div><span class="eyebrow">Élevage</span><h2>Inventaire des canards</h2></div>
+      <div><span class="eyebrow">Élevage</span><h2>Cheptel</h2></div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
-        <button class="btn secondary small" id="invLotModeBtn">🏷️ Regrouper en lot</button>
+        <button class="btn secondary small" id="invLotModeBtn">Regrouper en lot</button>
         <button class="btn secondary small" id="openCanetonsArchiveBtn">Archive des canetons →</button>
       </div>
     </div>
-    <div class="kpi-grid" id="invKpis"></div>
+    <div class="view-tabs" id="canardsView">
+      <button data-v="cheptel" class="active">Inventaire</button>
+      <button data-v="pesees">Pesées &amp; croissance</button>
+    </div>
     <div class="spacer-m"></div>
 
-    <div class="filters-row">
-      <select id="invFilterType" class="filter-select"></select>
-      <select id="invFilterStatut" class="filter-select"></select>
-      <div id="invFilterLotWrap" class="hidden" style="flex:1 1 140px;">
-        <select id="invFilterLot" class="filter-select"></select>
+    <div id="canardsCheptelWrap">
+      <div class="kpi-grid" id="invKpis"></div>
+      <div class="spacer-m"></div>
+
+      <div class="filters-row">
+        <select id="invFilterType" class="filter-select"></select>
+        <select id="invFilterStatut" class="filter-select"></select>
+        <div id="invFilterLotWrap" class="hidden" style="flex:1 1 140px;">
+          <select id="invFilterLot" class="filter-select"></select>
+        </div>
+      </div>
+      <div class="spacer-s"></div>
+      <div class="field"><input type="text" id="invSearch" placeholder="N° de bague, lot, intervenant…"></div>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
+      <div class="spacer-m"></div>
+      <div id="invSelectionBar" class="selection-bar hidden">
+        <span id="invSelectionCount">0 sélectionné(s)</span>
+        <div style="display:flex; gap:8px;">
+          <button class="btn secondary small" id="invCancelSelectionBtn">Annuler</button>
+          <button class="btn yolk small" id="invAssignLotBtn">Assigner à un lot</button>
+        </div>
       </div>
     </div>
-    <div class="spacer-s"></div>
-    <div class="field"><input type="text" id="invSearch" placeholder="🔎 N° de bague, lot, intervenant…"></div>
-    <div class="spacer-m"></div>
-    <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
-    <div class="spacer-m"></div>
-    <div id="invSelectionBar" class="selection-bar hidden">
-      <span id="invSelectionCount">0 sélectionné(s)</span>
-      <div style="display:flex; gap:8px;">
-        <button class="btn secondary small" id="invCancelSelectionBtn">Annuler</button>
-        <button class="btn yolk small" id="invAssignLotBtn">Assigner à un lot</button>
-      </div>
+
+    <div id="canardsPeseesWrap" class="hidden">
+      <p class="subtle" style="margin:0 0 12px;">Un lot par ligne : poids moyen à la dernière pesée, écart à la courbe de référence, tendance sur les trois derniers relevés. Ouvrez un lot pour voir le détail (réel vs référence) et pour peser un nouvel échantillon.</p>
+      <button class="btn secondary small" id="peseesVoirTableauBtn" style="width:auto;">Voir le tableau de croissance de référence</button>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="peseesScreenList"><p class="subtle">Chargement…</p></div></div>
     </div>
   </section>
 
@@ -323,7 +343,7 @@
       <div><span class="eyebrow">Élevage</span><h2>Suivi des nids</h2></div>
     </div>
     <p class="subtle" style="margin:0 0 10px;">100 nids numérotés</p>
-    <div class="segmented" id="nidsView">
+    <div class="view-tabs" id="nidsView">
       <button data-v="grille" class="active">Grille</button>
       <button data-v="encours">En cours</button>
       <button data-v="stats">Statistiques</button>
@@ -360,7 +380,7 @@
       <div class="spacer-s"></div>
       <div class="field-row" style="align-items:flex-end;">
         <div class="field" style="margin-bottom:0;"><label>Filtrer une date précise (optionnel)</label><input type="date" id="nidsFilterDate"></div>
-        <button class="btn secondary" id="nidsFilterDateClear" style="flex:0 0 auto; white-space:nowrap;">✕ Effacer</button>
+        <button class="btn secondary" id="nidsFilterDateClear" style="flex:0 0 auto; white-space:nowrap;">Effacer</button>
       </div>
       <div class="spacer-m"></div>
       <div class="card"><div id="nidsEnCoursList"></div></div>
@@ -380,7 +400,7 @@
         <div id="globalHatchStats"></div>
       </div>
       <div class="card">
-        <h3 style="font-size:15px; margin-bottom:4px;">📜 Historique brut des pontes</h3>
+        <h3 style="font-size:15px; margin-bottom:4px;">Historique brut des pontes</h3>
         <p class="subtle" style="margin:0 0 10px;">Comptage purement historique : additionne uniquement les œufs enregistrés comme pondus sur la période choisie, sans tenir compte des éclosions ni des pertes. Sert à savoir combien d'œufs la ferme a produits entre deux dates.</p>
         <div class="field-row">
           <div class="field"><label>Du</label><input type="date" id="pHistFrom"></div>
@@ -428,7 +448,7 @@
       <button data-v="depense">Dépenses</button>
     </div>
     <div class="spacer-m"></div>
-    <div class="field"><input type="text" id="finSearch" placeholder="🔎 Rechercher (description, catégorie, montant…)"></div>
+    <div class="field"><input type="text" id="finSearch" placeholder="Rechercher (description, catégorie, montant…)"></div>
     <div class="spacer-m"></div>
     <div class="card"><div id="finList"><div class="empty-state"><div class="glyph">💰</div><p>Aucune transaction sur cette période.</p></div></div></div>
   </section>
@@ -438,7 +458,7 @@
     <div class="section-title">
       <div><span class="eyebrow">Aliments & vétérinaire</span><h2>Stocks</h2></div>
     </div>
-    <div class="segmented" id="stocksView">
+    <div class="view-tabs" id="stocksView">
       <button data-v="articles" class="active">Articles</button>
       <button data-v="formulations">Formulations</button>
     </div>
@@ -463,25 +483,35 @@
     </div>
   </section>
 
-  <!-- ===================== TÂCHES ===================== -->
-  <section id="page-taches" class="page hidden">
-    <div class="section-title">
-      <div><span class="eyebrow">Organisation</span><h2>Tâches à effectuer</h2></div>
-    </div>
-    <div class="segmented" id="tachesView">
-      <button data-v="a_faire" class="active">À faire</button>
-      <button data-v="historique">Historique</button>
-    </div>
-    <div class="spacer-m"></div>
+  <!-- ===================== TÂCHES — panneau global ===================== -->
+  <!-- Atteint depuis n'importe quel écran (bouton "Tâches" de l'en-tête /
+       de la sidebar) plutôt que par la barre basse : voir E6 de la
+       direction design. Les IDs internes sont inchangés, taches.js
+       fonctionne à l'identique quel que soit le conteneur. -->
+  <div id="page-taches" class="hidden">
+    <div class="task-panel-backdrop" id="tachesPanelBackdrop"></div>
+    <div class="task-panel">
+      <div class="task-panel-head">
+        <h3>Tâches</h3>
+        <button class="modal-close" id="tachesPanelClose" aria-label="Fermer"><svg width="14" height="14"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="task-panel-body">
+        <div class="view-tabs" id="tachesView">
+          <button data-v="a_faire" class="active">À faire</button>
+          <button data-v="historique">Historique</button>
+        </div>
+        <div class="spacer-m"></div>
 
-    <div id="tachesAFaireWrap">
-      <div class="card"><div id="tachesAFaireList"><div class="empty-state"><div class="glyph">📋</div><p>Aucune tâche en attente. Utilisez le bouton + pour en ajouter une.</p></div></div></div>
-    </div>
+        <div id="tachesAFaireWrap">
+          <div class="card"><div id="tachesAFaireList"><div class="empty-state"><div class="glyph">📋</div><p>Aucune tâche en attente. Utilisez le bouton + pour en ajouter une.</p></div></div></div>
+        </div>
 
-    <div id="tachesHistoriqueWrap" class="hidden">
-      <div class="card"><div id="tachesHistoriqueList"><div class="empty-state"><div class="glyph">🗂️</div><p>Aucune tâche effectuée pour l'instant.</p></div></div></div>
+        <div id="tachesHistoriqueWrap" class="hidden">
+          <div class="card"><div id="tachesHistoriqueList"><div class="empty-state"><div class="glyph">🗂️</div><p>Aucune tâche effectuée pour l'instant.</p></div></div></div>
+        </div>
+      </div>
     </div>
-  </section>
+  </div>
 
   <!-- ===================== COMPTABILITÉ OHADA ===================== -->
   <section id="page-compta" class="page hidden">
@@ -493,11 +523,11 @@
     <div class="card" id="exerciceCard"></div>
     <div class="spacer-m"></div>
 
-    <div class="segmented" id="comptaView">
+    <div class="view-tabs" id="comptaView">
       <button data-v="brouillons" class="active">À valider</button>
-      <button data-v="comptes">Plan de comptes</button>
       <button data-v="journal">Journal</button>
-      <button data-v="etats">États financiers</button>
+      <button data-v="comptes">Plan de comptes</button>
+      <button data-v="etats">États</button>
     </div>
     <div class="spacer-m"></div>
 
@@ -534,15 +564,15 @@
         <button class="btn yolk" id="fCompteSave">Ajouter au plan de comptes</button>
       </div>
       <div class="spacer-m"></div>
-      <button class="btn secondary small" id="nettoyerDoublonsBtn">🧹 Nettoyer les comptes en double</button>
+      <button class="btn secondary small" id="nettoyerDoublonsBtn">Nettoyer les comptes en double</button>
       <div class="spacer-m"></div>
       <div class="card"><div id="comptesList"></div></div>
     </div>
 
     <div id="comptaJournalWrap" class="hidden">
-      <div class="field"><input type="text" id="journalSearch" placeholder="🔎 Rechercher (n° pièce, libellé, compte…)"></div>
+      <div class="field"><input type="text" id="journalSearch" placeholder="Rechercher (n° pièce, libellé, compte…)"></div>
       <div class="spacer-s"></div>
-      <button class="btn secondary small" id="renumeroterBtn">🔢 Renuméroter par ordre chronologique</button>
+      <button class="btn secondary small" id="renumeroterBtn">Renuméroter par ordre chronologique</button>
       <div class="spacer-m"></div>
       <div class="card" id="nettoyageCard"></div>
       <div class="card"><div id="journalList"></div></div>
@@ -576,40 +606,49 @@
     </div>
   </section>
 
-  <!-- Bottom nav -->
+  <!-- ===================== NOTIFICATIONS ===================== -->
+  <section id="page-notifications" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">Depuis votre dernière visite</span><h2>Notifications</h2></div>
+    </div>
+    <div class="card" id="notifSettingsCard" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <div class="row-main"><span class="row-title" style="font-size:14px;">Notifications du navigateur</span><span class="row-sub">Un résumé à chaque connexion à l'app</span></div>
+      <button class="btn secondary small" id="notifToggleBtn">Activer</button>
+    </div>
+    <div class="spacer-m"></div>
+    <div id="notifFeed"><p class="subtle">Chargement…</p></div>
+  </section>
+
+  <!-- Bottom nav — 5 destinations (voir architecture UX, section D) -->
   <nav class="bottom-nav">
     <button class="nav-item active" data-page="dashboard">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg>
-      Accueil
-    </button>
-    <button class="nav-item" data-page="canards">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg>
-      Canards
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 12 3l9 9"/><path d="M5 10v10h14V10"/></svg></span>
+      Aujourd'hui
     </button>
     <button class="nav-item" data-page="nids">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="13" rx="7" ry="8"/><path d="M6.5 8.5c1.5-3 4-4.5 5.5-4.5"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="13" rx="7" ry="8"/><path d="M6.5 8.5c1.5-3 4-4.5 5.5-4.5"/></svg></span>
       Nids
     </button>
-    <button class="nav-item" data-page="finances">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg>
-      Finances
+    <button class="nav-item" data-page="canards">
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c0-4 3-7 7-7 5 0 9 3 9 7 0 3-2 4-4 4H8c-2 0-4-1-4-4Z"/><circle cx="17" cy="8" r="1.8"/></svg></span>
+      Cheptel
     </button>
     <button class="nav-item" data-page="stocks">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></span>
       Stocks
     </button>
-    <button class="nav-item" data-page="taches">
-      <span class="nav-item-icon-wrap">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-        <span class="nav-badge hidden" id="tachesNavBadge"></span>
-      </span>
-      Tâches
+    <button class="nav-item" data-page="finances">
+      <span class="nav-item-icon-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/></svg></span>
+      Finances
     </button>
   </nav>
 
   <button class="fab" id="fabAdd">+</button>
 </div>
 
+</div><!-- /.shell -->
+
+<div id="accountMenuRoot"></div>
 <div id="modalRoot"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>

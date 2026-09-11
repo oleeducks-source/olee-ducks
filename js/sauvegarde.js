@@ -47,7 +47,11 @@ const SOUS_COLLECTIONS = [
 ];
 
 export function initSauvegarde() {
-  document.getElementById("exportDonneesBtn")?.addEventListener("click", ouvrirSauvegardeModal);
+  // Rien à initialiser ici : le déclenchement se fait depuis le menu
+  // compte (voir app.js, "Sauvegarder les données") et depuis l'écran
+  // Rapports & exports (voir rapport.js), qui appellent tous deux
+  // directement ouvrirSauvegardeModal() — plus de bouton dédié dans
+  // l'en-tête, conformément à l'architecture UX (section D).
 }
 
 // Convertit récursivement les Timestamp Firestore en texte ISO lisible
@@ -64,7 +68,12 @@ function serialiser(valeur) {
   return valeur;
 }
 
-async function ouvrirSauvegardeModal() {
+// Ouvre la feuille de sauvegarde : rappelle la date/l'auteur de la
+// dernière sauvegarde (app_meta/sauvegarde) et propose les deux sens —
+// télécharger ou restaurer depuis un fichier (js/restauration.js).
+// Exportée : appelée depuis le menu compte (app.js) et depuis l'écran
+// Rapports & exports (rapport.js).
+export async function ouvrirSauvegardeModal() {
   openModal("Sauvegarde des données", `
     <div id="sauvDerniere"><p class="subtle">Lecture de la dernière sauvegarde…</p></div>
     <div class="spacer-m"></div>

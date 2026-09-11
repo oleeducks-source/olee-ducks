@@ -103,6 +103,7 @@ export function initNests() {
   onSnapshot(query(pontesCol, orderBy("date", "asc")), (snap) => {
     pontesLog = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderStats();
+    renderTodayProduction();
   }, err => console.error("Erreur lecture journal de pontes :", err));
 
   document.querySelectorAll("#nidsView button").forEach(btn => {
@@ -224,6 +225,53 @@ function renderDistributionBar() {
   setC("nestCountLibre", libre);
   setC("nestCountPonte", ponte);
   setC("nestCountCouvaison", couvaison);
+  renderTodayProduction();
+}
+
+// Écran "Aujourd'hui" (E1) : nombre d'œufs relevés aujourd'hui (comparé à
+// hier), puis la même répartition ponte/couvaison/libre que la barre de
+// la salle des nids — sous le titre "Production du jour" plutôt que
+// "Occupation en direct", qui reste la vue détaillée plus bas sur la
+// page.
+function renderTodayProduction() {
+  const el = document.getElementById("dashProductionCard");
+  if (!el) return;
+
+  let ponte = 0, couvaison = 0;
+  Object.values(cyclesMap).forEach(c => { if (c.statut === "couvaison") couvaison++; else ponte++; });
+  const libre = Math.max(0, 100 - ponte - couvaison);
+
+  const dayKeyOf = (d) => {
+    const date = toDateObj(d);
+    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  };
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const sumForDay = (dateRef) => pontesLog
+    .filter(p => (Number(p.quantite) || 0) > 0 && dayKeyOf(p.date) === dayKeyOf(dateRef))
+    .reduce((a, p) => a + (Number(p.quantite) || 0), 0);
+  const todayCount = sumForDay(today);
+  const yesterdayCount = sumForDay(yesterday);
+  const delta = todayCount - yesterdayCount;
+
+  el.innerHTML = `
+    <div style="display:flex; align-items:baseline; gap:8px;">
+      <span class="mono" style="font-size:28px; font-weight:500; color:var(--pond-950); letter-spacing:-.02em;">${todayCount}</span>
+      <span style="font-size:13.5px; color:var(--ink-600);">œufs relevés</span>
+      <span style="flex:1;"></span>
+      <span style="font-size:12.5px; font-weight:600; color:${delta >= 0 ? "var(--success-fg)" : "var(--danger-fg)"};">${delta >= 0 ? "+" : ""}${delta} vs hier</span>
+    </div>
+    <div style="display:flex; height:8px; margin-top:13px; border-radius:2px; overflow:hidden; gap:1px;">
+      ${ponte ? `<div style="flex:${ponte}; background:var(--yolk-500);"></div>` : ""}
+      ${couvaison ? `<div style="flex:${couvaison}; background:var(--pond-600);"></div>` : ""}
+      ${libre ? `<div style="flex:${libre}; background:var(--sage-100);"></div>` : ""}
+    </div>
+    <div style="display:flex; gap:14px; margin-top:9px; font-size:11.5px; color:var(--ink-600); flex-wrap:wrap;">
+      <span style="display:flex; align-items:center; gap:5px;"><i style="width:7px;height:7px;background:var(--yolk-500);display:block;"></i>Ponte ${ponte}</span>
+      <span style="display:flex; align-items:center; gap:5px;"><i style="width:7px;height:7px;background:var(--pond-600);display:block;"></i>Couvaison ${couvaison}</span>
+      <span style="display:flex; align-items:center; gap:5px;"><i style="width:7px;height:7px;background:var(--sage-100);display:block; border:1px solid var(--line);"></i>Libres ${libre}</span>
+    </div>
+  `;
 }
 
 function renderDashboardNestKpi() {

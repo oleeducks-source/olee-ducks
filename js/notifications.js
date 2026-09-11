@@ -17,49 +17,50 @@
 // =====================================================================
 import { db } from "./firebase-config.js";
 import { collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatDate } from "./utils.js";
+import { formatFCFA, formatDate, escapeHtml } from "./utils.js";
 
 const NOTIF_KEY = "oleeducks_notifs_enabled";
 const LAST_VISIT_KEY = "oleeducks_derniere_visite";
 const SEMAINE_MS = 7 * 24 * 60 * 60 * 1000;
 
+// ---------------------------------------------------------------------
+// Réglage d'activation (résumé du navigateur à chaque connexion) — vit
+// dans l'écran Notifications (bouton dédié), pas au clic sur la cloche
+// de l'en-tête : la cloche ouvre désormais simplement l'écran de
+// consultation (voir app.js, openNotificationsPage).
+// ---------------------------------------------------------------------
+export function notificationsActives() {
+  return "Notification" in window && Notification.permission === "granted" && localStorage.getItem(NOTIF_KEY) === "1";
+}
+
+export async function toggleNotifications() {
+  if (!("Notification" in window)) {
+    alert("Les notifications ne sont pas prises en charge par ce navigateur.");
+    return;
+  }
+  if (notificationsActives()) {
+    localStorage.setItem(NOTIF_KEY, "0");
+    return;
+  }
+  if (Notification.permission === "denied") {
+    alert("Les notifications sont bloquées pour Olee Ducks dans les réglages de votre téléphone. Autorisez-les puis réessayez.");
+    return;
+  }
+  if (Notification.permission !== "granted") {
+    const res = await Notification.requestPermission();
+    if (res !== "granted") return;
+  }
+  localStorage.setItem(NOTIF_KEY, "1");
+  envoyerNotif("Notifications activées", "Vous recevrez un résumé de l'activité de la ferme à chaque connexion à l'app.");
+  genererResumeConnexion();
+}
+
 export function initNotifications() {
-  const bell = document.getElementById("notifBell");
-  if (!bell) return;
-
-  const actives = () => "Notification" in window && Notification.permission === "granted" && localStorage.getItem(NOTIF_KEY) === "1";
-  const refreshBell = () => bell.classList.toggle("on", actives());
-  refreshBell();
-
-  bell.addEventListener("click", async () => {
-    if (!("Notification" in window)) {
-      alert("Les notifications ne sont pas prises en charge par ce navigateur.");
-      return;
-    }
-    if (actives()) {
-      localStorage.setItem(NOTIF_KEY, "0");
-      refreshBell();
-      return;
-    }
-    if (Notification.permission === "denied") {
-      alert("Les notifications sont bloquées pour Olee Ducks dans les réglages de votre téléphone. Autorisez-les puis réessayez.");
-      return;
-    }
-    if (Notification.permission !== "granted") {
-      const res = await Notification.requestPermission();
-      if (res !== "granted") return;
-    }
-    localStorage.setItem(NOTIF_KEY, "1");
-    refreshBell();
-    envoyerNotif("🔔 Notifications activées", "Vous recevrez un résumé de l'activité de la ferme à chaque connexion à l'app.");
-    genererResumeConnexion();
-  });
-
-  if (actives()) genererResumeConnexion();
+  if (notificationsActives()) genererResumeConnexion();
 }
 
 function peutNotifier() {
-  return "Notification" in window && Notification.permission === "granted" && localStorage.getItem(NOTIF_KEY) === "1";
+  return notificationsActives();
 }
 
 function envoyerNotif(titre, corps) {
@@ -209,4 +210,109 @@ function verifierTachesUrgentes(taches) {
       else alertes.push(`🟡 "${t.titre}" — échéance demain`);
     });
   if (alertes.length) envoyerNotif("📋 Tâches à ne pas oublier", alertes.join("\n"));
+}
+
+// =====================================================================
+// Écran Notifications (section F de la direction design) : une seule
+// liste chronologique, groupée par jour, avec le même vocabulaire de
+// gravité que « À traiter » (badges ok/warn/danger). Lecture seule,
+// recalculée à chaque ouverture de l'écran plutôt qu'en temps réel —
+// cohérent avec le reste du module (pas de flux continu).
+// =====================================================================
+function dayKeyFor(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function dayLabelFor(ms) {
+  const d = new Date(ms);
+  const today = dayKeyFor(Date.now());
+  const key = dayKeyFor(ms);
+  if (key === today) return "Aujourd'hui";
+  if (key === today - 86400000) return "Hier";
+  return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+}
+
+const FENETRE_FEED_JOURS = 30;
+
+export async function renderNotificationsFeed() {
+  const feedEl = document.getElementById("notifFeed");
+  if (!feedEl) return;
+  feedEl.innerHTML = `<p class="subtle">Chargement…</p>`;
+  try {
+    const depuis = Date.now() - FENETRE_FEED_JOURS * 86400000;
+    const depuisDate = new Date(depuis);
+    const [cyclesDebutSnap, cyclesFinSnap, txSnap, tachesSnap] = await Promise.all([
+      getDocs(query(collection(db, "nest_cycles"), where("date_debut", ">=", depuisDate))),
+      getDocs(query(collection(db, "nest_cycles"), where("date_fin", ">=", depuisDate))),
+      getDocs(query(collection(db, "finance_transactions"), where("createdAt", ">=", depuisDate))),
+      getDocs(collection(db, "taches"))
+    ]);
+
+    const items = [];
+    cyclesDebutSnap.docs.forEach(d => {
+      const c = d.data();
+      items.push({ ms: toMs(c.date_debut), severity: "ok", title: `Ponte démarrée · nid ${c.nid_numero}`, sub: `${c.nombre_oeufs || 0} œuf(s)` });
+    });
+    cyclesFinSnap.docs.forEach(d => {
+      const c = d.data();
+      if (c.statut === "eclos") {
+        items.push({ ms: toMs(c.date_fin), severity: "ok", title: `Éclosion · nid ${c.nid_numero}`, sub: `${c.nombre_eclos || 0} caneton(s)` });
+      } else if (c.statut === "echec") {
+        items.push({ ms: toMs(c.date_fin), severity: "danger", title: `Échec de couvaison · nid ${c.nid_numero}`, sub: "Cycle archivé" });
+      }
+    });
+    txSnap.docs.forEach(d => {
+      const t = d.data();
+      items.push({
+        ms: toMs(t.createdAt) || toMs(t.date),
+        severity: t.type === "recette" ? "ok" : "warn",
+        title: t.type === "recette" ? "Recette enregistrée" : "Dépense enregistrée",
+        sub: `${formatFCFA(t.montant)}${t.description ? " · " + escapeHtml(t.description) : ""}`
+      });
+    });
+    tachesSnap.docs.forEach(d => {
+      const t = d.data();
+      if (t.statut !== "a_faire" || !t.date_echeance) return;
+      const dEch = t.date_echeance?.toDate ? t.date_echeance.toDate() : new Date(t.date_echeance);
+      if (isNaN(dEch.getTime())) return;
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      dEch.setHours(0, 0, 0, 0);
+      const j = Math.round((dEch.getTime() - today.getTime()) / 86400000);
+      if (j > 1) return;
+      items.push({
+        ms: Date.now(),
+        severity: j < 0 ? "danger" : "warn",
+        title: escapeHtml(t.titre),
+        sub: j < 0 ? `En retard de ${Math.abs(Math.round(j))} j` : j === 0 ? "Échéance aujourd'hui" : "Échéance demain"
+      });
+    });
+
+    if (!items.length) {
+      feedEl.innerHTML = `<div class="empty-state"><div class="glyph">🔔</div><p>Rien à signaler sur les ${FENETRE_FEED_JOURS} derniers jours.</p></div>`;
+      return;
+    }
+
+    items.sort((a, b) => b.ms - a.ms);
+    const groups = [];
+    items.forEach(it => {
+      const key = dayKeyFor(it.ms);
+      let g = groups.find(g => g.key === key);
+      if (!g) { g = { key, ms: it.ms, list: [] }; groups.push(g); }
+      g.list.push(it);
+    });
+
+    feedEl.innerHTML = groups.map(g => `
+      <div class="notif-day-label">${dayLabelFor(g.ms)}</div>
+      <div class="card">
+        ${g.list.map(it => `
+          <div class="row"><div class="row-main"><span class="row-title" style="font-size:14px;">${it.title}</span><span class="row-sub">${it.sub}</span></div><span class="tag ${it.severity}">${it.severity === "danger" ? "Urgent" : it.severity === "warn" ? "À suivre" : "Fait"}</span></div>
+        `).join("")}
+      </div>
+    `).join("");
+  } catch (e) {
+    console.error("Erreur chargement des notifications :", e);
+    feedEl.innerHTML = `<p class="subtle">Erreur de chargement : ${e.message}</p>`;
+  }
 }
