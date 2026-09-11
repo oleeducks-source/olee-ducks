@@ -432,6 +432,12 @@ select.filter-select:focus{border-color:var(--pond-400);}
 .row-icon.warn{background:#FCEBD9; color:var(--yolk-600);}
 .row-icon.dark{background:var(--pond-950); color:var(--yolk-500);}
 .row.with-icon{align-items:center;}
+.icon-btn{
+  flex:0 0 auto; width:34px; height:34px; border-radius:var(--radius-s);
+  border:none; background:var(--sage-100); font-size:15px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.icon-btn.danger{background:#F8DFDA;}
 
 /* ---------- Barre de progression de couvaison (ludique) ---------- */
 .incubation-progress,.stage-progress{background:var(--sage-100); border-radius:var(--radius-s); padding:12px 14px;}
