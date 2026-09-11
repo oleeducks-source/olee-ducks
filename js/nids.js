@@ -13,7 +13,7 @@
 import { db } from "./firebase-config.js";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot,
-  serverTimestamp, query, where, orderBy, increment, writeBatch
+  serverTimestamp, query, where, orderBy, limit, increment, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputValue, getUserName, escapeHtml, animateCountUp } from "./utils.js";
 
@@ -396,7 +396,7 @@ async function openArchiveDetailModal(c) {
     <div class="row"><div class="row-main"><span class="row-title">Taux d'éclosion</span></div><span class="row-value">${taux}%</span></div>
     ${c.archive_par ? `<div class="row"><div class="row-main"><span class="row-title">Archivé par</span></div><span class="row-value">${escapeHtml(c.archive_par)}</span></div>` : ""}
     <div class="spacer-s"></div>
-    <p class="subtle">🔒 Cette archive est en lecture seule — un cycle une fois clôturé ne se modifie plus, pour garantir la fiabilité de l'historique.</p>
+    <p class="subtle">🔒 Cette archive est en lecture seule — un cycle une fois clôturé ne se modifie plus directement, pour garantir la fiabilité de l'historique. Pour corriger le nombre de canetons (ex. doublon de saisie), modifiez la quantité du lot correspondant dans <b>Canards</b> : la correction se répercute automatiquement ici.</p>
     <div id="fArchInventaireZone"></div>
   `;
   openModal(`Nid n° ${c.nid_numero}`, body, {
@@ -808,6 +808,25 @@ function openNestModal(n) {
         const dateReleve = dateReleveInput ? new Date(dateReleveInput) : new Date();
         if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
         try {
+          // ⚠️ GARDE-FOU (septembre 2026) : deux personnes qui enregistrent
+          // au même moment le même relevé (ex. chacune de son téléphone,
+          // sans se concerter) créaient un doublon silencieux — le nombre
+          // de canetons se retrouvait compté deux fois. On vérifie donc le
+          // relevé le plus récent pour ce nid juste avant d'enregistrer :
+          // s'il date de moins de 15 minutes et porte la même quantité,
+          // on demande une confirmation explicite plutôt que d'enregistrer
+          // silencieusement un possible doublon.
+          const recentSnap = await getDocs(query(eclosionsCol, where("cycle_id", "==", cycle.id), orderBy("createdAt", "desc"), limit(1)));
+          if (!recentSnap.empty) {
+            const dernier = recentSnap.docs[0].data();
+            const createdAtMs = dernier.createdAt?.toDate ? dernier.createdAt.toDate().getTime() : null;
+            const minutesEcoulees = createdAtMs ? (Date.now() - createdAtMs) / 60000 : null;
+            if (minutesEcoulees !== null && minutesEcoulees < 15 && Number(dernier.quantite) === q) {
+              const confirme = confirm(`⚠️ Un relevé de ${q} caneton(s) a déjà été enregistré il y a ${Math.max(1, Math.round(minutesEcoulees))} minute(s) par ${dernier.par || "quelqu'un"} pour ce même nid.\n\nConfirmez-vous qu'il s'agit bien d'un NOUVEAU relevé, et non du même comptage enregistré deux fois ?`);
+              if (!confirme) return;
+            }
+          }
+
           await updateDoc(doc(db, "nest_cycles", cycle.id), { nombre_eclos: increment(q) });
           await addDoc(eclosionsCol, {
             nid_numero: n, cycle_id: cycle.id, date: dateReleve,
