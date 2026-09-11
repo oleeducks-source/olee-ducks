@@ -890,7 +890,17 @@ function openEditModal(d) {
           // donc automatiquement, sans jamais rendre l'archive elle-même
           // éditable directement : la correction part toujours de
           // l'inventaire, source de vérité du cheptel actif.
-          if (d.issu_du_cycle_id && nouvelleQuantite !== (Number(d.quantite) || 0)) {
+          // ⚠️ CORRECTIF (septembre 2026) : la répercussion ne se
+          // déclenchait qu'en comparant à la quantité déjà chargée dans le
+          // formulaire (`d.quantite`) — si un premier enregistrement avait
+          // déjà corrigé la quantité AVANT que cette répercussion existe
+          // (ou avant qu'elle réussisse), ré-enregistrer sans rien changer
+          // ne déclenchait plus rien, la comparaison ne voyant "aucun
+          // changement". Le cycle lié est maintenant systématiquement
+          // resynchronisé sur la quantité actuelle à chaque enregistrement
+          // — sans condition de changement — pour ne plus jamais rester
+          // désynchronisé silencieusement.
+          if (d.issu_du_cycle_id) {
             try {
               await updateDoc(doc(db, "nest_cycles", d.issu_du_cycle_id), {
                 nombre_eclos: nouvelleQuantite,
