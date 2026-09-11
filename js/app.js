@@ -2,7 +2,7 @@
 // APP.JS — Point d'entrée. Initialise Firebase, la navigation entre les
 // 5 pages, et délègue chaque domaine métier à son propre module.
 // =====================================================================
-import { auth, authReady, firebaseApp, persistanceHorsLigne } from "./firebase-config.js";
+import { auth, authReady, firebaseApp } from "./firebase-config.js";
 import { getUserName, ensureUserProfile, promptChangeUserName } from "./utils.js";
 import { initInventaire, openAddDuckModal } from "./inventaire.js";
 import { initNests } from "./nids.js";
@@ -14,6 +14,7 @@ import { initNotifications } from "./notifications.js";
 import { initTaches, openAddTacheModal } from "./taches.js";
 import { initSauvegarde } from "./sauvegarde.js";
 import { initPesees } from "./pesees.js";
+import { initPilotage } from "./pilotage.js";
 
 const PAGES = ["dashboard", "canards", "nids", "finances", "stocks", "taches"];
 let currentPage = "dashboard";
@@ -102,21 +103,6 @@ function showConfigError(err) {
   banner.classList.remove("hidden");
 }
 
-// Le mode hors ligne est un argument central de l'app (bâtiment sans
-// réseau). Quand le cache persistant n'a pas pu s'activer — fenêtre
-// privée, stockage refusé — mieux vaut le dire que laisser croire que
-// la saisie sans réseau est protégée.
-function avertirPersistanceIndisponible() {
-  const page = document.getElementById("page-dashboard");
-  if (!page || document.getElementById("persistanceBanner")) return;
-  const el = document.createElement("div");
-  el.id = "persistanceBanner";
-  el.className = "state-banner warn";
-  el.style.marginBottom = "16px";
-  el.innerHTML = '<span class="glyph">⚠️</span><span>Le mode hors ligne n\'est pas disponible ici (navigation privée ou stockage refusé). Évitez de saisir des données sans réseau : elles ne seraient pas conservées.</span>';
-  page.prepend(el);
-}
-
 function maskKey(k) {
   if (!k) return "absente";
   if (k.startsWith("REMPLACER")) return "REMPLACER_... (jamais configurée)";
@@ -143,8 +129,6 @@ async function boot() {
     showConfigError(e);
   }
 
-  if (!persistanceHorsLigne) avertirPersistanceIndisponible();
-
   initInventaire();
   initNests();
   initFinances();
@@ -155,6 +139,7 @@ async function boot() {
   initTaches();
   initSauvegarde();
   initPesees();
+  initPilotage();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker non enregistré :", err));
