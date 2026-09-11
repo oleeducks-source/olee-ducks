@@ -12,7 +12,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
   serverTimestamp, orderBy, query, increment
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression, setAttentionItems } from "./utils.js";
+import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { getActiveDuckCounts } from "./inventaire.js";
 
 const itemsCol = collection(db, "stock_items");
@@ -76,17 +76,13 @@ export function initStocks() {
   document.getElementById("openFormulationBtn")?.addEventListener("click", openFormulationModal);
 }
 
-// Consommation moyenne / jour sur les sorties des 14 derniers jours ->
-// estimation d'autonomie. Fenêtre glissante de 14 jours (plutôt que 30) :
-// plus réactive à un changement récent de cheptel ou de consommation,
-// quitte à être un peu plus sensible au bruit d'une semaine atypique.
-const AUTONOMIE_FENETRE_JOURS = 14;
+// Consommation moyenne / jour sur les sorties des 30 derniers jours -> estimation d'autonomie
 function estimateDaysLeft(item) {
-  const cutoff = Date.now() - AUTONOMIE_FENETRE_JOURS * 86400000;
+  const cutoff = Date.now() - 30 * 86400000;
   const sorties = allMovements.filter(m => m.item_id === item.id && m.type_mouvement === "sortie" && toMs(m.date) >= cutoff);
   const totalSorti = sorties.reduce((a, m) => a + Number(m.quantite || 0), 0);
   if (totalSorti <= 0) return null;
-  const avgPerDay = totalSorti / AUTONOMIE_FENETRE_JOURS;
+  const avgPerDay = totalSorti / 30;
   if (avgPerDay <= 0) return null;
   return Math.round((Number(item.quantite_actuelle) || 0) / avgPerDay);
 }
@@ -197,20 +193,6 @@ function renderList() {
     `;
   }
   animateCountUp("kpiAlertesStock", alerts.length);
-
-  // Alimente le panneau "À traiter" du tableau de bord (Aujourd'hui) —
-  // un article par ligne, avec le nombre de jours d'autonomie restants
-  // quand il est calculable.
-  setAttentionItems("stocks", alerts.map(i => {
-    const jours = estimateDaysLeft(i);
-    return {
-      severity: "danger",
-      title: `${i.nom} sous le seuil`,
-      sub: `${i.quantite_actuelle} ${i.unite} restants${jours !== null ? ` · ${jours} jour(s) de consommation` : ""}`,
-      action: "Voir",
-      onClick: () => { document.querySelector('.nav-item[data-page="stocks"]')?.click(); }
-    };
-  }));
 
   const listEl = document.getElementById("stockList");
   if (!listEl) return;
@@ -509,6 +491,14 @@ function openMovementModal(item, type) {
             item_id: item.id, type_mouvement: type, quantite: qte, date: dateVal,
             motif: isEntree ? "achat" : document.getElementById("fMovMotif").value,
             cout_total: isEntree ? (Number(document.getElementById("fMovCout").value) || 0) : null,
+            // ⚠️ AJOUT (septembre 2026) : sur une SORTIE, on historise le
+            // coût unitaire moyen de l'article AU MOMENT de la sortie —
+            // champ purement additif, ne modifie rien d'existant. Sert au
+            // Moteur de rentabilité (Finances > Rentabilité) pour
+            // valoriser précisément l'aliment/les soins réellement
+            // consommés, même si le coût unitaire de l'article change
+            // plus tard suite à un nouvel achat.
+            cout_unitaire_estime: isEntree ? null : (Number(item.cout_unitaire_moyen) || 0),
             lien_finance_id: null,
             cree_par: getUserName() || "Inconnu",
             createdAt: serverTimestamp()
