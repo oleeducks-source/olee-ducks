@@ -528,21 +528,3 @@ select.filter-select:focus{border-color:var(--pond-400);}
 }
 .sack-pop.neg{background:var(--clay-500); color:var(--white);}
 .sack-pop.play{animation:eggPop 1.5s ease forwards;}
-
-/* =====================================================================
-   V3 — Centre de pilotage (lecture seule)
-   ===================================================================== */
-.pilot-card{border:1px solid var(--line);overflow:hidden}
-.pilot-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
-.pilot-head h3{margin:3px 0 0;font-size:18px}
-.pilot-score-row{display:flex;align-items:center;gap:18px;margin:16px 0}
-.pilot-score{font-family:"IBM Plex Mono",monospace;font-size:34px;font-weight:700;line-height:1}
-.pilot-facts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;flex:1}
-.pilot-facts>div{background:var(--sage-50,#f4f7f3);border-radius:12px;padding:9px 10px}
-.pilot-facts b{display:block;font-size:18px}.pilot-facts span{font-size:10px;color:var(--muted,#718078)}
-.pilot-section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:12px 0 7px;color:var(--muted,#718078)}
-.pilot-action{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;padding:10px 2px;display:grid;grid-template-columns:30px 1fr 20px;text-align:left;align-items:center;gap:8px;cursor:pointer;color:inherit}
-.pilot-action:last-child{border-bottom:0}.pilot-action-icon{font-size:18px;text-align:center}.pilot-action b{display:block;font-size:13px}.pilot-action small{display:block;font-size:11px;color:var(--muted,#718078);margin-top:2px}.pilot-action.danger b{color:var(--clay-600,#9c3f2e)}.pilot-action.warn b{color:var(--yolk-700,#916800)}
-.pilot-arrow{font-size:18px;text-align:right}.pilot-finance{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.pilot-finance>div{display:flex;flex-direction:column;gap:3px;background:var(--sage-50,#f4f7f3);padding:9px 10px;border-radius:10px}.pilot-finance span{font-size:10px;color:var(--muted,#718078)}.pilot-finance b{font-family:"IBM Plex Mono",monospace;font-size:12px}
-.pilot-weight{font-size:11px;margin-top:8px;padding:9px 10px;border:1px dashed var(--line);border-radius:10px}.pilot-status{font-size:10px;color:var(--muted,#718078);margin-top:10px}
-@media(max-width:560px){.pilot-score-row{align-items:flex-start}.pilot-facts{grid-template-columns:repeat(2,1fr)}.pilot-finance{grid-template-columns:1fr}.pilot-head{align-items:center}.pilot-head .btn{padding:8px 10px}}
