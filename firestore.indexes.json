@@ -7,6 +7,14 @@
         { "fieldPath": "statut", "order": "ASCENDING" },
         { "fieldPath": "date_fin", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "eclosions_journalieres",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cycle_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
