@@ -838,6 +838,7 @@ function openEditModal(d) {
         const nouveauType = document.getElementById("eDuckType").value;
         const dateNaissanceVal = document.getElementById("eDuckDateNaissance").value;
         const nouvelleDateNaissance = dateNaissanceVal ? new Date(dateNaissanceVal) : null;
+        const nouvelleQuantite = Number(document.getElementById("eDuckQte").value) || 1;
         try {
           const updatePayload = {
             type: nouveauType,
@@ -846,7 +847,7 @@ function openEditModal(d) {
             date_naissance: nouvelleDateNaissance,
             lot: document.getElementById("eDuckLot").value.trim() || null,
             verrouille_type: document.getElementById("eDuckLock").checked,
-            quantite: Number(document.getElementById("eDuckQte").value) || 1,
+            quantite: nouvelleQuantite,
             motif_sortie: document.getElementById("eDuckMotif").value.trim() || null,
             notes: document.getElementById("eDuckNotes").value.trim() || null,
             date_sortie: statut !== "actif" && document.getElementById("eDuckDateSortie").value ? new Date(document.getElementById("eDuckDateSortie").value) : null,
@@ -865,10 +866,11 @@ function openEditModal(d) {
           }
           await updateDoc(doc(db, "ducks", d.id), updatePayload);
 
-          // Répercute la correction de date sur les archives liées à ce
-          // lot, pour qu'elles restent cohérentes avec le cheptel actif :
-          // - le cycle de nid d'origine (date d'éclosion affichée dans
-          //   Nids > Archives), si ce lot est issu d'une éclosion ;
+          // Répercute la correction sur les archives liées à ce lot, pour
+          // qu'elles restent cohérentes avec le cheptel actif :
+          // - le cycle de nid d'origine (date d'éclosion ET nombre de
+          //   canetons éclos affichés dans Nids > Archives), si ce lot
+          //   est issu d'une éclosion ;
           // - les entrées "caneton → canardeau" déjà archivées à partir
           //   de ce lot (Canards > Archive des canetons produits).
           if (nouvelleDateNaissance && d.issu_du_cycle_id) {
@@ -879,6 +881,23 @@ function openEditModal(d) {
                 corrige_le: serverTimestamp()
               });
             } catch (e) { console.error("Erreur mise à jour du cycle de nid lié :", e); }
+          }
+          // ⚠️ NOUVEAU (septembre 2026) : une correction de quantité (ex.
+          // double comptage lors d'un enregistrement simultané par deux
+          // utilisateurs) se répercute désormais sur "nombre_eclos" du
+          // cycle de nid d'origine — le taux d'éclosion affiché dans
+          // Nids > Archives (calculé à partir de nombre_eclos) se corrige
+          // donc automatiquement, sans jamais rendre l'archive elle-même
+          // éditable directement : la correction part toujours de
+          // l'inventaire, source de vérité du cheptel actif.
+          if (d.issu_du_cycle_id && nouvelleQuantite !== (Number(d.quantite) || 0)) {
+            try {
+              await updateDoc(doc(db, "nest_cycles", d.issu_du_cycle_id), {
+                nombre_eclos: nouvelleQuantite,
+                corrige_par: getUserName() || "Inconnu",
+                corrige_le: serverTimestamp()
+              });
+            } catch (e) { console.error("Erreur mise à jour du nombre d'éclos du cycle lié :", e); }
           }
           if (nouvelleDateNaissance) {
             try {
@@ -897,7 +916,7 @@ function openEditModal(d) {
           // l'archive de production reste complète quelle que soit la
           // méthode utilisée.
           if (nouveauType === "canardeau" && (allDucks.find(x => x.id === d.id)?.type || d.type) !== "canardeau") {
-            await archiverPassageCanardeau(d, Number(document.getElementById("eDuckQte").value) || 1, getUserName() || "Inconnu");
+            await archiverPassageCanardeau(d, nouvelleQuantite, getUserName() || "Inconnu");
           }
           toast("Mis à jour ✓");
           closeModal();
