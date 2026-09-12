@@ -216,19 +216,6 @@
     </div>
 
     <div class="spacer-m"></div>
-    <div class="card tasks-card" id="dashPoidsCard">
-      <div class="tasks-card-top">
-        <div class="tasks-card-title">
-          <span class="voyant idle" id="poidsVoyant"></span>
-          <span class="eyebrow">Santé du cheptel</span>
-        </div>
-        <button class="btn secondary small" id="openPoidsBtn">Voir les lots →</button>
-      </div>
-      <h3 style="margin:4px 0 2px;">Suivi pondéral</h3>
-      <div id="dashPoidsResume"><p class="subtle">Chargement…</p></div>
-      <div class="spacer-s"></div>
-      <button class="btn secondary small" id="voirTableauCroissanceBtn">📊 Tableau de croissance</button>
-    </div>
 
     <div class="spacer-m"></div>
     <div class="kpi-grid">
@@ -401,10 +388,7 @@
   <section id="page-finances" class="page hidden">
     <div class="section-title">
       <div><span class="eyebrow">Recettes & dépenses</span><h2>Finances</h2></div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
-        <button class="btn secondary small" id="openRentabiliteBtn">📊 Rentabilité →</button>
-        <button class="btn secondary small" id="openComptaBtn">Comptabilité OHADA →</button>
-      </div>
+      <button class="btn secondary small" id="openComptaBtn">Comptabilité OHADA →</button>
     </div>
     <div class="balance-banner">
       <div class="balance-banner-top">
@@ -576,40 +560,6 @@
         <h3 style="font-size:15px; margin-bottom:10px;">Bilan</h3>
         <div id="bilanList"></div>
       </div>
-    </div>
-  </section>
-
-  <!-- ===================== MOTEUR DE RENTABILITÉ ===================== -->
-  <section id="page-rentabilite" class="page hidden">
-    <div class="section-title">
-      <div><span class="eyebrow">Coût de revient & prix de vente</span><h2>Rentabilité</h2></div>
-      <button class="btn secondary small" id="backFromRentabiliteBtn">← Retour</button>
-    </div>
-
-    <div class="segmented" id="rentaPeriode">
-      <button data-v="30">30 jours</button>
-      <button data-v="90" class="active">90 jours</button>
-      <button data-v="365">1 an</button>
-      <button data-v="all">Tout</button>
-    </div>
-    <div class="spacer-s"></div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-      <button class="btn secondary small" id="rentaConfigBtn">⚙️ Paramètres</button>
-      <button class="btn secondary small" id="rentaSimulateurBtn">🧪 Simulateur</button>
-    </div>
-    <div class="spacer-m"></div>
-
-    <div id="rentaGlobalKpis"><p class="subtle">Chargement…</p></div>
-    <div class="spacer-m"></div>
-
-    <h3 style="font-size:15px; margin-bottom:10px;">Coût de revient par catégorie</h3>
-    <div id="rentaCategories"></div>
-    <div class="spacer-m"></div>
-
-    <div class="card">
-      <h3 style="font-size:15px; margin-bottom:4px;">Courbe de coût par âge (caneton → canard)</h3>
-      <p class="subtle" style="margin:0 0 10px;">À quel âge est-il le plus rentable de vendre ?</p>
-      <div id="rentaCourbeAge"></div>
     </div>
   </section>
 
