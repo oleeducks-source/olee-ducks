@@ -9,7 +9,6 @@ import {
   serverTimestamp, orderBy, query, where, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
-import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard, renderPeseesScreen, ouvrirTableauCroissance } from "./pesees.js";
 
 const ducksCol = collection(db, "ducks");
 let allDucks = [];
@@ -174,7 +173,6 @@ export function initInventaire() {
     renderKpis();
     renderFilters();
     renderList();
-    renderPeseesScreen(); // tient "À traiter" (Aujourd'hui) et l'écran Pesées à jour même sans y être allé
     autoRequalifierParAge(); // déclenche les écritures nécessaires ; le prochain snapshot rafraîchira l'affichage
   }, (err) => console.error("Erreur lecture inventaire :", err));
 
@@ -205,26 +203,6 @@ export function initInventaire() {
   document.getElementById("invLotModeBtn")?.addEventListener("click", toggleSelectionMode);
   document.getElementById("invCancelSelectionBtn")?.addEventListener("click", () => setSelectionMode(false));
   document.getElementById("invAssignLotBtn")?.addEventListener("click", openAssignLotModal);
-
-  // ------ Onglets Cheptel (E3) / Pesées & croissance (E8) ------
-  document.querySelectorAll("#canardsView button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#canardsView button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      const v = btn.dataset.v;
-      document.getElementById("canardsCheptelWrap")?.classList.toggle("hidden", v !== "cheptel");
-      document.getElementById("canardsPeseesWrap")?.classList.toggle("hidden", v !== "pesees");
-      if (v === "pesees") renderPeseesScreen();
-    });
-  });
-  document.getElementById("peseesVoirTableauBtn")?.addEventListener("click", ouvrirTableauCroissance);
-}
-
-// Utilisé par pesees.js pour construire l'écran "Pesées & croissance"
-// (E8) : un lot par ligne, y compris les lots sans pesée enregistrée
-// (affichés comme "non suivi" plutôt qu'omis). Lecture seule.
-export function getActiveDucksList() {
-  return activeDucks();
 }
 
 // Compte les effectifs (somme des quantités, hors suppressions en
@@ -316,16 +294,9 @@ function formatInputDate(d) {
   return new Date(date.getTime() - off * 60000).toISOString().slice(0, 10);
 }
 
-async function chargerEtAfficherPesees(lotId) {
-  const zone = document.getElementById("fPeseesHistorique");
-  if (!zone) return;
-  try {
-    const pesees = await chargerHistoriquePesees(lotId);
-    zone.innerHTML = rendreHistoriquePeseesHtml(pesees);
-  } catch (e) {
-    zone.innerHTML = `<p class="subtle">Erreur de chargement des pesées : ${e.message}</p>`;
-  }
-}
+// Retiré (septembre 2026) : le suivi pondéral (pesées) a été retiré de
+// l'application (fichier js/pesees.js supprimé) — jugé incohérent avec
+// le reste de l'outil.
 
 // Affiche l'archive de production de canetons (collection
 // "canetons_production"). Le total affiché est purement informatif
@@ -531,7 +502,7 @@ function setSelectionMode(on) {
   selectionMode = on;
   if (!on) selectedIds.clear();
   const btn = document.getElementById("invLotModeBtn");
-  if (btn) btn.textContent = on ? "Annuler la sélection" : "Regrouper en lot";
+  if (btn) btn.textContent = on ? "✕ Annuler la sélection" : "🏷️ Regrouper en lot";
   updateSelectionBar();
   renderList();
 }
@@ -730,16 +701,6 @@ function openEditModal(d) {
     </div>
     ` : ""}
 
-    ${isActif ? `
-    <div class="spacer-m"></div>
-    <div class="card" style="background:var(--sage-100); border:none;">
-      <h3 style="font-size:14px; margin-bottom:8px;">Suivi pondéral</h3>
-      <button class="btn secondary" id="fPeserBtn">⚖️ Peser un échantillon</button>
-      <div class="spacer-s"></div>
-      <div id="fPeseesHistorique"><p class="subtle">Chargement…</p></div>
-    </div>
-    ` : ""}
-
     <div class="spacer-m"></div>
     <h3 style="font-size:14px; margin-bottom:8px;">Corriger cet enregistrement</h3>
     <div class="field">
@@ -788,10 +749,6 @@ function openEditModal(d) {
   `;
   openModal(`${TYPE_LABELS[d.type] || d.type}`, body, {
     onMount: () => {
-      const peserBtn = document.getElementById("fPeserBtn");
-      if (peserBtn) peserBtn.addEventListener("click", () => openPeseeModal(d, () => { chargerEtAfficherPesees(d.id); refreshPeseesDashboard(); }));
-      chargerEtAfficherPesees(d.id);
-
       const requalBtn = document.getElementById("fRequalSave");
       if (requalBtn) requalBtn.addEventListener("click", async () => {
         const qte = Number(document.getElementById("fRequalQte").value) || 0;
