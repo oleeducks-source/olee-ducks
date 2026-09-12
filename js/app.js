@@ -9,12 +9,10 @@ import { initNests } from "./nids.js";
 import { initFinances, openAddFinanceModal } from "./finances.js";
 import { initStocks, openAddStockItemModal } from "./stocks.js";
 import { initComptabilite } from "./comptabilite.js";
-import { initRentabilite } from "./rentabilite.js";
 import { initRapport } from "./rapport.js";
 import { initNotifications } from "./notifications.js";
 import { initTaches, openAddTacheModal } from "./taches.js";
 import { initSauvegarde } from "./sauvegarde.js";
-import { initPesees } from "./pesees.js";
 
 const PAGES = ["dashboard", "canards", "nids", "finances", "stocks", "taches"];
 let currentPage = "dashboard";
@@ -25,7 +23,6 @@ function setPage(page) {
     document.getElementById(`page-${p}`).classList.toggle("hidden", p !== page);
   });
   document.getElementById("page-compta").classList.add("hidden");
-  document.getElementById("page-rentabilite").classList.add("hidden");
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === page);
   });
@@ -135,12 +132,10 @@ async function boot() {
   initFinances();
   initStocks();
   initComptabilite();
-  initRentabilite();
   initRapport();
   initNotifications();
   initTaches();
   initSauvegarde();
-  initPesees();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker non enregistré :", err));
