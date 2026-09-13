@@ -179,6 +179,32 @@
   </div>
 
   <div id="errorBanner" class="hidden" style="background:#F8DFDA; color:#8A2E1E; padding:10px 16px; font-size:12.5px; line-height:1.5;"></div>
+  <script>
+  // Filet de sécurité : affiche directement à l'écran toute erreur JS
+  // imprévue (utile en diagnostic sur téléphone, sans accès aux outils
+  // de développement d'un ordinateur). Complète showConfigError() dans
+  // app.js, qui gère spécifiquement les erreurs Firebase connues.
+  (function () {
+    function showJsError(title, detail) {
+      var banner = document.getElementById("errorBanner");
+      if (!banner) return;
+      banner.innerHTML = "⚠️ " + title + "<br><span style=\"opacity:.75\">" + detail + "</span>";
+      banner.classList.remove("hidden");
+    }
+    window.addEventListener("error", function (e) {
+      if (!e || !e.message) return;
+      showJsError(
+        "Erreur JavaScript : " + e.message,
+        (e.filename ? e.filename.split("/").pop() : "?") + " · ligne " + (e.lineno || "?")
+      );
+    });
+    window.addEventListener("unhandledrejection", function (e) {
+      var reason = e.reason;
+      var msg = reason && (reason.message || reason.code) ? (reason.message || reason.code) : String(reason);
+      showJsError("Promesse rejetée : " + msg, reason && reason.stack ? String(reason.stack).split("\n")[0] : "");
+    });
+  })();
+  </script>
 
   <!-- ===================== DASHBOARD ===================== -->
   <section id="page-dashboard" class="page">
