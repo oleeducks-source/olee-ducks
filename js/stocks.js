@@ -193,6 +193,7 @@ function renderList() {
     `;
   }
   animateCountUp("kpiAlertesStock", alerts.length);
+  animateCountUp("kpiAlertesStockMirror", alerts.length); // même valeur, reflétée dans la carte "À surveiller" du tableau de bord
 
   const listEl = document.getElementById("stockList");
   if (!listEl) return;
@@ -491,14 +492,6 @@ function openMovementModal(item, type) {
             item_id: item.id, type_mouvement: type, quantite: qte, date: dateVal,
             motif: isEntree ? "achat" : document.getElementById("fMovMotif").value,
             cout_total: isEntree ? (Number(document.getElementById("fMovCout").value) || 0) : null,
-            // ⚠️ AJOUT (septembre 2026) : sur une SORTIE, on historise le
-            // coût unitaire moyen de l'article AU MOMENT de la sortie —
-            // champ purement additif, ne modifie rien d'existant. Sert au
-            // Moteur de rentabilité (Finances > Rentabilité) pour
-            // valoriser précisément l'aliment/les soins réellement
-            // consommés, même si le coût unitaire de l'article change
-            // plus tard suite à un nouvel achat.
-            cout_unitaire_estime: isEntree ? null : (Number(item.cout_unitaire_moyen) || 0),
             lien_finance_id: null,
             cree_par: getUserName() || "Inconnu",
             createdAt: serverTimestamp()

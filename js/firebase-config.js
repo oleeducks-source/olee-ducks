@@ -1,9 +1,18 @@
+// =====================================================================
+// CONFIGURATION FIREBASE — OLEE DUCKS
+// =====================================================================
+// 1. Créez un projet gratuit sur https://console.firebase.google.com
+// 2. Ajoutez une "application Web" au projet
+// 3. Copiez les valeurs fournies par Firebase ci-dessous (firebaseConfig)
+// 4. Activez Firestore Database (mode production) et Authentication
+//    (méthode "Anonyme") dans la console Firebase.
+// Voir README.md pour le guide complet, étape par étape.
+// =====================================================================
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  initializeFirestore,
   getFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager
+  enableIndexedDbPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getAuth,
@@ -11,51 +20,32 @@ import {
   onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
+// >>> REMPLACEZ CES VALEURS PAR CELLES DE VOTRE PROJET FIREBASE <<<
 const firebaseConfig = {
-  apiKey: "AIzaSyB9Rj7DNOncLmqpr9thR0HKG8D4sOl31Fc",
-  authDomain: "olee-ducks-f6752.firebaseapp.com",
-  projectId: "olee-ducks-f6752",
-  storageBucket: "olee-ducks-f6752.firebasestorage.app",
-  messagingSenderId: "943030289981",
-  appId: "1:943030289981:web:0e9b1024a21f2ffd7c8c54"
+  apiKey: "REMPLACER_apiKey",
+  authDomain: "REMPLACER.firebaseapp.com",
+  projectId: "REMPLACER_projectId",
+  storageBucket: "REMPLACER.appspot.com",
+  messagingSenderId: "REMPLACER_senderId",
+  appId: "REMPLACER_appId"
 };
 
 export const firebaseApp = initializeApp(firebaseConfig);
-
-// ---------------------------------------------------------------------
-// Cache persistant (IndexedDB) déclaré à l'initialisation de Firestore.
-//
-// Remplace enableIndexedDbPersistence(db), déprécié depuis Firebase 10 :
-// cette fonction renvoyait une promesse, donc le try/catch synchrone qui
-// l'entourait ne pouvait rien attraper. Un échec d'activation partait en
-// rejet non géré et le mode hors ligne — argument central de l'app pour
-// un usage en bâtiment sans réseau — était silencieusement absent.
-//
-// persistentMultipleTabManager autorise en plus plusieurs onglets
-// simultanés, ce que l'ancienne API refusait (elle désactivait alors la
-// persistance sur le deuxième onglet ouvert).
-//
-// persistanceHorsLigne indique à l'application si le cache est réellement
-// actif : app.js s'en sert pour avertir l'utilisateur au lieu de laisser
-// croire que la saisie hors réseau est protégée (fenêtre privée, stockage
-// refusé, navigateur non compatible).
-// ---------------------------------------------------------------------
-export let persistanceHorsLigne = true;
-
-let firestoreInstance;
-try {
-  firestoreInstance = initializeFirestore(firebaseApp, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-  });
-} catch (e) {
-  console.warn("Cache persistant indisponible — repli sur le cache mémoire :", e?.code || e);
-  persistanceHorsLigne = false;
-  firestoreInstance = getFirestore(firebaseApp);
-}
-
-export const db = firestoreInstance;
+export const db = getFirestore(firebaseApp);
 export const auth = getAuth(firebaseApp);
 
+// Persistance hors-ligne : les 2-3 téléphones continuent de fonctionner
+// même en cas de coupure réseau, et se resynchronisent au retour du signal.
+try {
+  enableIndexedDbPersistence(db);
+} catch (e) {
+  console.warn("Persistance hors-ligne non disponible sur cet onglet :", e.code);
+}
+
+// Connexion anonyme automatique : pas d'écran de login pour les 3 utilisateurs,
+// mais Firestore exige quand même un utilisateur authentifié (voir règles de
+// sécurité dans le README) — cela empêche des inconnus d'écrire des données
+// s'ils tombent sur le lien de l'application.
 export const authReady = new Promise((resolve, reject) => {
   onAuthStateChanged(auth, (user) => {
     if (user) {

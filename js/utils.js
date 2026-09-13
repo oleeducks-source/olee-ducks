@@ -333,41 +333,10 @@ export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
-    // L'apostrophe simple et l'accent grave manquaient : plusieurs
-    // valeurs sont injectées dans des attributs HTML délimités par des
-    // apostrophes simples ou dans des gabarits de chaînes.
-    .replaceAll("'", "&#39;").replaceAll("`", "&#96;");
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
 export function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-}
-
-// ---------------------------------------------------------------------
-// Registre partagé "À traiter" (écran Aujourd'hui, section E1 de la
-// direction design) : chaque module métier (stocks, tâches, pesées…)
-// pousse ici sa propre liste d'éléments qui demandent une action, sans
-// connaître les autres modules. Le tableau de bord (app.js) s'abonne une
-// seule fois et recompose la liste unique + le verdict global à chaque
-// mise à jour d'une des sources.
-// ---------------------------------------------------------------------
-const attentionSources = {};
-let attentionListener = null;
-
-export function setAttentionItems(source, items) {
-  attentionSources[source] = items || [];
-  if (attentionListener) attentionListener(allAttentionItems());
-}
-
-function allAttentionItems() {
-  // Le plus grave d'abord (danger avant warn), sinon l'ordre d'arrivée.
-  const order = { danger: 0, warn: 1 };
-  return Object.values(attentionSources).flat().sort((a, b) => (order[a.severity] ?? 2) - (order[b.severity] ?? 2));
-}
-
-export function onAttentionChange(fn) {
-  attentionListener = fn;
-  fn(allAttentionItems());
 }

@@ -15,7 +15,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs,
   serverTimestamp, query, orderBy, where
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, confirmerSuppression, estEnAttenteSuppression, setAttentionItems } from "./utils.js";
+import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 
 const tachesCol = collection(db, "taches");
 let allTaches = [];
@@ -97,6 +97,13 @@ export function initTaches() {
       document.getElementById("tachesAFaireWrap")?.classList.toggle("hidden", filterView !== "a_faire");
       document.getElementById("tachesHistoriqueWrap")?.classList.toggle("hidden", filterView !== "historique");
     });
+  });
+
+  // Depuis le tableau de bord, "Voir tout →" ouvre la page Tâches en
+  // réutilisant le bouton de navigation existant (pas de dépendance
+  // croisée avec app.js).
+  document.getElementById("openTachesBtn")?.addEventListener("click", () => {
+    document.querySelector('.nav-item[data-page="taches"]')?.click();
   });
 }
 
@@ -396,30 +403,6 @@ function updateVoyantEtBadge() {
     voyant.classList.toggle("blink", vitesse !== null);
     voyant.classList.toggle("idle", ouvertes.length === 0);
   }
-
-  const sidebarCount = document.getElementById("sidebarTachesCount");
-  if (sidebarCount) {
-    sidebarCount.classList.toggle("hidden", ouvertes.length === 0);
-    sidebarCount.textContent = ouvertes.length > 9 ? "9+" : String(ouvertes.length);
-  }
-
-  // Alimente le panneau "À traiter" du tableau de bord : uniquement les
-  // tâches en retard ou dont l'échéance est aujourd'hui/demain — une
-  // tâche sans échéance proche n'a rien à faire dans un écran de
-  // priorités du jour.
-  const urgentes = ouvertes.filter(t => { const j = joursRestants(t); return j !== null && j <= 1; })
-    .sort((a, b) => joursRestants(a) - joursRestants(b));
-  setAttentionItems("taches", urgentes.map(t => {
-    const cat = CATEGORIES_TACHES[t.categorie] || CATEGORIES_TACHES.autre;
-    const tag = urgenceTag(joursRestants(t));
-    return {
-      severity: tag.cls === "danger" ? "danger" : "warn",
-      title: t.titre,
-      sub: `${cat.label} · ${tag.label}`,
-      action: "Voir",
-      onClick: () => openTacheDetail(t)
-    };
-  }));
 
   const resumeEl = document.getElementById("dashTachesResume");
   if (resumeEl) {

@@ -110,6 +110,11 @@ Les modules **Finances** et **Stocks** sont indépendants : un achat de stock pe
 créer une dépense liée (case à cocher), mais chaque module continue de
 fonctionner normalement même sans cette liaison.
 
+Les reçus/factures joints à une transaction (`piece_jointe_data`) sont
+stockés directement dans le document Firestore, sous forme de photo
+compressée (JPEG, ~1280 px, jusqu'à ~700 Ko) — aucun compte Google ni
+service externe n'est nécessaire.
+
 ## 10. Mettre à jour l'application sans perdre de données
 
 Les fichiers de l'application (HTML/CSS/JS) et les données (Firestore) sont

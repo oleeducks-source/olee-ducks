@@ -9,10 +9,19 @@
       ]
     },
     {
-      "collectionGroup": "eclosions_journalieres",
+      "collectionGroup": "nest_history",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "cycle_id", "order": "ASCENDING" },
+        { "fieldPath": "nid_numero", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nest_history",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "nid_numero", "order": "ASCENDING" },
+        { "fieldPath": "action", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
