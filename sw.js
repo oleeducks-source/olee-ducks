@@ -8,7 +8,7 @@
 // IMPORTANT : le numéro de version ci-dessous doit être incrémenté à
 // chaque mise à jour de ce fichier pour forcer le navigateur à détecter
 // un nouveau service worker et à vider l'ancien cache.
-const CACHE_NAME = "oleeducks-shell-v18";
+const CACHE_NAME = "oleeducks-shell-v19";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -34,7 +34,11 @@ const SHELL_FILES = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)).catch(() => {})
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(SHELL_FILES.map((url) =>
+        fetch(url, { cache: "no-store" }).then((res) => cache.put(url, res)).catch(() => {})
+      ))
+    )
   );
   self.skipWaiting();
 });
@@ -56,7 +60,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-store" })
       .then((response) => {
         // Toujours mettre à jour le cache avec la version fraîche obtenue.
         const copy = response.clone();
