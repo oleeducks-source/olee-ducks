@@ -378,20 +378,21 @@ function renderKpis() {
 
   // Une catégorie à 0 est grisée (moins de bruit visuel qu'une carte
   // colorée qui affiche juste "0").
-  const kpiCell = (label, value, variant) => {
+  const kpiCell = (label, value, variant, icon) => {
     const cls = value === 0 ? "kpi zero" : `kpi${variant ? " " + variant : ""}`;
-    return `<div class="${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`;
+    const watermark = icon ? `<svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#${icon}"/></svg>` : "";
+    return `<div class="${cls}">${watermark}<div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`;
   };
 
   const el = document.getElementById("invKpis");
   if (!el) return;
   el.innerHTML = [
-    kpiCell("Canetons", vals.caneton),
-    kpiCell("Canardeaux", vals.canardeau),
-    kpiCell("Canards", vals.canard),
-    kpiCell("Reprod. mâles", vals.reproducteur_male, "alt"),
-    kpiCell("Reprod. femelles", vals.reproducteur_femelle, "alt"),
-    kpiCell("Total actif", totalActifCount, "yolk")
+    kpiCell("Canetons", vals.caneton, null, "ic-duck-caneton"),
+    kpiCell("Canardeaux", vals.canardeau, null, "ic-duck-canardeau"),
+    kpiCell("Canards", vals.canard, null, "ic-duck-canard"),
+    kpiCell("Reprod. mâles", vals.reproducteur_male, "alt", "ic-duck-repro-m"),
+    kpiCell("Reprod. femelles", vals.reproducteur_femelle, "alt", "ic-duck-repro-f"),
+    kpiCell("Total actif", totalActifCount, "yolk", "ic-duck-canard")
   ].join("");
   const totalEl = document.getElementById("kpiTotalCanards");
   const subEl = document.getElementById("kpiCanardsSub");
