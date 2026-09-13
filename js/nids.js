@@ -22,6 +22,7 @@ const cyclesCol = collection(db, "nest_cycles");
 const pontesCol = collection(db, "pontes_journalieres");
 const eclosionsCol = collection(db, "eclosions_journalieres");
 const ducksCol = collection(db, "ducks");
+const nestHistoryCol = collection(db, "nest_history");
 
 let nestsMap = {};   // numero -> nest doc
 let cyclesMap = {};  // cycle id -> cycle doc (cycles en cours, indexées par id)
@@ -45,6 +46,70 @@ let premierChargementCycles = true;
 // du code (relevé partiel, archivage, rattrapage manuel).
 function cycleDuckDocRef(cycle) {
   return doc(db, "ducks", `eclosion_${cycle.id}`);
+}
+
+// ---------------------------------------------------------------------
+// HISTORIQUE DE MODIFICATION PAR NID
+// Chaque action sur un nid (démarrage, relevé, correction, couvaison,
+// éclosion, archivage, réinitialisation) écrit une ligne dans
+// "nest_history". Lecture seule affichée dans la fiche du nid — jamais
+// modifiée ni supprimée après coup, pour garder une trace fiable.
+// ---------------------------------------------------------------------
+async function logNestHistory(n, cycleId, action, label, detail = null) {
+  try {
+    await addDoc(nestHistoryCol, {
+      nid_numero: n, cycle_id: cycleId || null, action, label,
+      detail: detail || null, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+    });
+  } catch (e) { console.error("Erreur écriture historique du nid :", e); }
+}
+
+async function renderNestHistory(n) {
+  const zone = document.getElementById("fNestHistory");
+  if (!zone) return;
+  try {
+    const snap = await getDocs(query(nestHistoryCol, where("nid_numero", "==", n), orderBy("createdAt", "desc"), limit(15)));
+    if (snap.empty) { zone.innerHTML = `<p class="subtle">Aucun historique pour ce nid pour l'instant.</p>`; return; }
+    zone.innerHTML = `<div class="timeline">${snap.docs.map(d => {
+      const h = d.data();
+      const date = h.createdAt?.toDate?.() ? formatDateTime(h.createdAt.toDate()) : "—";
+      return `<div class="row with-icon">
+        <div class="row-icon"><svg viewBox="0 0 40 40"><use href="#ic-task-commande"/></svg></div>
+        <div class="row-main"><span class="row-title">${escapeHtml(h.label || h.action)}</span><span class="row-sub">${date} · ${escapeHtml(h.par || "Inconnu")}${h.detail ? " · " + escapeHtml(h.detail) : ""}</span></div>
+      </div>`;
+    }).join("")}</div>`;
+  } catch (e) {
+    console.error("Erreur lecture historique du nid :", e);
+    zone.innerHTML = `<p class="subtle">Historique indisponible pour l'instant.</p>`;
+  }
+}
+
+// ---------------------------------------------------------------------
+// AVERTISSEMENT DOUBLON — si une action du même type a déjà été
+// enregistrée pour ce nid il y a moins de 5 minutes, on prévient
+// l'utilisateur avant de continuer (double-clic, saisie en double par
+// erreur…). Renvoie true si l'action doit continuer.
+// ---------------------------------------------------------------------
+const DELAI_DOUBLON_MS = 5 * 60 * 1000;
+async function confirmerSiDoublonRecent(n, action, label) {
+  try {
+    const snap = await getDocs(query(nestHistoryCol, where("nid_numero", "==", n), where("action", "==", action), orderBy("createdAt", "desc"), limit(1)));
+    if (!snap.empty) {
+      const last = snap.docs[0].data();
+      const lastDate = last.createdAt?.toDate?.();
+      if (lastDate) {
+        const ecouleMs = Date.now() - lastDate.getTime();
+        if (ecouleMs >= 0 && ecouleMs < DELAI_DOUBLON_MS) {
+          const minutes = Math.max(1, Math.round(ecouleMs / 60000));
+          return confirm(`⚠️ Un enregistrement similaire ("${label}") a déjà été fait sur le nid ${n} il y a ${minutes} min (par ${last.par || "quelqu'un"}). Confirmer quand même ?`);
+        }
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error("Vérification doublon échouée :", e);
+    return true; // en cas de souci réseau, on ne bloque jamais la saisie
+  }
 }
 
 export function initNests() {
@@ -103,7 +168,6 @@ export function initNests() {
   onSnapshot(query(pontesCol, orderBy("date", "asc")), (snap) => {
     pontesLog = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderStats();
-    renderTodayProduction();
   }, err => console.error("Erreur lecture journal de pontes :", err));
 
   document.querySelectorAll("#nidsView button").forEach(btn => {
@@ -225,53 +289,6 @@ function renderDistributionBar() {
   setC("nestCountLibre", libre);
   setC("nestCountPonte", ponte);
   setC("nestCountCouvaison", couvaison);
-  renderTodayProduction();
-}
-
-// Écran "Aujourd'hui" (E1) : nombre d'œufs relevés aujourd'hui (comparé à
-// hier), puis la même répartition ponte/couvaison/libre que la barre de
-// la salle des nids — sous le titre "Production du jour" plutôt que
-// "Occupation en direct", qui reste la vue détaillée plus bas sur la
-// page.
-function renderTodayProduction() {
-  const el = document.getElementById("dashProductionCard");
-  if (!el) return;
-
-  let ponte = 0, couvaison = 0;
-  Object.values(cyclesMap).forEach(c => { if (c.statut === "couvaison") couvaison++; else ponte++; });
-  const libre = Math.max(0, 100 - ponte - couvaison);
-
-  const dayKeyOf = (d) => {
-    const date = toDateObj(d);
-    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-  };
-  const today = new Date();
-  const yesterday = new Date(today.getTime() - 86400000);
-  const sumForDay = (dateRef) => pontesLog
-    .filter(p => (Number(p.quantite) || 0) > 0 && dayKeyOf(p.date) === dayKeyOf(dateRef))
-    .reduce((a, p) => a + (Number(p.quantite) || 0), 0);
-  const todayCount = sumForDay(today);
-  const yesterdayCount = sumForDay(yesterday);
-  const delta = todayCount - yesterdayCount;
-
-  el.innerHTML = `
-    <div style="display:flex; align-items:baseline; gap:8px;">
-      <span class="mono" style="font-size:28px; font-weight:500; color:var(--pond-950); letter-spacing:-.02em;">${todayCount}</span>
-      <span style="font-size:13.5px; color:var(--ink-600);">œufs relevés</span>
-      <span style="flex:1;"></span>
-      <span style="font-size:12.5px; font-weight:600; color:${delta >= 0 ? "var(--success-fg)" : "var(--danger-fg)"};">${delta >= 0 ? "+" : ""}${delta} vs hier</span>
-    </div>
-    <div style="display:flex; height:8px; margin-top:13px; border-radius:2px; overflow:hidden; gap:1px;">
-      ${ponte ? `<div style="flex:${ponte}; background:var(--yolk-500);"></div>` : ""}
-      ${couvaison ? `<div style="flex:${couvaison}; background:var(--pond-600);"></div>` : ""}
-      ${libre ? `<div style="flex:${libre}; background:var(--sage-100);"></div>` : ""}
-    </div>
-    <div style="display:flex; gap:14px; margin-top:9px; font-size:11.5px; color:var(--ink-600); flex-wrap:wrap;">
-      <span style="display:flex; align-items:center; gap:5px;"><i style="width:7px;height:7px;background:var(--yolk-500);display:block;"></i>Ponte ${ponte}</span>
-      <span style="display:flex; align-items:center; gap:5px;"><i style="width:7px;height:7px;background:var(--pond-600);display:block;"></i>Couvaison ${couvaison}</span>
-      <span style="display:flex; align-items:center; gap:5px;"><i style="width:7px;height:7px;background:var(--sage-100);display:block; border:1px solid var(--line);"></i>Libres ${libre}</span>
-    </div>
-  `;
 }
 
 function renderDashboardNestKpi() {
@@ -444,7 +461,7 @@ async function openArchiveDetailModal(c) {
     <div class="row"><div class="row-main"><span class="row-title">Taux d'éclosion</span></div><span class="row-value">${taux}%</span></div>
     ${c.archive_par ? `<div class="row"><div class="row-main"><span class="row-title">Archivé par</span></div><span class="row-value">${escapeHtml(c.archive_par)}</span></div>` : ""}
     <div class="spacer-s"></div>
-    <p class="subtle">🔒 Cette archive est en lecture seule — un cycle une fois clôturé ne se modifie plus directement, pour garantir la fiabilité de l'historique. Pour corriger le nombre de canetons (ex. doublon de saisie), modifiez la quantité du lot correspondant dans <b>Canards</b> : la correction se répercute automatiquement ici.</p>
+    <p class="subtle">🔒 Cette archive est en lecture seule — un cycle une fois clôturé ne se modifie plus, pour garantir la fiabilité de l'historique.</p>
     <div id="fArchInventaireZone"></div>
   `;
   openModal(`Nid n° ${c.nid_numero}`, body, {
@@ -641,11 +658,15 @@ function openNestModal(n) {
       <div class="field"><label>Date de début de ponte</label><input type="date" id="fPonteDate" value="${todayInputValue()}"></div>
       <div class="field"><label>Œufs pondus à ce jour</label><input type="number" id="fOeufs" value="1" min="1"></div>
       <button class="btn yolk" id="fStart">Démarrer la ponte</button>
+      <div class="section-title" style="margin:24px 0 10px;"><div><h2 style="font-size:15px;">Historique de ce nid</h2></div></div>
+      <div id="fNestHistory"><p class="subtle">Chargement…</p></div>
     `, {
       onMount: () => {
+        renderNestHistory(n);
         document.getElementById("fStart").addEventListener("click", async () => {
           const initialQte = Number(document.getElementById("fOeufs").value) || 0;
           const dateDebut = new Date(document.getElementById("fPonteDate").value);
+          if (!(await confirmerSiDoublonRecent(n, "ponte_initiale", "Démarrage de ponte"))) return;
           try {
             const cRef = await addDoc(cyclesCol, {
               nid_numero: n,
@@ -664,6 +685,7 @@ function openNestModal(n) {
               quantite: initialQte, motif: "ponte_initiale",
               par: getUserName() || "Inconnu", createdAt: serverTimestamp()
             });
+            await logNestHistory(n, cRef.id, "ponte_initiale", "Démarrage de ponte", `${initialQte} œuf(s)`);
             toast(`Ponte démarrée — nid ${n} ✓`);
             closeModal();
           } catch (e) { toast("Erreur : " + e.message); }
@@ -733,8 +755,12 @@ function openNestModal(n) {
     `}
     <div class="spacer-m"></div>
     <button class="btn danger" id="fResetNest">↺ Réinitialiser ce nid (mauvais nid sélectionné)</button>
+
+    <div class="section-title" style="margin:24px 0 10px;"><div><h2 style="font-size:15px;">Historique de ce nid</h2></div></div>
+    <div id="fNestHistory"><p class="subtle">Chargement…</p></div>
   `, {
     onMount: () => {
+      renderNestHistory(n);
       // ⚠️ RATTRAPAGE (août 2026) : pour un cycle déjà en couvaison AVANT
       // la mise en place du versement immédiat au cheptel (voir
       // fEclosAddBtn), des canetons ont pu être enregistrés sur le
@@ -780,6 +806,7 @@ function openNestModal(n) {
       if (addBtn) addBtn.addEventListener("click", async () => {
         const q = Number(document.getElementById("fAddOeufs").value) || 0;
         const dateReleve = new Date(document.getElementById("fAddDate").value);
+        if (!(await confirmerSiDoublonRecent(n, "ajout_oeufs", "Ajout d'œufs"))) return;
         try {
           const cRef = doc(db, "nest_cycles", cycle.id);
           await updateDoc(cRef, { nombre_oeufs: increment(q) });
@@ -788,6 +815,7 @@ function openNestModal(n) {
             quantite: q, motif: "releve_quotidien",
             par: getUserName() || "Inconnu", createdAt: serverTimestamp()
           });
+          await logNestHistory(n, cycle.id, "ajout_oeufs", "Ajout d'œufs", `+${q} œuf(s)`);
           toast("Relevé du jour enregistré ✓");
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
@@ -798,6 +826,7 @@ function openNestModal(n) {
         const q = Number(document.getElementById("fRemoveOeufs").value) || 0;
         const current = Number(cycle.nombre_oeufs) || 0;
         if (q <= 0 || q > current) { toast(`Indiquez une quantité entre 1 et ${current}`); return; }
+        if (!(await confirmerSiDoublonRecent(n, "correction", "Retrait / correction d'œufs"))) return;
         try {
           const cRef = doc(db, "nest_cycles", cycle.id);
           await updateDoc(cRef, { nombre_oeufs: increment(-q) });
@@ -806,6 +835,7 @@ function openNestModal(n) {
             quantite: -q, motif: "correction",
             par: getUserName() || "Inconnu", createdAt: serverTimestamp()
           });
+          await logNestHistory(n, cycle.id, "correction", "Retrait / correction d'œufs", `-${q} œuf(s)`);
           toast("Correction enregistrée ✓");
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
@@ -826,6 +856,7 @@ function openNestModal(n) {
           batch.delete(doc(db, "nest_cycles", cycle.id));
           batch.set(doc(db, "nests", String(n)), { numero: n, statut_actuel: "libre", cycle_actuel_id: null });
           await batch.commit();
+          await logNestHistory(n, cycle.id, "reset", "Nid réinitialisé");
           toast(`Nid ${n} réinitialisé ✓`);
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
@@ -833,8 +864,10 @@ function openNestModal(n) {
 
       const toCouv = document.getElementById("fToCouvaison");
       if (toCouv) toCouv.addEventListener("click", async () => {
+        if (!(await confirmerSiDoublonRecent(n, "couvaison_demarree", "Démarrage de couvaison"))) return;
         try {
           await updateDoc(doc(db, "nest_cycles", cycle.id), { statut: "couvaison", date_debut_couvaison: new Date(), modifie_par: getUserName() || "Inconnu" });
+          await logNestHistory(n, cycle.id, "couvaison_demarree", "Démarrage de couvaison");
           toast(`Couvaison démarrée — nid ${n} ✓`);
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
@@ -855,26 +888,8 @@ function openNestModal(n) {
         const dateReleveInput = document.getElementById("fEclosDate")?.value;
         const dateReleve = dateReleveInput ? new Date(dateReleveInput) : new Date();
         if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
+        if (!(await confirmerSiDoublonRecent(n, "eclosion_partielle", "Relevé d'éclosion"))) return;
         try {
-          // ⚠️ GARDE-FOU (septembre 2026) : deux personnes qui enregistrent
-          // au même moment le même relevé (ex. chacune de son téléphone,
-          // sans se concerter) créaient un doublon silencieux — le nombre
-          // de canetons se retrouvait compté deux fois. On vérifie donc le
-          // relevé le plus récent pour ce nid juste avant d'enregistrer :
-          // s'il date de moins de 15 minutes et porte la même quantité,
-          // on demande une confirmation explicite plutôt que d'enregistrer
-          // silencieusement un possible doublon.
-          const recentSnap = await getDocs(query(eclosionsCol, where("cycle_id", "==", cycle.id), orderBy("createdAt", "desc"), limit(1)));
-          if (!recentSnap.empty) {
-            const dernier = recentSnap.docs[0].data();
-            const createdAtMs = dernier.createdAt?.toDate ? dernier.createdAt.toDate().getTime() : null;
-            const minutesEcoulees = createdAtMs ? (Date.now() - createdAtMs) / 60000 : null;
-            if (minutesEcoulees !== null && minutesEcoulees < 15 && Number(dernier.quantite) === q) {
-              const confirme = confirm(`⚠️ Un relevé de ${q} caneton(s) a déjà été enregistré il y a ${Math.max(1, Math.round(minutesEcoulees))} minute(s) par ${dernier.par || "quelqu'un"} pour ce même nid.\n\nConfirmez-vous qu'il s'agit bien d'un NOUVEAU relevé, et non du même comptage enregistré deux fois ?`);
-              if (!confirme) return;
-            }
-          }
-
           await updateDoc(doc(db, "nest_cycles", cycle.id), { nombre_eclos: increment(q) });
           await addDoc(eclosionsCol, {
             nid_numero: n, cycle_id: cycle.id, date: dateReleve,
@@ -905,6 +920,7 @@ function openNestModal(n) {
           }
 
           toast(`${q} éclosion(s) enregistrée(s) et ajoutée(s) au cheptel — nid ${n} toujours actif ✓`);
+          await logNestHistory(n, cycle.id, "eclosion_partielle", "Relevé d'éclosion", `${q} caneton(s)`);
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
@@ -914,6 +930,7 @@ function openNestModal(n) {
         const eclosSupp = Number(document.getElementById("fEclos").value) || 0;
         const dateArchiveInput = document.getElementById("fArchiveDate")?.value;
         const dateArchive = dateArchiveInput ? new Date(dateArchiveInput) : new Date();
+        if (!(await confirmerSiDoublonRecent(n, "archivage", "Archivage du nid"))) return;
         await archiveCycle(n, cycle, "eclos", eclosSupp, dateArchive);
       });
       const echec = document.getElementById("fEchec");
@@ -980,6 +997,7 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChois
     }
 
     toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) au total, naissance fixée au ${formatDate(dateFin)} ✓` : `Échec enregistré — nid ${n} archivé (${totalEclos} caneton(s) déjà nés conservés au cheptel)`);
+    await logNestHistory(n, cycle.id, "archivage", statut === "eclos" ? "Nid archivé (éclosion)" : "Échec de couvaison déclaré", `${totalEclos} caneton(s) au total`);
     closeModal();
   } catch (e) { toast("Erreur : " + e.message); }
 }
