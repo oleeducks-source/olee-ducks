@@ -22,12 +22,13 @@ import {
 
 // >>> REMPLACEZ CES VALEURS PAR CELLES DE VOTRE PROJET FIREBASE <<<
 const firebaseConfig = {
-  apiKey: "REMPLACER_apiKey",
-  authDomain: "REMPLACER.firebaseapp.com",
-  projectId: "REMPLACER_projectId",
-  storageBucket: "REMPLACER.appspot.com",
-  messagingSenderId: "REMPLACER_senderId",
-  appId: "REMPLACER_appId"
+  apiKey: "AIzaSyB9Rj7DNOncLmqpr9thR0HKG8D4sOl31Fc",
+  authDomain: "olee-ducks-f6752.firebaseapp.com",
+  projectId: "olee-ducks-f6752",
+  storageBucket: "olee-ducks-f6752.firebasestorage.app",
+  messagingSenderId: "943030289981",
+  appId: "1:943030289981:web:0e9b1024a21f2ffd7c8c54"
+};
 };
 
 export const firebaseApp = initializeApp(firebaseConfig);
