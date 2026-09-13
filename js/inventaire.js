@@ -380,7 +380,7 @@ function renderKpis() {
   // colorée qui affiche juste "0").
   const kpiCell = (label, value, variant, icon) => {
     const cls = value === 0 ? "kpi zero" : `kpi${variant ? " " + variant : ""}`;
-    const watermark = icon ? `<svg class="kpi-watermark" viewBox="0 0 40 40"><use href="#${icon}"/></svg>` : "";
+    const watermark = icon ? `<svg class="kpi-watermark fill" viewBox="0 0 40 40" preserveAspectRatio="xMidYMid slice"><use href="#${icon}"/></svg>` : "";
     return `<div class="${cls}">${watermark}<div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`;
   };
 
