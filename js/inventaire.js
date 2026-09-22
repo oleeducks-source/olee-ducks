@@ -1,1076 +1,1007 @@
 // =====================================================================
-// MODULE : GESTION DES NIDS
-// - Collection "nests" (100 docs "1".."100") : état courant du nid.
-// - Collection "nest_cycles" : un document par cycle d'occupation
-//   (ponte -> couvaison -> éclosion). Quand un cycle se termine, le nid
-//   redevient libre mais le cycle N'EST JAMAIS SUPPRIMÉ : il reste comme
-//   archive consultable dans les statistiques (nids les plus productifs).
-// - Collection "pontes_journalieres" : un doc par mouvement d'œufs daté
-//   (ajout initial, relevé du jour, correction négative). Sert de base
-//   au calcul de la moyenne de ponte par jour, tolérant les jours sans
-//   relevé (voir calculerMoyenneParJour).
+// MODULE : INVENTAIRE DES CANARDS
+// Collection Firestore "ducks" — chaque doc peut représenter un lot
+// (ex: 12 canetons nés le même jour) ou un individu bagué.
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot,
-  serverTimestamp, query, where, orderBy, limit, increment, writeBatch, runTransaction, Timestamp
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs, getDoc,
+  serverTimestamp, orderBy, query, where, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputValue, getUserName, escapeHtml, animateCountUp } from "./utils.js";
+import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
+import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard } from "./pesees.js";
 
-const nestsCol = collection(db, "nests");
-const cyclesCol = collection(db, "nest_cycles");
-const pontesCol = collection(db, "pontes_journalieres");
-const eclosionsCol = collection(db, "eclosions_journalieres");
 const ducksCol = collection(db, "ducks");
+const eclosionsCol = collection(db, "eclosions_journalieres");
 const nestHistoryCol = collection(db, "nest_history");
+let allDucks = [];
+let filterType = "all";
+let filterStatut = "actif";
+let filterLot = "all";
+let searchTerm = "";
+let selectionMode = false;
+let selectedIds = new Set();
 
-let nestsMap = {};   // numero -> nest doc
-let cyclesMap = {};  // cycle id -> cycle doc (cycles en cours, indexées par id)
-let archivedCycles = []; // cycles terminées (eclos / echec)
-let pontesLog = []; // tous les relevés de ponte datés (tous nids, tous cycles)
-let currentNidsView = "grille";
-let nidsGroupBy = "numero";   // "numero" | "ponte" | "couvaison" | "eclosion_prevue"
-let nidsSortDir = "desc";     // "desc" (plus récent d'abord) | "asc" (plus ancien d'abord)
-let nidsFilterDate = "";      // "YYYY-MM-DD" ou "" (aucun filtre)
+const TYPE_FILTER_OPTIONS = [
+  { v: "all", label: "Tous" },
+  { v: "caneton", label: "Canetons" },
+  { v: "canardeau", label: "Canardeaux" },
+  { v: "canard", label: "Canards" },
+  { v: "reproducteur_male", label: "Reprod. mâles" },
+  { v: "reproducteur_femelle", label: "Reprod. femelles" }
+];
+const STATUT_FILTER_OPTIONS = [
+  { v: "actif", label: "Actifs" },
+  { v: "all", label: "Tous statuts" },
+  { v: "vendu", label: "Vendus" },
+  { v: "mort", label: "Décédés" },
+  { v: "reforme", label: "Réformés" }
+];
 
-const DUREE_INCUBATION_JOURS = 36; // canard de Barbarie (muscovy) — 35 à 37 jours, 36 en moyenne
+const TYPE_LABELS = {
+  caneton: "Caneton",
+  canardeau: "Canardeau",
+  canard: "Canard",
+  reproducteur_male: "Reproducteur mâle",
+  reproducteur_femelle: "Reproductrice femelle"
+};
+const TYPE_ICONS = {
+  caneton: "ic-duck-caneton",
+  canardeau: "ic-duck-canardeau",
+  canard: "ic-duck-canard",
+  reproducteur_male: "ic-duck-repro-m",
+  reproducteur_femelle: "ic-duck-repro-f"
+};
+const TYPE_ICONS_EMOJI = { canardeau: "🐤", canard: "🦆" };
+const BAGUE_LABELS = { rouge: "Rouge", vert: "Verte", violet: "Violette", bleu: "Bleue" };
+const STATUT_LABELS = { actif: "Actif", vendu: "Vendu", mort: "Décédé", reforme: "Réformé" };
 
-let premierChargementCycles = true;
+// ---------------------------------------------------------------------
+// Cycle de vie et requalification automatique par âge.
+// Catégorie 1 — Caneton      : 0 à 3 semaines révolues (0-20 jours)
+// Catégorie 2 — Canardeau    : 4 à 8 semaines révolues (21-55 jours)
+// Catégorie 3 — Canard adulte: 8 semaines et plus (56 jours et +)
+//
+// L'âge est calculé en priorité à partir de "date_naissance" (date de
+// naissance exacte, si renseignée) et sinon à partir de "date_entree"
+// (date d'ajout dans l'app, utilisée par défaut). Seuls les lots
+// actuellement "caneton" ou "canardeau" ET non verrouillés
+// ("verrouille_type" absent ou false) sont concernés par ce décompte
+// automatique — un canard ou un reproducteur ne redescend jamais dans
+// une catégorie plus jeune, et un lot verrouillé reste au stade choisi
+// manuellement tant qu'on ne le déverrouille pas.
+//
+// ⚠️ CORRECTIF (juillet 2026) : avant ce correctif, un lot dont la
+// "date_entree" datait de plusieurs mois (car saisie au moment de la
+// création du lot dans l'app, pas de la naissance réelle) se voyait
+// recalculé à un âge très avancé. Résultat : une requalification
+// manuelle caneton → canardeau était immédiatement "rattrapée" par
+// l'automatisme au rafraîchissement suivant, qui faisait alors bondir
+// le lot jusqu'à "canard" en une fraction de seconde, car son âge
+// calculé dépassait déjà le seuil des 8 semaines. Deux corrections :
+// (1) on peut désormais saisir une date de naissance exacte pour
+// calibrer correctement l'âge, (2) on peut verrouiller un stade pour
+// empêcher toute requalification automatique ultérieure.
+// ---------------------------------------------------------------------
+const SEMAINE_MS = 7 * 24 * 60 * 60 * 1000;
+const SEUIL_CANARDEAU_SEM = 4; // dès la 4e semaine révolue
+const SEUIL_CANARD_SEM = 8;    // dès la 8e semaine révolue
 
-// Un cycle de nid produit AU PLUS un seul lot de canetons dans
-// l'inventaire — identifié par un ID dérivé du cycle lui-même. Toutes les
-// vagues d'éclosion successives (relevés partiels + archivage final)
-// s'accumulent dans CE MÊME document via `increment`, plutôt que de créer
-// un nouveau lot à chaque relevé. Cela permet de récupérer / mettre à
-// jour ce lot de façon fiable, sans requête, depuis n'importe quel point
-// du code (relevé partiel, archivage, rattrapage manuel).
-function cycleDuckDocRef(cycle) {
-  return doc(db, "ducks", `eclosion_${cycle.id}`);
+function dateReferenceAge(d) {
+  return d.date_naissance || d.date_entree;
 }
 
-// ---------------------------------------------------------------------
-// HISTORIQUE DE MODIFICATION PAR NID
-// Chaque action sur un nid (démarrage, relevé, correction, couvaison,
-// éclosion, archivage, réinitialisation) écrit une ligne dans
-// "nest_history". Lecture seule affichée dans la fiche du nid — jamais
-// modifiée ni supprimée après coup, pour garder une trace fiable.
-// ---------------------------------------------------------------------
-async function logNestHistory(n, cycleId, action, label, detail = null) {
+function ageEnSemaines(dateReference) {
+  if (!dateReference) return null;
+  const d = dateReference?.toDate ? dateReference.toDate() : new Date(dateReference);
+  if (isNaN(d.getTime())) return null;
+  return (Date.now() - d.getTime()) / SEMAINE_MS;
+}
+
+function stadeAttendu(ageSemaines) {
+  if (ageSemaines === null) return null;
+  if (ageSemaines >= SEUIL_CANARD_SEM) return "canard";
+  if (ageSemaines >= SEUIL_CANARDEAU_SEM) return "canardeau";
+  return "caneton";
+}
+
+// Évite de renvoyer plusieurs écritures simultanées sur le même lot
+// pendant qu'une requalification est déjà en cours d'enregistrement.
+const requalificationEnCours = new Set();
+
+// Collection d'archive : un enregistrement permanent à chaque fois qu'un
+// lot de canetons passe au stade canardeau (donc quitte définitivement
+// la catégorie "caneton"). Ne compte jamais dans les totaux actifs
+// (aucune fonction de KPI ne lit cette collection) — c'est un historique
+// de production cumulé, y compris pour des lots depuis vendus/décédés.
+const canetonsProductionCol = collection(db, "canetons_production");
+
+async function archiverPassageCanardeau(lot, quantite, auteur) {
   try {
-    await addDoc(nestHistoryCol, {
-      nid_numero: n, cycle_id: cycleId || null, action, label,
-      detail: detail || null, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
+    await addDoc(canetonsProductionCol, {
+      quantite,
+      date_transition: new Date(),
+      date_naissance: lot.date_naissance || null,
+      date_entree: lot.date_entree || null,
+      lot_origine_id: lot.id,
+      bague_couleur: lot.bague_couleur || null,
+      enregistre_par: auteur
     });
-  } catch (e) { console.error("Erreur écriture historique du nid :", e); }
+  } catch (e) {
+    console.error("Erreur archivage production canetons :", e);
+  }
 }
 
-async function renderNestHistory(n) {
-  const zone = document.getElementById("fNestHistory");
+// Parcourt les lots actifs "caneton"/"canardeau" non verrouillés et fait
+// automatiquement avancer leur "type" quand l'âge calculé dépasse le
+// seuil de la catégorie suivante. Purement additif : ne touche jamais
+// aux lots déjà "canard" ou reproducteurs, ne supprime rien, trace
+// l'auteur ("Système (auto)") et la date comme pour une requalification
+// manuelle, et archive le passage caneton → canardeau.
+async function autoRequalifierParAge() {
+  const candidats = allDucks.filter(d =>
+    d.statut === "actif" && (d.type === "caneton" || d.type === "canardeau") && !d.verrouille_type
+  );
+  for (const d of candidats) {
+    if (requalificationEnCours.has(d.id)) continue;
+    const age = ageEnSemaines(dateReferenceAge(d));
+    const stade = stadeAttendu(age);
+    if (!stade || stade === d.type) continue;
+    // On ne saute jamais directement caneton -> canard automatiquement :
+    // si le lot a été laissé sans passage par l'app pendant longtemps,
+    // il transite d'abord par canardeau au prochain rafraîchissement,
+    // puis vers canard ensuite — ceci reste cohérent avec l'historique.
+    const prochainStade = d.type === "caneton" ? "canardeau" : "canard";
+    requalificationEnCours.add(d.id);
+    try {
+      await updateDoc(doc(db, "ducks", d.id), {
+        type: prochainStade,
+        requalifie_par: "Système (auto)",
+        requalifie_le: serverTimestamp()
+      });
+      if (prochainStade === "canardeau") {
+        await archiverPassageCanardeau(d, Number(d.quantite) || 1, "Système (auto)");
+      }
+    } catch (e) {
+      console.error("Erreur requalification automatique :", e);
+    } finally {
+      requalificationEnCours.delete(d.id);
+    }
+  }
+}
+
+export function initInventaire() {
+  onSnapshot(query(ducksCol, orderBy("createdAt", "desc")), (snap) => {
+    allDucks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderKpis();
+    renderFilters();
+    renderList();
+    autoRequalifierParAge(); // déclenche les écritures nécessaires ; le prochain snapshot rafraîchira l'affichage
+  }, (err) => console.error("Erreur lecture inventaire :", err));
+
+  document.getElementById("invFilterType")?.addEventListener("change", (e) => {
+    filterType = e.target.value;
+    renderFilters(); // recalcule les compteurs croisés des autres menus
+    renderList();
+  });
+  document.getElementById("invFilterStatut")?.addEventListener("change", (e) => {
+    filterStatut = e.target.value;
+    renderFilters();
+    renderList();
+  });
+  document.getElementById("invFilterLot")?.addEventListener("change", (e) => {
+    filterLot = e.target.value;
+    renderFilters();
+    renderList();
+  });
+  document.getElementById("invSearch")?.addEventListener("input", (e) => {
+    searchTerm = e.target.value.trim().toLowerCase();
+    renderList();
+  });
+
+  const archiveBtn = document.getElementById("openCanetonsArchiveBtn");
+  if (archiveBtn) archiveBtn.addEventListener("click", openCanetonsArchiveModal);
+
+  // ------ Sélection multiple + regroupement en lot ------
+  document.getElementById("invLotModeBtn")?.addEventListener("click", toggleSelectionMode);
+  document.getElementById("invCancelSelectionBtn")?.addEventListener("click", () => setSelectionMode(false));
+  document.getElementById("invAssignLotBtn")?.addEventListener("click", openAssignLotModal);
+}
+
+// Compte les effectifs (somme des quantités, hors suppressions en
+// attente) pour chaque valeur de type, de statut et de lot.
+//
+// ⚠️ CORRECTIF (août 2026) : les compteurs étaient calculés globalement,
+// indépendamment du filtre déjà actif dans les AUTRES menus déroulants.
+// Cela produisait des chiffres incohérents avec les KPI (ex. "Tous (377)"
+// alors que les KPI n'affichent que les actifs = 334) et des compteurs
+// qui ne correspondaient à rien pour le type sélectionné (ex.
+// sélectionner "Canardeaux" affichait quand même "Vendus (38)", qui
+// correspondait en réalité aux canards vendus, pas aux canardeaux).
+// Les 3 menus sont maintenant croisés : chacun respecte les DEUX AUTRES
+// filtres actifs, mais jamais lui-même (sinon son propre total resterait
+// figé sur l'option choisie).
+function computeFilterCounts() {
+  const items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
+  const sumBy = (predicate) => items.filter(predicate).reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  const matchesStatut = (d) => filterStatut === "all" || d.statut === filterStatut;
+  const matchesType = (d) => filterType === "all" || d.type === filterType;
+  const matchesLot = (d) => filterLot === "all" || (d.lot || "") === filterLot;
+
+  const lotValues = Array.from(new Set(items.map(d => d.lot).filter(Boolean))).sort();
+  const lots = { all: sumBy(d => matchesType(d) && matchesStatut(d)) };
+  lotValues.forEach(l => { lots[l] = sumBy(d => (d.lot || "") === l && matchesType(d) && matchesStatut(d)); });
+
+  return {
+    type: {
+      all: sumBy(d => matchesStatut(d) && matchesLot(d)),
+      caneton: sumBy(d => d.type === "caneton" && matchesStatut(d) && matchesLot(d)),
+      canardeau: sumBy(d => d.type === "canardeau" && matchesStatut(d) && matchesLot(d)),
+      canard: sumBy(d => d.type === "canard" && matchesStatut(d) && matchesLot(d)),
+      reproducteur_male: sumBy(d => d.type === "reproducteur_male" && matchesStatut(d) && matchesLot(d)),
+      reproducteur_femelle: sumBy(d => d.type === "reproducteur_femelle" && matchesStatut(d) && matchesLot(d))
+    },
+    statut: {
+      actif: sumBy(d => d.statut === "actif" && matchesType(d) && matchesLot(d)),
+      all: sumBy(d => matchesType(d) && matchesLot(d)),
+      vendu: sumBy(d => d.statut === "vendu" && matchesType(d) && matchesLot(d)),
+      mort: sumBy(d => d.statut === "mort" && matchesType(d) && matchesLot(d)),
+      reforme: sumBy(d => d.statut === "reforme" && matchesType(d) && matchesLot(d))
+    },
+    lots,
+    lotValues
+  };
+}
+
+// Reconstruit les options des menus déroulants avec leurs compteurs à
+// jour, sans perdre la sélection en cours. Le menu "Lot" ne s'affiche
+// que si au moins un lot a été créé (voir "Regrouper en lot") — pour ne
+// pas encombrer l'écran tant que la fonctionnalité n'est pas utilisée.
+function renderFilters() {
+  const counts = computeFilterCounts();
+  const typeEl = document.getElementById("invFilterType");
+  const statutEl = document.getElementById("invFilterStatut");
+  const lotWrap = document.getElementById("invFilterLotWrap");
+  const lotEl = document.getElementById("invFilterLot");
+  if (typeEl) {
+    typeEl.innerHTML = TYPE_FILTER_OPTIONS.map(o =>
+      `<option value="${o.v}" ${o.v === filterType ? "selected" : ""}>${o.label} (${counts.type[o.v]})</option>`
+    ).join("");
+  }
+  if (statutEl) {
+    statutEl.innerHTML = STATUT_FILTER_OPTIONS.map(o =>
+      `<option value="${o.v}" ${o.v === filterStatut ? "selected" : ""}>${o.label} (${counts.statut[o.v]})</option>`
+    ).join("");
+  }
+  if (lotWrap && lotEl) {
+    if (counts.lotValues.length) {
+      lotWrap.classList.remove("hidden");
+      const opts = [`<option value="all" ${filterLot === "all" ? "selected" : ""}>Tous les lots (${counts.lots.all})</option>`]
+        .concat(counts.lotValues.map(l => `<option value="${escapeHtml(l)}" ${l === filterLot ? "selected" : ""}>${escapeHtml(l)} (${counts.lots[l]})</option>`));
+      lotEl.innerHTML = opts.join("");
+      if (filterLot !== "all" && !counts.lotValues.includes(filterLot)) { filterLot = "all"; lotEl.value = "all"; }
+    } else {
+      lotWrap.classList.add("hidden");
+      filterLot = "all";
+    }
+  }
+}
+
+function activeDucks() {
+  return allDucks.filter(d => d.statut === "actif");
+}
+
+function formatInputDate(d) {
+  const date = d?.toDate ? d.toDate() : new Date(d);
+  const off = date.getTimezoneOffset();
+  return new Date(date.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+async function chargerEtAfficherPesees(lotId) {
+  const zone = document.getElementById("fPeseesHistorique");
   if (!zone) return;
   try {
-    const snap = await getDocs(query(nestHistoryCol, where("nid_numero", "==", n), orderBy("createdAt", "desc"), limit(15)));
-    if (snap.empty) { zone.innerHTML = `<p class="subtle">Aucun historique pour ce nid pour l'instant.</p>`; return; }
-    zone.innerHTML = `<div class="timeline">${snap.docs.map(d => {
-      const h = d.data();
-      const date = h.createdAt?.toDate?.() ? formatDateTime(h.createdAt.toDate()) : "—";
-      return `<div class="row with-icon">
-        <div class="row-icon"><svg viewBox="0 0 40 40"><use href="#ic-task-commande"/></svg></div>
-        <div class="row-main"><span class="row-title">${escapeHtml(h.label || h.action)}</span><span class="row-sub">${date} · ${escapeHtml(h.par || "Inconnu")}${h.detail ? " · " + escapeHtml(h.detail) : ""}</span></div>
-      </div>`;
-    }).join("")}</div>`;
+    const pesees = await chargerHistoriquePesees(lotId);
+    zone.innerHTML = rendreHistoriquePeseesHtml(pesees);
   } catch (e) {
-    console.error("Erreur lecture historique du nid :", e);
-    zone.innerHTML = `<p class="subtle">Historique indisponible pour l'instant.</p>`;
+    zone.innerHTML = `<p class="subtle">Erreur de chargement des pesées : ${e.message}</p>`;
   }
 }
 
-// ---------------------------------------------------------------------
-// AVERTISSEMENT DOUBLON — si une action du même type a déjà été
-// enregistrée pour ce nid il y a moins de 5 minutes, on prévient
-// l'utilisateur avant de continuer (double-clic, saisie en double par
-// erreur…). Renvoie true si l'action doit continuer.
-// ---------------------------------------------------------------------
-const DELAI_DOUBLON_MS = 5 * 60 * 1000;
-
-// Enregistrement atomique d'une vague d'éclosion. Le contrôle visuel
-// précédent (confirmerSiDoublonRecent) ne suffisait pas : deux téléphones
-// pouvaient lire l'historique en même temps, puis écrire chacun +15.
-// Ici, Firestore verrouille le cycle pendant la transaction : le premier
-// téléphone gagne, le second relit la version fraîche et est bloqué.
-async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput) {
-  const auteur = getUserName() || "Inconnu";
-  const signature = `${dateReleveInput || ""}|${q}`;
-  const bucket = Math.floor(Date.now() / DELAI_DOUBLON_MS);
-  const eventId = `eclosion_${cycle.id}_${dateReleveInput || "sans_date"}_${q}_${bucket}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const cRef = doc(db, "nest_cycles", cycle.id);
-  const duckRef = cycleDuckDocRef(cycle);
-  const eventRef = doc(db, "eclosions_journalieres", eventId);
-  const historyRef = doc(nestHistoryCol);
-  const maintenant = Timestamp.now();
-
-  await runTransaction(db, async (tx) => {
-    const cSnap = await tx.get(cRef);
-    const eventSnap = await tx.get(eventRef);
-    const duckSnap = await tx.get(duckRef);
-    if (!cSnap.exists()) throw new Error("CYCLE_INEXISTANT");
-
-    const fresh = cSnap.data();
-    const dernier = fresh.dernier_releve_eclosion || null;
-    const dernierAt = dernier?.at?.toMillis?.() || 0;
-    const memeSaisieRecente = dernier && dernier.signature === signature &&
-      (maintenant.toMillis() - dernierAt) >= 0 &&
-      (maintenant.toMillis() - dernierAt) < DELAI_DOUBLON_MS;
-
-    if (memeSaisieRecente || eventSnap.exists()) {
-      const par = dernier?.par || eventSnap.data()?.par || "un autre utilisateur";
-      const ecoule = dernierAt ? Math.max(0, maintenant.toMillis() - dernierAt) : 0;
-      const minutes = Math.max(1, Math.round(ecoule / 60000));
-      const err = new Error(`DOUBLON_ECLOSION|${par}|${minutes}`);
-      err.code = "DOUBLON_ECLOSION";
-      err.par = par;
-      err.minutes = minutes;
-      throw err;
-    }
-
-    tx.update(cRef, {
-      nombre_eclos: increment(q),
-      dernier_releve_eclosion: {
-        signature, quantite: q, date: dateReleve, par: auteur, at: maintenant
-      }
-    });
-
-    tx.set(eventRef, {
-      nid_numero: n, cycle_id: cycle.id, date: dateReleve, quantite: q,
-      par: auteur, createdAt: maintenant,
-      dedup_signature: signature, dedup_bucket: bucket
-    });
-
-    if (duckSnap.exists()) {
-      tx.update(duckRef, {
-        quantite: increment(q),
-        modifie_par: auteur, modifie_le: maintenant
-      });
-    } else {
-      const eclosDejaSurLeCycle = Number(fresh.nombre_eclos) || 0;
-      tx.set(duckRef, {
-        type: "caneton", quantite: eclosDejaSurLeCycle + q,
-        date_entree: dateReleve, date_naissance: dateReleve,
-        bague_couleur: null, numero_bague: null,
-        notes: `Éclosion nid n° ${n}`,
-        statut: "actif", date_sortie: null, motif_sortie: null,
-        issu_du_nid: n, issu_du_cycle_id: cycle.id,
-        cree_par: auteur, createdAt: maintenant
-      });
-    }
-
-    tx.set(historyRef, {
-      nid_numero: n, cycle_id: cycle.id, action: "eclosion_partielle",
-      label: "Relevé d'éclosion", detail: `${q} caneton(s)`,
-      par: auteur, createdAt: maintenant
-    });
-  });
-}
-
-async function confirmerSiDoublonRecent(n, action, label) {
-  try {
-    const snap = await getDocs(query(nestHistoryCol, where("nid_numero", "==", n), where("action", "==", action), orderBy("createdAt", "desc"), limit(1)));
-    if (!snap.empty) {
-      const last = snap.docs[0].data();
-      const lastDate = last.createdAt?.toDate?.();
-      if (lastDate) {
-        const ecouleMs = Date.now() - lastDate.getTime();
-        if (ecouleMs >= 0 && ecouleMs < DELAI_DOUBLON_MS) {
-          const minutes = Math.max(1, Math.round(ecouleMs / 60000));
-          return confirm(`⚠️ Un enregistrement similaire ("${label}") a déjà été fait sur le nid ${n} il y a ${minutes} min (par ${last.par || "quelqu'un"}). Confirmer quand même ?`);
-        }
-      }
-    }
-    return true;
-  } catch (e) {
-    console.error("Vérification doublon échouée :", e);
-    return true; // en cas de souci réseau, on ne bloque jamais la saisie
-  }
-}
-
-export function initNests() {
-  document.getElementById("openNestGridModalBtn")?.addEventListener("click", () => {
-    document.querySelector('.nav-item[data-page="nids"]')?.click();
-  });
-
-  ensureNestsExist().catch((e) => {
-    console.error("Impossible d'initialiser les 100 nids :", e);
-    toast("Erreur d'initialisation des nids : " + (e.code || e.message));
-  });
-
-  onSnapshot(nestsCol, (snap) => {
-    nestsMap = {};
-    snap.docs.forEach(d => { nestsMap[d.id] = { id: d.id, ...d.data() }; });
-    renderGrids();
-    renderDashboardNestKpi();
-  }, err => console.error("Erreur lecture nids :", err));
-
-  onSnapshot(query(cyclesCol, where("statut", "in", ["ponte", "couvaison"])), (snap) => {
-    const nouveauCyclesMap = {};
-    snap.docs.forEach(d => { nouveauCyclesMap[d.id] = { id: d.id, ...d.data() }; });
-
-    // Détecte toute variation du nombre d'œufs (ce téléphone ou un autre)
-    // pour déclencher l'animation "+N" au coin du nid concerné — sauf au
-    // tout premier chargement de la page, pour ne pas tout animer d'un
-    // coup à l'ouverture de l'app.
-    if (!premierChargementCycles) {
-      Object.values(nouveauCyclesMap).forEach(c => {
-        const avant = cyclesMap[c.id];
-        const avantQte = avant ? Number(avant.nombre_oeufs) || 0 : 0;
-        const apresQte = Number(c.nombre_oeufs) || 0;
-        const delta = apresQte - avantQte;
-        if (delta !== 0) animerGainOeufs(c.nid_numero, delta);
-      });
-    }
-    premierChargementCycles = false;
-
-    cyclesMap = nouveauCyclesMap;
-    renderGrids();
-    renderEnCoursList();
-    renderDashboardNestKpi();
-  }, err => console.error("Erreur lecture cycles en cours :", err));
-
-  onSnapshot(query(cyclesCol, where("statut", "in", ["eclos", "echec"]), orderBy("date_fin", "desc")), (snap) => {
-    archivedCycles = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderArchives();
-    renderStats();
-  }, err => {
-    console.error("Erreur lecture archives :", err);
-    const el = document.getElementById("nidsArchivesList");
-    if (el) el.innerHTML = `<div class="empty-state"><div class="glyph">⚠️</div><p>Erreur de chargement des archives : ${err.code || err.message}.<br>Si le message mentionne un "index", ouvrez la console (F12), un lien pour le créer automatiquement doit y apparaître.</p></div>`;
-    toast("Erreur de chargement des archives (voir console)");
-  });
-
-  onSnapshot(query(pontesCol, orderBy("date", "asc")), (snap) => {
-    pontesLog = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderStats();
-  }, err => console.error("Erreur lecture journal de pontes :", err));
-
-  document.querySelectorAll("#nidsView button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#nidsView button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentNidsView = btn.dataset.v;
-      showNidsView();
-    });
-  });
-
-  // ------ Filtres de la vue "En cours" : regroupement par date de
-  // ponte / de couvaison / d'éclosion prévue, tri chrono, et filtre sur
-  // une date précise. ------
-  document.getElementById("nidsGroupBy")?.addEventListener("change", (e) => {
-    nidsGroupBy = e.target.value;
-    document.getElementById("nidsSortDirWrap")?.classList.toggle("hidden", nidsGroupBy === "numero");
-    renderEnCoursList();
-  });
-  document.getElementById("nidsSortDir")?.addEventListener("change", (e) => {
-    nidsSortDir = e.target.value;
-    renderEnCoursList();
-  });
-  document.getElementById("nidsFilterDate")?.addEventListener("change", (e) => {
-    nidsFilterDate = e.target.value;
-    renderEnCoursList();
-  });
-  document.getElementById("nidsFilterDateClear")?.addEventListener("click", () => {
-    nidsFilterDate = "";
-    const inp = document.getElementById("nidsFilterDate");
-    if (inp) inp.value = "";
-    renderEnCoursList();
-  });
-
-  // ------ Historique brut des pontes (onglet Statistiques) ------
-  document.getElementById("pHistFrom")?.addEventListener("change", renderPonteHistory);
-  document.getElementById("pHistTo")?.addEventListener("change", renderPonteHistory);
-}
-
-function showNidsView() {
-  document.getElementById("nidsGrilleWrap").classList.toggle("hidden", currentNidsView !== "grille");
-  document.getElementById("nidsEnCoursWrap").classList.toggle("hidden", currentNidsView !== "encours");
-  document.getElementById("nidsStatsWrap").classList.toggle("hidden", currentNidsView !== "stats");
-  document.getElementById("nidsArchivesWrap").classList.toggle("hidden", currentNidsView !== "archives");
-}
-
-// Crée les 100 nids une seule fois (idempotent : ne recrée pas s'ils existent déjà)
-async function ensureNestsExist() {
-  const first = await getDoc(doc(db, "nests", "1"));
-  if (first.exists()) return;
-  const batch = writeBatch(db);
-  for (let n = 1; n <= 100; n++) {
-    batch.set(doc(db, "nests", String(n)), {
-      numero: n, statut_actuel: "libre", cycle_actuel_id: null
-    }, { merge: true });
-  }
-  await batch.commit();
-  toast("100 nids initialisés ✓");
-}
-
-function cycleForNest(n) {
-  return Object.values(cyclesMap).find(c => c.nid_numero === n);
-}
-
-// Anime un petit badge "+N" (ou "-N") avec une icône d'œuf dans le coin
-// supérieur droit du nid concerné, sur toutes les grilles visibles
-// (mini-grille du tableau de bord + grille complète de la page Nids).
-// Purement visuel, ne lit ni n'écrit aucune donnée.
-function animerGainOeufs(n, delta) {
-  if (!delta) return;
-  document.querySelectorAll(`.nest-cell[data-n="${n}"]`).forEach(cell => {
-    const badge = document.createElement("div");
-    badge.className = "egg-pop" + (delta < 0 ? " neg" : "");
-    badge.innerHTML = `<svg viewBox="0 0 40 40"><use href="#ic-nest-ponte"/></svg><span>${delta > 0 ? "+" : ""}${delta}</span>`;
-    cell.appendChild(badge);
-    requestAnimationFrame(() => badge.classList.add("play"));
-    setTimeout(() => badge.remove(), 1500);
-  });
-}
-
-function renderGrids() {
-  const el = document.getElementById("fullNestGrid");
-  if (el) {
-    let html = "";
-    for (let n = 1; n <= 100; n++) {
-      const c = cycleForNest(n);
-      const cls = c ? (c.statut === "couvaison" ? "couvaison" : "ponte") : "";
-      const icon = c ? (c.statut === "couvaison" ? "ic-nest-couvaison" : "ic-nest-ponte") : "ic-nest-libre";
-      html += `<div class="nest-cell ${cls}" data-n="${n}"><svg><use href="#${icon}"/></svg><span class="nest-num">${n}</span></div>`;
-    }
-    el.innerHTML = html;
-    el.querySelectorAll(".nest-cell").forEach(cell => {
-      cell.addEventListener("click", () => openNestModal(Number(cell.dataset.n)));
-    });
-  }
-  const occ = Object.keys(cyclesMap).length;
-  const qc = document.getElementById("nestsQuickCount");
-  if (qc) qc.textContent = `${occ}/100 occupés`;
-  renderDistributionBar();
-}
-
-// Résumé condensé pour le tableau de bord : une barre de répartition
-// Libre / Ponte / Couvaison, plutôt que la grille complète des 100 nids
-// (trop haute et peu cliquable sur mobile).
-function renderDistributionBar() {
-  const bar = document.getElementById("nestDistributionBar");
-  if (!bar) return;
-  let ponte = 0, couvaison = 0;
-  Object.values(cyclesMap).forEach(c => { if (c.statut === "couvaison") couvaison++; else ponte++; });
-  const libre = Math.max(0, 100 - ponte - couvaison);
-  bar.innerHTML = `
-    <div class="dist-bar">
-      ${libre ? `<div class="dist-seg" style="flex:${libre}; background:var(--sage-100);"></div>` : ""}
-      ${ponte ? `<div class="dist-seg" style="flex:${ponte}; background:var(--yolk-500);"></div>` : ""}
-      ${couvaison ? `<div class="dist-seg" style="flex:${couvaison}; background:var(--pond-600);"></div>` : ""}
-    </div>
-  `;
-  const setC = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-  setC("nestCountLibre", libre);
-  setC("nestCountPonte", ponte);
-  setC("nestCountCouvaison", couvaison);
-}
-
-function renderDashboardNestKpi() {
-  const totalOeufs = Object.values(cyclesMap).reduce((a, c) => a + (Number(c.nombre_oeufs) || 0), 0);
-  const occ = Object.keys(cyclesMap).length;
-  const elV = document.getElementById("kpiOeufsNids");
-  const elS = document.getElementById("kpiNidsOccupesSub");
-  if (elV) animateCountUp("kpiOeufsNids", totalOeufs);
-  if (elS) elS.textContent = `${occ} nids occupés sur 100`;
-}
-
-// Date d'éclosion projetée pour un cycle en couvaison : point de départ
-// de la couvaison + durée moyenne d'incubation du canard de Barbarie.
-// Retourne null tant que la couvaison n'a pas commencé (une ponte seule
-// n'a pas encore de date de référence pour projeter une éclosion).
-function predictedHatchDate(c) {
-  if (!c.date_debut_couvaison) return null;
-  const start = c.date_debut_couvaison?.toDate ? c.date_debut_couvaison.toDate() : new Date(c.date_debut_couvaison);
-  if (isNaN(start.getTime())) return null;
-  return new Date(start.getTime() + DUREE_INCUBATION_JOURS * 86400000);
-}
-
-// Clé de regroupement "jour civil" (YYYY-MM-DD, sans heure) pour un
-// cycle, selon le mode demandé — sert à la fois au regroupement visuel
-// et au filtre "date précise".
-function dateKeyFor(c, mode) {
-  let raw;
-  if (mode === "couvaison") raw = c.date_debut_couvaison;
-  else if (mode === "eclosion_prevue") raw = predictedHatchDate(c);
-  else raw = c.date_debut; // "ponte" et "numero" (filtre date) retombent sur le début du cycle
-  if (!raw) return null;
-  const d = raw?.toDate ? raw.toDate() : new Date(raw);
-  if (isNaN(d.getTime())) return null;
-  const off = d.getTimezoneOffset();
-  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
-}
-
-function renderCycleRows(list) {
-  return list.map(c => {
-    const hatch = predictedHatchDate(c);
-    return `
-    <div class="row with-icon" data-nid="${c.nid_numero}">
-      <div class="row-icon ${c.statut === 'couvaison' ? 'warn' : 'pos'}"><svg><use href="#${c.statut === 'couvaison' ? 'ic-nest-couvaison' : 'ic-nest-ponte'}"/></svg></div>
-      <div class="row-main">
-        <span class="row-title">Nid n° ${c.nid_numero}</span>
-        <span class="row-sub">${c.nombre_oeufs || 0} œuf(s) · ponte depuis ${formatDate(c.date_debut)}${c.statut === "couvaison" && c.date_debut_couvaison ? " · couvaison depuis " + formatDate(c.date_debut_couvaison) : ""}${hatch ? " · éclosion prévue " + formatDate(hatch) : ""}${c.cree_par ? " · par " + escapeHtml(c.cree_par) : ""}${c.nombre_eclos ? ` · 🐣 ${c.nombre_eclos} déjà éclos` : ""}</span>
-      </div>
-      <span class="tag ${c.statut === 'couvaison' ? (c.nombre_eclos ? 'ok' : 'warn') : 'ok'}">${c.statut === "couvaison" ? (c.nombre_eclos ? "Éclosion en cours" : "Couvaison") : "Ponte"}</span>
-    </div>
-  `;
-  }).join("");
-}
-
-// ⚠️ NOUVEAU (août 2026) : la liste "En cours" peut désormais être
-// regroupée par date de ponte, date de couvaison, ou éclosion prévue —
-// pour voir en un coup d'œil quels nids ont démarré ensemble, ou quels
-// nids vont éclore à la même période. Un filtre optionnel restreint
-// l'affichage à une date précise. Le tri par n° de nid reste le
-// comportement par défaut (identique à avant ce correctif).
-function renderEnCoursList() {
-  const el = document.getElementById("nidsEnCoursList");
-  if (!el) return;
-  let list = Object.values(cyclesMap);
-
-  // Regrouper/filtrer par éclosion prévue n'a de sens que pour les nids
-  // déjà en couvaison (une ponte seule n'a pas encore de date de départ
-  // de couvaison à partir de laquelle projeter une éclosion).
-  if (nidsGroupBy === "eclosion_prevue") {
-    list = list.filter(c => c.statut === "couvaison" && c.date_debut_couvaison);
-  }
-
-  if (nidsFilterDate) {
-    list = list.filter(c => dateKeyFor(c, nidsGroupBy) === nidsFilterDate);
-  }
-
-  if (!list.length) {
-    el.innerHTML = `<div class="empty-state"><div class="glyph">🪺</div><p>${nidsFilterDate || nidsGroupBy !== "numero" ? "Aucun nid ne correspond à ce filtre." : "Aucun nid occupé actuellement."}</p></div>`;
-    return;
-  }
-
-  if (nidsGroupBy === "numero") {
-    list.sort((a, b) => a.nid_numero - b.nid_numero);
-    el.innerHTML = renderCycleRows(list);
-  } else {
-    const groups = {};
-    list.forEach(c => {
-      const key = dateKeyFor(c, nidsGroupBy) || "inconnue";
-      (groups[key] = groups[key] || []).push(c);
-    });
-    const keys = Object.keys(groups).sort((a, b) => {
-      if (a === "inconnue") return 1;
-      if (b === "inconnue") return -1;
-      return nidsSortDir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
-    });
-    const groupLabel = nidsGroupBy === "eclosion_prevue" ? "Éclosion prévue" : nidsGroupBy === "couvaison" ? "Couvaison débutée" : "Ponte débutée";
-    el.innerHTML = keys.map(key => {
-      const groupList = groups[key].sort((a, b) => a.nid_numero - b.nid_numero);
-      const totalOeufs = groupList.reduce((a, c) => a + (Number(c.nombre_oeufs) || 0), 0);
-      const label = key === "inconnue" ? "date inconnue" : formatDate(new Date(key + "T00:00:00"));
-      return `
-        <div class="nid-date-group">
-          <div class="nid-date-group-head">
-            <span class="row-title">${groupLabel} : ${label}</span>
-            <span class="tag ok">${groupList.length} nid${groupList.length > 1 ? "s" : ""} · ${totalOeufs} œuf${totalOeufs > 1 ? "s" : ""}</span>
-          </div>
-          ${renderCycleRows(groupList)}
-        </div>
-      `;
-    }).join("");
-  }
-
-  el.querySelectorAll(".row[data-nid]").forEach(rowEl => {
-    rowEl.style.cursor = "pointer";
-    rowEl.addEventListener("click", () => openNestModal(Number(rowEl.dataset.nid)));
-  });
-}
-
-function renderArchives() {
-  const el = document.getElementById("nidsArchivesList");
-  if (!el) return;
-  if (!archivedCycles.length) {
-    el.innerHTML = `<div class="empty-state"><div class="glyph">📦</div><p>Aucun cycle archivé pour le moment.</p></div>`;
-    return;
-  }
-  el.innerHTML = archivedCycles.map(c => {
-    const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
-    const succes = c.statut === "eclos";
-    return `
-    <div class="row with-icon archive-row" data-id="${c.id}" style="cursor:pointer;">
-      <div class="row-icon ${succes ? 'pos' : 'neg'}"><svg><use href="#${succes ? 'ic-nest-eclos' : 'ic-nest-echec'}"/></svg></div>
-      <div class="row-main">
-        <span class="row-title">Nid n° ${c.nid_numero} — ${formatDate(c.date_fin)}</span>
-        <span class="row-sub">${c.nombre_oeufs || 0} œufs → ${c.nombre_eclos || 0} éclos${c.archive_par ? " · par " + escapeHtml(c.archive_par) : ""}</span>
-      </div>
-      <span class="tag ${succes ? 'ok' : 'danger'}">${taux}%</span>
-    </div>`;
-  }).join("");
-  el.querySelectorAll(".archive-row").forEach(rowEl => {
-    rowEl.addEventListener("click", () => {
-      const c = archivedCycles.find(x => x.id === rowEl.dataset.id);
-      if (c) openArchiveDetailModal(c);
-    });
-  });
-}
-
-// Correction d'un cycle déjà archivé (nombre d'œufs/éclos erroné à la
-// saisie) + rattrapage manuel pour les cycles archivés AVANT le
-// correctif du lien nids → inventaire (voir archiveCycle) : le bouton
-// "Ajouter au cheptel" n'apparaît que si ce n'est pas déjà fait, pour ne
-// jamais créer de doublon.
-// Fiche d'un cycle archivé — STRICTEMENT EN LECTURE SEULE. Une archive
-// ne se corrige jamais après coup (même logique que la comptabilité
-// OHADA du module : une écriture validée ne se modifie pas, elle se
-// contre-passe si une erreur est découverte). Le nombre d'œufs et
-// d'éclosions saisi au moment de l'archivage reste la trace fidèle de
-// ce qui a été constaté ce jour-là.
+// Affiche l'archive de production de canetons (collection
+// "canetons_production"). Lecture seule, ne modifie rien ; le total
+// affiché est purement informatif ("combien de canetons ai-je produits
+// au total") et n'entre dans aucun calcul de cheptel actif.
 //
-// Le seul rattrapage possible ici concerne les cycles archivés AVANT la
-// mise en place du lien automatique avec l'inventaire (voir
-// archiveCycle) : on vérifie — sans jamais écrire quoi que ce soit sur
-// le cycle archivé lui-même — si un lot de canetons issu de ce cycle
-// existe déjà dans l'inventaire (recherche par issu_du_cycle_id), pour
-// proposer l'ajout uniquement s'il manque réellement.
-async function openArchiveDetailModal(c) {
-  const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
-  const body = `
-    <div class="row"><div class="row-main"><span class="row-title">Date d'archivage</span></div><span class="row-value">${formatDate(c.date_fin)}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Œufs constatés</span></div><span class="row-value">${c.nombre_oeufs || 0}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Canetons éclos</span></div><span class="row-value">${c.nombre_eclos || 0}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Taux d'éclosion</span></div><span class="row-value">${taux}%</span></div>
-    ${c.archive_par ? `<div class="row"><div class="row-main"><span class="row-title">Archivé par</span></div><span class="row-value">${escapeHtml(c.archive_par)}</span></div>` : ""}
-    <div class="spacer-s"></div>
-    <p class="subtle">🔒 Cette archive est en lecture seule — un cycle une fois clôturé ne se modifie plus, pour garantir la fiabilité de l'historique.</p>
-    <div id="fArchInventaireZone"></div>
-  `;
-  openModal(`Nid n° ${c.nid_numero}`, body, {
-    onMount: async () => {
-      if (c.statut !== "eclos" || !(c.nombre_eclos > 0)) return;
-      const zone = document.getElementById("fArchInventaireZone");
-      // ⚠️ SIMPLIFIÉ (août 2026) : depuis le passage au lot d'inventaire
-      // unique par cycle (voir cycleDuckDocRef), il suffit de vérifier si
-      // ce document précis existe déjà — plus besoin d'une recherche
-      // heuristique par date/quantité sur toute la collection.
-      const duckRef = cycleDuckDocRef(c);
-      const existing = await getDoc(duckRef);
-      const dejaAjoute = existing.exists();
-      zone.innerHTML = `
-        <div class="spacer-m"></div>
-        <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
-          <h3 style="font-size:14px; margin-bottom:4px;">Inventaire des canards</h3>
-          ${dejaAjoute
-            ? `<p class="subtle" style="margin:0;">✓ Ces canetons figurent déjà dans l'inventaire.</p>`
-            : `<p class="subtle" style="margin:0 0 10px;">Ce cycle a été archivé avant la mise en place du lien automatique avec l'inventaire — les canetons nés ici n'y figurent pas encore.</p>
-               <button class="btn yolk" id="fArchAddInventaire">🐥 Ajouter ${c.nombre_eclos} caneton(s) au cheptel</button>`}
+// ⚠️ CORRECTIF (août 2026) : cette archive était jusqu'ici modifiable et
+// supprimable (quantité corrigible, entrée supprimable comme "doublon").
+// Un historique de production doit rester un compteur cumulé fiable et
+// non altérable — les entrées sont maintenant strictement en lecture
+// seule. Toute correction nécessaire (date de naissance erronée) se
+// fait désormais depuis la fiche du lot d'origine dans "Canards", qui
+// répercute automatiquement la correction sur l'archive liée.
+async function openCanetonsArchiveModal() {
+  openModal("Archive des canetons produits", `<p class="subtle">Chargement…</p>`, { onMount: () => {} });
+  try {
+    const snap = await getDocs(query(canetonsProductionCol, orderBy("date_transition", "desc")));
+    const entries = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(e => !estEnAttenteSuppression(e.id));
+    const total = entries.reduce((a, e) => a + (Number(e.quantite) || 0), 0);
+    const body = `
+      <div class="card" style="background:var(--sage-100); border:none;">
+        <div class="row"><div class="row-main"><span class="row-title">Total de canetons produits (cumulé)</span><span class="row-sub">Ne compte pas dans le cheptel actif actuel</span></div><span class="row-value pos">${total}</span></div>
+      </div>
+      <p class="subtle" style="margin:10px 0 4px;">Historique en lecture seule. Pour corriger une date de naissance, modifiez le lot d'origine dans l'onglet Canards.</p>
+      <div class="spacer-s"></div>
+      ${entries.length ? entries.map(e => `
+        <div class="row with-icon">
+          <div class="row-icon"><svg><use href="#ic-duck-canardeau"/></svg></div>
+          <div class="row-main">
+            <span class="row-title">${e.quantite} caneton(s) passés en canardeau</span>
+            <span class="row-sub">${formatDate(e.date_transition)}${e.date_naissance ? " · né(s) le " + formatDate(e.date_naissance) : ""} · ${escapeHtml(e.enregistre_par || "")}</span>
+          </div>
         </div>
-      `;
-      const addBtn = document.getElementById("fArchAddInventaire");
-      if (addBtn) addBtn.addEventListener("click", async () => {
-        try {
-          await setDoc(duckRef, {
-            type: "caneton", quantite: Number(c.nombre_eclos) || 0,
-            date_entree: c.date_fin || new Date(), date_naissance: c.date_fin || new Date(),
-            bague_couleur: null, numero_bague: null,
-            notes: `Éclosion nid n° ${c.nid_numero} (rattrapage manuel)`,
-            statut: "actif", date_sortie: null, motif_sortie: null,
-            issu_du_nid: c.nid_numero, issu_du_cycle_id: c.id,
-            cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
-          toast(`${c.nombre_eclos} caneton(s) ajoutés à l'inventaire ✓`);
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-    }
-  });
+      `).join("") : `<div class="empty-state"><div class="glyph">🐥</div><p>Aucun passage caneton → canardeau archivé pour l'instant.</p></div>`}
+    `;
+    openModal("Archive des canetons produits", body, { onMount: () => {} });
+  } catch (e) {
+    console.error(e);
+    openModal("Archive des canetons produits", `<p class="subtle">Erreur de chargement : ${e.message}</p>`, { onMount: () => {} });
+  }
 }
 
-function toDateObj(d) {
-  return d?.toDate ? d.toDate() : new Date(d);
+// Utilisé par stocks.js pour la prévision de consommation basée sur le
+// cheptel réel (lecture seule — ne modifie rien ici).
+export function getActiveDuckCounts() {
+  const actifs = activeDucks();
+  const sum = (t) => actifs.filter(d => d.type === t).reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  return {
+    caneton: sum("caneton"),
+    canardeau: sum("canardeau"),
+    canard: sum("canard"),
+    reproducteur_male: sum("reproducteur_male"),
+    reproducteur_femelle: sum("reproducteur_femelle")
+  };
 }
 
-function dayKey(d) {
-  const date = toDateObj(d);
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
+function renderKpis() {
+  const actifs = activeDucks();
+  const sum = (t) => actifs.filter(d => d.type === t).reduce((a, d) => a + (Number(d.quantite) || 1), 0);
+  const bagues = { rouge: 0, vert: 0, violet: 0, bleu: 0 };
+  actifs.forEach(d => { if (d.bague_couleur && bagues[d.bague_couleur] !== undefined) bagues[d.bague_couleur] += (Number(d.quantite) || 1); });
 
-// Calcule une moyenne par jour calendaire entre le premier et le dernier
-// événement (inclus), en comptant les jours sans événement comme des jours
-// à zéro — donc les périodes sans relevé font bien baisser la moyenne,
-// comme demandé.
-function calculerMoyenneParJour(events, dateField, valueField) {
-  if (!events.length) return { total: 0, moyenne: 0, jours: 0 };
-  const dates = events.map(e => toDateObj(e[dateField]).getTime());
-  const min = Math.min(...dates);
-  const max = Math.max(...dates);
-  const jours = Math.max(1, Math.round((max - min) / 86400000) + 1);
-  const total = events.reduce((a, e) => a + (Number(e[valueField]) || 0), 0);
-  return { total, moyenne: total / jours, jours };
-}
+  const vals = {
+    caneton: sum("caneton"),
+    canardeau: sum("canardeau"),
+    canard: sum("canard"),
+    reproducteur_male: sum("reproducteur_male"),
+    reproducteur_femelle: sum("reproducteur_femelle")
+  };
+  const totalActifCount = actifs.reduce((a, d) => a + (Number(d.quantite) || 1), 0);
 
-function renderDailyAverages() {
-  const el = document.getElementById("dailyAverageStats");
+  // Une catégorie à 0 est grisée (moins de bruit visuel qu'une carte
+  // colorée qui affiche juste "0").
+  const kpiCell = (label, value, variant, icon) => {
+    const cls = value === 0 ? "kpi zero" : `kpi${variant ? " " + variant : ""}`;
+    const watermark = icon ? `<svg class="kpi-watermark fill" viewBox="0 0 40 40" preserveAspectRatio="xMidYMid slice"><use href="#${icon}"/></svg>` : "";
+    return `<div class="${cls}">${watermark}<div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`;
+  };
+
+  const el = document.getElementById("invKpis");
   if (!el) return;
+  el.innerHTML = [
+    kpiCell("Canetons", vals.caneton, null, "ic-duck-caneton"),
+    kpiCell("Canardeaux", vals.canardeau, null, "ic-duck-canardeau"),
+    kpiCell("Canards", vals.canard, null, "ic-duck-canard"),
+    kpiCell("Reprod. mâles", vals.reproducteur_male, "alt", "ic-duck-repro-m"),
+    kpiCell("Reprod. femelles", vals.reproducteur_femelle, "alt", "ic-duck-repro-f"),
+    kpiCell("Total actif", totalActifCount, "yolk", "ic-duck-canard")
+  ].join("");
+  const totalEl = document.getElementById("kpiTotalCanards");
+  const subEl = document.getElementById("kpiCanardsSub");
+  if (totalEl) animateCountUp("kpiTotalCanards", totalActifCount);
+  if (subEl) subEl.textContent = `${vals.reproducteur_male + vals.reproducteur_femelle} reproducteurs · ${vals.canard} canards · ${vals.canardeau} canardeaux · ${vals.caneton} canetons`;
 
-  const ponte = calculerMoyenneParJour(pontesLog, "date", "quantite");
-  const eclosions = archivedCycles.filter(c => c.statut === "eclos" && c.date_fin);
-  const canetons = calculerMoyenneParJour(eclosions, "date_fin", "nombre_eclos");
-
-  el.innerHTML = `
-    <div class="row">
-      <div class="row-main"><span class="row-title">Ponte moyenne / jour</span><span class="row-sub">${ponte.jours} jour(s) couverts, du premier au dernier relevé</span></div>
-      <span class="row-value">${ponte.moyenne.toFixed(1)} œuf(s)</span>
-    </div>
-    <div class="row">
-      <div class="row-main"><span class="row-title">Canetons éclos / jour</span><span class="row-sub">${canetons.jours} jour(s) couverts, entre la 1ère et la dernière éclosion</span></div>
-      <span class="row-value">${canetons.moyenne.toFixed(1)} caneton(s)</span>
-    </div>
-  `;
-}
-
-// ⚠️ NOUVEAU (août 2026) : historique BRUT du nombre d'œufs pondus dans
-// le temps, indépendant des éclosions et des pertes. S'appuie sur
-// "pontes_journalieres" (déjà tenu à jour à chaque relevé de nid), en ne
-// retenant QUE les mouvements positifs (ponte initiale + relevés
-// quotidiens) — les corrections négatives (erreurs de saisie) sont
-// exclues, car elles ne représentent pas des œufs réellement pondus.
-// Permet de répondre à "combien d'œufs avons-nous eu entre telle et
-// telle date ?", peu importe ce qu'ils sont devenus depuis (éclos,
-// perdus, encore en couvaison).
-function renderPonteHistory() {
-  const fromEl = document.getElementById("pHistFrom");
-  const toEl = document.getElementById("pHistTo");
-  const summaryEl = document.getElementById("ponteHistorySummary");
-  const breakdownEl = document.getElementById("ponteHistoryBreakdown");
-  if (!summaryEl || !breakdownEl) return;
-  if (toEl && !toEl.value) toEl.value = todayInputValue(); // par défaut : jusqu'à aujourd'hui
-
-  const ajouts = pontesLog.filter(p => (Number(p.quantite) || 0) > 0);
-
-  const fromVal = fromEl?.value ? new Date(fromEl.value + "T00:00:00") : null;
-  const toVal = toEl?.value ? new Date(toEl.value + "T23:59:59") : null;
-  const filtered = ajouts.filter(p => {
-    const d = toDateObj(p.date);
-    if (fromVal && d < fromVal) return false;
-    if (toVal && d > toVal) return false;
-    return true;
-  });
-
-  const total = filtered.reduce((a, p) => a + (Number(p.quantite) || 0), 0);
-  const periodeLabel = fromVal && toVal
-    ? `du ${formatDate(fromVal)} au ${formatDate(toVal)}`
-    : fromVal ? `depuis le ${formatDate(fromVal)}`
-    : toVal ? `jusqu'au ${formatDate(toVal)}`
-    : "sur toute la période enregistrée";
-
-  summaryEl.innerHTML = `
-    <div class="row"><div class="row-main"><span class="row-title">Total d'œufs enregistrés</span><span class="row-sub">${periodeLabel}</span></div><span class="row-value pos">${total}</span></div>
-  `;
-
-  // Répartition mensuelle pour une lecture rapide des tendances sur les
-  // périodes un peu longues.
-  const byMonth = {};
-  filtered.forEach(p => {
-    const d = toDateObj(p.date);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    byMonth[key] = (byMonth[key] || 0) + (Number(p.quantite) || 0);
-  });
-  const months = Object.keys(byMonth).sort();
-  breakdownEl.innerHTML = months.length ? months.map(key => {
-    const [y, m] = key.split("-");
-    const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
-    return `<div class="row"><div class="row-main"><span class="row-title">${label.charAt(0).toUpperCase() + label.slice(1)}</span></div><span class="row-value">${byMonth[key]}</span></div>`;
-  }).join("") : `<p class="subtle">Aucun enregistrement de ponte sur cette période.</p>`;
-}
-
-function renderStats() {
-  renderDailyAverages();
-  renderPonteHistory();
-  const topEl = document.getElementById("topNestsList");
-  const globalEl = document.getElementById("globalHatchStats");
-  if (!topEl || !globalEl) return;
-
-  const byNest = {};
-  archivedCycles.forEach(c => {
-    byNest[c.nid_numero] = byNest[c.nid_numero] || { oeufs: 0, eclos: 0, cycles: 0 };
-    byNest[c.nid_numero].oeufs += Number(c.nombre_oeufs) || 0;
-    byNest[c.nid_numero].eclos += Number(c.nombre_eclos) || 0;
-    byNest[c.nid_numero].cycles += 1;
-  });
-  const ranked = Object.entries(byNest)
-    .map(([n, s]) => ({ n, ...s, taux: s.oeufs ? s.eclos / s.oeufs : 0 }))
-    .sort((a, b) => b.taux - a.taux || b.eclos - a.eclos)
-    .slice(0, 10);
-
-  if (!ranked.length) {
-    topEl.innerHTML = `<p class="subtle">Pas encore assez de cycles archivés pour établir un classement.</p>`;
-  } else {
-    topEl.innerHTML = ranked.map((r, i) => `
-      <div class="row with-icon">
-        <div class="row-icon pos"><svg><use href="#ic-nest-eclos"/></svg></div>
-        <div class="row-main"><span class="row-title">#${i + 1} — Nid n° ${r.n}</span><span class="row-sub">${r.cycles} cycle(s) · ${r.eclos}/${r.oeufs} œufs éclos</span></div>
-        <span class="row-value pos">${Math.round(r.taux * 100)}%</span>
+  const dashEl = document.getElementById("dashInventaireBreakdown");
+  if (dashEl) {
+    const total = totalActifCount || 1;
+    dashEl.innerHTML = ["rouge", "vert", "violet", "bleu"].map(c => `
+      <div class="row">
+        <div class="row-main"><span class="row-title">Bague ${BAGUE_LABELS[c]}</span></div>
+        <div style="flex:1; margin:0 12px;" class="stat-bar-track"><div class="stat-bar-fill" style="width:${Math.min(100, (bagues[c] / total) * 100)}%; background:var(--pond-600)"></div></div>
+        <div class="row-value">${bagues[c]}</div>
       </div>`).join("");
   }
+}
 
-  const totalOeufs = archivedCycles.reduce((a, c) => a + (Number(c.nombre_oeufs) || 0), 0);
-  const totalEclos = archivedCycles.reduce((a, c) => a + (Number(c.nombre_eclos) || 0), 0);
-  const taux = totalOeufs ? Math.round((totalEclos / totalOeufs) * 100) : 0;
-  const kpiT = document.getElementById("kpiTauxEclosion");
-  if (kpiT) animateCountUp("kpiTauxEclosion", taux, { suffix: "%" });
-  globalEl.innerHTML = `
-    <div class="row"><div class="row-main"><span class="row-title">Œufs couvés (archivés)</span></div><span class="row-value">${totalOeufs}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Canetons éclos</span></div><span class="row-value pos">${totalEclos}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Taux d'éclosion global</span></div><span class="row-value">${taux}%</span></div>
+function renderList() {
+  const el = document.getElementById("invList");
+  if (!el) return;
+  let items = allDucks.filter(d => !estEnAttenteSuppression(d.id));
+  if (filterType !== "all") items = items.filter(d => d.type === filterType);
+  if (filterStatut !== "all") items = items.filter(d => d.statut === filterStatut);
+  if (filterLot !== "all") items = items.filter(d => (d.lot || "") === filterLot);
+  if (searchTerm) {
+    items = items.filter(d => {
+      const haystack = [
+        d.numero_bague, d.cree_par, d.motif_sortie, d.notes, d.lot, TYPE_LABELS[d.type]
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(searchTerm);
+    });
+  }
+
+  if (!items.length) {
+    el.innerHTML = `<div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div>`;
+    return;
+  }
+  el.innerHTML = items.map(d => {
+    const bagueColorVar = { rouge: "var(--clay-500)", vert: "var(--pond-600)", violet: "#8B5FBF", bleu: "#3D6FBF" }[d.bague_couleur] || "var(--pond-600)";
+    // Un lot vendu affiche la date effective de vente plutôt que sa
+    // date d'entrée d'origine, plus pertinente pour le suivi.
+    const dateLabel = d.statut === "vendu" && d.date_sortie
+      ? `Vente : ${formatDate(d.date_sortie)}`
+      : `entrée ${formatDate(d.date_entree)}`;
+    const checked = selectedIds.has(d.id) ? "checked" : "";
+    return `
+    <div class="row with-icon" data-id="${d.id}">
+      ${selectionMode ? `<input type="checkbox" class="row-select-checkbox" data-id="${d.id}" ${checked}>` : ""}
+      <div class="row-icon" style="color:${bagueColorVar}"><svg><use href="#${TYPE_ICONS[d.type] || 'ic-duck-canard'}"/></svg></div>
+      <div class="row-main">
+        <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}${d.lot ? `<span class="lot-chip">🏷️ ${escapeHtml(d.lot)}</span>` : ""}</span>
+        <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · ${dateLabel}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
+      </div>
+      <span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span>
+    </div>
   `;
+  }).join("");
+
+  // En mode sélection, un clic sur la ligne (ou sur la case) bascule la
+  // sélection au lieu d'ouvrir la fiche d'édition — pour ne pas ouvrir
+  // un modal par erreur pendant qu'on constitue un lot.
+  el.querySelectorAll(".row").forEach((rowEl, idx) => {
+    rowEl.style.cursor = "pointer";
+    if (selectionMode) {
+      rowEl.addEventListener("click", (e) => {
+        if (e.target.classList.contains("row-select-checkbox")) return; // la case gère déjà son propre clic
+        toggleSelected(items[idx].id);
+      });
+      rowEl.querySelector(".row-select-checkbox")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleSelected(items[idx].id);
+      });
+    } else {
+      rowEl.addEventListener("click", () => openEditModal(items[idx]));
+    }
+  });
 }
 
 // ---------------------------------------------------------------------
-// Modal de détail / actions sur un nid
+// Sélection multiple + regroupement en lot
 // ---------------------------------------------------------------------
-function openNestModal(n) {
-  const cycle = cycleForNest(n);
+function toggleSelectionMode() {
+  setSelectionMode(!selectionMode);
+}
 
-  if (!cycle) {
-    openModal(`Nid n° ${n}`, `
-      <p class="subtle">Ce nid est libre. Démarrez un nouveau cycle de ponte.</p>
+function setSelectionMode(on) {
+  selectionMode = on;
+  if (!on) selectedIds.clear();
+  const btn = document.getElementById("invLotModeBtn");
+  if (btn) btn.textContent = on ? "✕ Annuler la sélection" : "🏷️ Regrouper en lot";
+  updateSelectionBar();
+  renderList();
+}
+
+function toggleSelected(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  updateSelectionBar();
+  // On ne redessine que la case concernée (pas toute la liste) pour ne
+  // pas perdre la position de défilement pendant qu'on coche plusieurs
+  // lignes d'affilée.
+  const cb = document.querySelector(`.row-select-checkbox[data-id="${id}"]`);
+  if (cb) cb.checked = selectedIds.has(id);
+}
+
+function updateSelectionBar() {
+  const bar = document.getElementById("invSelectionBar");
+  const countEl = document.getElementById("invSelectionCount");
+  if (!bar || !countEl) return;
+  bar.classList.toggle("hidden", !selectionMode || selectedIds.size === 0);
+  countEl.textContent = `${selectedIds.size} sélectionné(s)`;
+}
+
+// Ouvre la boîte de dialogue d'assignation de lot pour les entrées
+// actuellement sélectionnées. Propose les lots déjà existants (créés
+// précédemment par n'importe qui) via une liste suggérée, pour éviter
+// de créer deux lots au nom quasi identique par erreur de frappe.
+function openAssignLotModal() {
+  if (!selectedIds.size) { toast("Sélectionnez au moins un lot de canards"); return; }
+  const lotsExistants = Array.from(new Set(allDucks.map(d => d.lot).filter(Boolean))).sort();
+  const selectedItems = allDucks.filter(d => selectedIds.has(d.id));
+  const lotCommun = selectedItems.every(d => (d.lot || "") === (selectedItems[0].lot || "")) ? (selectedItems[0].lot || "") : "";
+
+  const body = `
+    <p class="subtle">${selectedIds.size} enregistrement(s) sélectionné(s). Attribuez-leur un nom de lot commun (ex. "Abri A", "Éclosion 04-14 août") pour les retrouver d'un coup dans les filtres et la recherche.</p>
+    <div class="field">
+      <label>Nom du lot</label>
+      <input type="text" id="fLotName" list="fLotSuggestions" value="${escapeHtml(lotCommun)}" placeholder="Ex. Abri A">
+      <datalist id="fLotSuggestions">${lotsExistants.map(l => `<option value="${escapeHtml(l)}"></option>`).join("")}</datalist>
+    </div>
+    <button class="btn yolk" id="fLotSave">Assigner à ce lot</button>
+    <div class="spacer-s"></div>
+    <button class="btn secondary" id="fLotClear">Retirer l'étiquette de lot</button>
+  `;
+  openModal("Regrouper en lot", body, {
+    onMount: () => {
+      document.getElementById("fLotSave").addEventListener("click", async () => {
+        const nom = document.getElementById("fLotName").value.trim();
+        if (!nom) { toast("Indiquez un nom de lot"); return; }
+        await appliquerLotSurSelection(nom);
+      });
+      document.getElementById("fLotClear").addEventListener("click", async () => {
+        await appliquerLotSurSelection(null);
+      });
+    }
+  });
+}
+
+async function appliquerLotSurSelection(nomLotOuNull) {
+  try {
+    const batch = writeBatch(db);
+    selectedIds.forEach(id => {
+      batch.update(doc(db, "ducks", id), {
+        lot: nomLotOuNull,
+        modifie_par: getUserName() || "Inconnu",
+        modifie_le: serverTimestamp()
+      });
+    });
+    await batch.commit();
+    toast(nomLotOuNull ? `Lot "${nomLotOuNull}" appliqué à ${selectedIds.size} enregistrement(s) ✓` : `Étiquette de lot retirée ✓`);
+    closeModal();
+    setSelectionMode(false);
+  } catch (e) { toast("Erreur : " + e.message); }
+}
+
+export function openAddDuckModal() {
+  const body = `
+    <div class="field">
+      <label>Type</label>
+      <select id="fDuckType">
+        <option value="caneton">Caneton (0-3 sem.)</option>
+        <option value="canardeau">Canardeau (4-8 sem.)</option>
+        <option value="canard">Canard (8 sem. et +)</option>
+        <option value="reproducteur_male">Reproducteur mâle</option>
+        <option value="reproducteur_femelle">Reproductrice femelle</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Quantité (lot)</label><input type="number" id="fDuckQte" value="1" min="1"></div>
+      <div class="field"><label>Date d'entrée</label><input type="date" id="fDuckDate" value="${todayInputValue()}"></div>
+    </div>
+    <div class="field"><label>Date de naissance exacte (optionnel)</label><input type="date" id="fDuckDateNaissance"></div>
+    <p class="subtle" style="margin:-4px 0 8px;">Pour un caneton ou un canardeau, la date de naissance (si connue) est utilisée en priorité sur la date d'entrée pour calculer l'âge et déclencher la requalification automatique (0-3 sem. → caneton, 4-8 sem. → canardeau, 8 sem. et + → canard).</p>
+    <div class="field-row">
+      <div class="field">
+        <label>Couleur de bague</label>
+        <select id="fDuckBague">
+          <option value="">Aucune</option>
+          <option value="rouge">Rouge</option>
+          <option value="vert">Verte</option>
+          <option value="violet">Violette</option>
+          <option value="bleu">Bleue</option>
+        </select>
+      </div>
+      <div class="field"><label>N° de bague</label><input type="text" id="fDuckNum" placeholder="ex : R-014"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="fDuckNotes" rows="2" placeholder="Origine, race, remarques…"></textarea></div>
+    <button class="btn yolk" id="fDuckSave">Enregistrer</button>
+  `;
+  openModal("Ajouter au cheptel", body, {
+    onMount: () => {
+      document.getElementById("fDuckSave").addEventListener("click", async () => {
+        const payload = {
+          type: document.getElementById("fDuckType").value,
+          quantite: Number(document.getElementById("fDuckQte").value) || 1,
+          date_entree: new Date(document.getElementById("fDuckDate").value),
+          date_naissance: document.getElementById("fDuckDateNaissance").value ? new Date(document.getElementById("fDuckDateNaissance").value) : null,
+          bague_couleur: document.getElementById("fDuckBague").value || null,
+          numero_bague: document.getElementById("fDuckNum").value.trim() || null,
+          notes: document.getElementById("fDuckNotes").value.trim() || null,
+          statut: "actif",
+          date_sortie: null,
+          motif_sortie: null,
+          cree_par: getUserName() || "Inconnu",
+          createdAt: serverTimestamp()
+        };
+        try {
+          await addDoc(ducksCol, payload);
+          toast("Ajouté à l'inventaire ✓");
+          closeModal();
+        } catch (e) {
+          console.error(e);
+          toast("Erreur : " + e.message);
+        }
+      });
+    }
+  });
+}
+
+function openEditModal(d) {
+  const isActif = d.statut === "actif";
+  const estJeune = d.type === "caneton" || d.type === "canardeau";
+  const age = ageEnSemaines(dateReferenceAge(d));
+  const prochainStade = d.type === "caneton" ? "canardeau" : "canard";
+  const seuilProchain = d.type === "caneton" ? SEUIL_CANARDEAU_SEM : SEUIL_CANARD_SEM;
+  const seuilDebut = d.type === "caneton" ? 0 : SEUIL_CANARDEAU_SEM;
+  const semainesRestantes = (age !== null && estJeune) ? Math.max(0, Math.ceil(seuilProchain - age)) : null;
+  const pctStade = (age !== null && estJeune) ? Math.max(0, Math.min(100, Math.round(((age - seuilDebut) / (seuilProchain - seuilDebut)) * 100))) : 0;
+  const body = `
+    <div class="row"><div class="row-main"><span class="row-title">Quantité actuelle</span></div><span class="row-value">${d.quantite || 1}</span></div>
+    <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span></div>
+    ${!isActif && d.date_sortie ? `<div class="row"><div class="row-main"><span class="row-title">Date de sortie</span></div><span class="row-value">${formatDate(d.date_sortie)}</span></div>` : ""}
+    ${!isActif && d.motif_sortie ? `<div class="row" style="flex-direction:column; align-items:flex-start; gap:2px;"><span class="row-title">Motif / note</span><p class="subtle" style="margin:0;">${escapeHtml(d.motif_sortie)}</p></div>` : ""}
+    ${age !== null ? `<div class="row"><div class="row-main"><span class="row-title">Âge estimé</span></div><span class="row-value">${age < 1 ? Math.round(age * 7) + " j" : age.toFixed(1) + " sem."}</span></div>` : ""}
+    ${d.requalifie_le ? `<div class="row"><div class="row-main"><span class="row-title">Requalifié le</span></div><span class="row-value">${formatDate(d.requalifie_le)}${d.requalifie_par ? " · " + escapeHtml(d.requalifie_par) : ""}</span></div>` : ""}
+
+    ${isActif && estJeune && (d.quantite || 1) > 0 ? `
+    <div class="spacer-m"></div>
+    <div class="stage-progress">
+      <div class="stage-progress-head">
+        <span class="row-title">Progression vers ${TYPE_LABELS[prochainStade].toLowerCase()}</span>
+        <span class="row-value">${semainesRestantes === 0 ? "Prêt" : `${semainesRestantes} sem. restantes`}</span>
+      </div>
+      <div class="stage-bar">
+        <div class="stage-bar-fill" style="width:${pctStade}%;">
+          <span class="stage-marker">${TYPE_ICONS_EMOJI[prochainStade] || "🦆"}</span>
+        </div>
+      </div>
+      <div class="stage-caption">${semainesRestantes !== null ? (semainesRestantes > 0 ? `Passage automatique dans ~${semainesRestantes} semaine(s) selon l'âge, ou forcez-le dès maintenant ci-dessous.` : "Ce lot a atteint l'âge du prochain stade — il sera requalifié automatiquement au prochain rafraîchissement, ou forcez-le maintenant.") : "Basculement manuel avec traçabilité (date, par qui)."}</div>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="card" style="background:#FCEBD9; border:none;">
+      <h3 style="font-size:14px; margin-bottom:8px;">Requalifier en ${TYPE_LABELS[prochainStade].toLowerCase()}</h3>
+      <div class="field"><label>Quantité concernée</label><input type="number" id="fRequalQte" min="1" max="${d.quantite || 1}" value="${d.quantite || 1}"></div>
+      <button class="btn yolk" id="fRequalSave">Requalifier maintenant</button>
+    </div>
+    ` : ""}
+
+    ${isActif && (d.quantite || 1) > 0 ? `
+    <div class="spacer-m"></div>
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <h3 style="font-size:14px; margin-bottom:2px;">Retirer du cheptel</h3>
+      <p class="subtle" style="margin:0 0 10px;">Vente, décès ou réforme d'une partie ou de la totalité de ce lot. Le reste actif n'est pas affecté.</p>
+      <div class="field-row">
+        <div class="field"><label>Quantité à retirer</label><input type="number" id="fWithdrawQte" min="1" max="${d.quantite || 1}" value="1"></div>
+        <div class="field"><label>Motif</label>
+          <select id="fWithdrawMotif">
+            <option value="vendu">Vendu</option>
+            <option value="mort">Décédé</option>
+            <option value="reforme">Réformé</option>
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>Date du retrait</label><input type="date" id="fWithdrawDate" value="${todayInputValue()}"></div>
+      <div class="field"><label>Note (optionnel)</label><input type="text" id="fWithdrawNote" placeholder="ex : vendu au marché de Bingerville"></div>
+      <button class="btn yolk" id="fWithdrawSave">Enregistrer le retrait</button>
+    </div>
+    ` : ""}
+
+    ${isActif ? `
+    <div class="spacer-m"></div>
+    <div class="card" style="background:var(--sage-100); border:none;">
+      <h3 style="font-size:14px; margin-bottom:8px;">Suivi pondéral</h3>
+      <button class="btn secondary" id="fPeserBtn">⚖️ Peser un échantillon</button>
       <div class="spacer-s"></div>
-      <div class="field"><label>Date de début de ponte</label><input type="date" id="fPonteDate" value="${todayInputValue()}"></div>
-      <div class="field"><label>Œufs pondus à ce jour</label><input type="number" id="fOeufs" value="1" min="1"></div>
-      <button class="btn yolk" id="fStart">Démarrer la ponte</button>
-      <div class="section-title" style="margin:24px 0 10px;"><div><h2 style="font-size:15px;">Historique de ce nid</h2></div></div>
-      <div id="fNestHistory"><p class="subtle">Chargement…</p></div>
-    `, {
-      onMount: () => {
-        renderNestHistory(n);
-        document.getElementById("fStart").addEventListener("click", async () => {
-          const initialQte = Number(document.getElementById("fOeufs").value) || 0;
-          const dateDebut = new Date(document.getElementById("fPonteDate").value);
-          if (!(await confirmerSiDoublonRecent(n, "ponte_initiale", "Démarrage de ponte"))) return;
-          try {
-            const cRef = await addDoc(cyclesCol, {
-              nid_numero: n,
-              statut: "ponte",
-              date_debut: dateDebut,
-              nombre_oeufs: initialQte,
-              date_debut_couvaison: null,
-              date_fin: null,
-              nombre_eclos: null,
+      <div id="fPeseesHistorique"><p class="subtle">Chargement…</p></div>
+    </div>
+    ` : ""}
+
+    <div class="spacer-m"></div>
+    <h3 style="font-size:14px; margin-bottom:8px;">Corriger cet enregistrement</h3>
+    <div class="field">
+      <label>Type / stade</label>
+      <select id="eDuckType">
+        <option value="caneton" ${d.type === "caneton" ? "selected" : ""}>Caneton (0-3 sem.)</option>
+        <option value="canardeau" ${d.type === "canardeau" ? "selected" : ""}>Canardeau (4-8 sem.)</option>
+        <option value="canard" ${d.type === "canard" ? "selected" : ""}>Canard (8 sem. et +)</option>
+        <option value="reproducteur_male" ${d.type === "reproducteur_male" ? "selected" : ""}>Reproducteur mâle</option>
+        <option value="reproducteur_femelle" ${d.type === "reproducteur_femelle" ? "selected" : ""}>Reproductrice femelle</option>
+      </select>
+    </div>
+    <div class="field"><label>Couleur de bague</label>
+      <select id="eDuckBague">
+        <option value="" ${!d.bague_couleur ? "selected" : ""}>Aucune</option>
+        <option value="rouge" ${d.bague_couleur === "rouge" ? "selected" : ""}>Rouge</option>
+        <option value="vert" ${d.bague_couleur === "vert" ? "selected" : ""}>Verte</option>
+        <option value="violet" ${d.bague_couleur === "violet" ? "selected" : ""}>Violette</option>
+        <option value="bleu" ${d.bague_couleur === "bleu" ? "selected" : ""}>Bleue</option>
+      </select>
+    </div>
+    <div class="field"><label>Date de naissance exacte (optionnel — prioritaire sur la date d'entrée pour le calcul d'âge)</label><input type="date" id="eDuckDateNaissance" value="${d.date_naissance ? formatInputDate(d.date_naissance) : ""}"></div>
+    <div class="field"><label>Lot (optionnel — ex. "Abri A")</label><input type="text" id="eDuckLot" list="eDuckLotSuggestions" value="${escapeHtml(d.lot || "")}" placeholder="Non affecté à un lot">
+      <datalist id="eDuckLotSuggestions">${Array.from(new Set(allDucks.map(x => x.lot).filter(Boolean))).sort().map(l => `<option value="${escapeHtml(l)}"></option>`).join("")}</datalist>
+    </div>
+    <div class="field" style="display:flex; align-items:center; gap:8px; flex-direction:row;">
+      <input type="checkbox" id="eDuckLock" style="width:auto;" ${d.verrouille_type ? "checked" : ""}>
+      <label style="margin:0;">Verrouiller ce stade (bloque toute requalification automatique par âge)</label>
+    </div>
+    <div class="field">
+      <label>Statut de l'ensemble du lot</label>
+      <select id="eDuckStatut">
+        <option value="actif" ${d.statut === "actif" ? "selected" : ""}>Actif</option>
+        <option value="vendu" ${d.statut === "vendu" ? "selected" : ""}>Vendu</option>
+        <option value="mort" ${d.statut === "mort" ? "selected" : ""}>Décédé</option>
+        <option value="reforme" ${d.statut === "reforme" ? "selected" : ""}>Réformé</option>
+      </select>
+    </div>
+    <div class="field"><label>Date de sortie (si vendu/décédé/réformé)</label><input type="date" id="eDuckDateSortie" value="${d.date_sortie ? formatInputDate(d.date_sortie) : todayInputValue()}"></div>
+    <div class="field"><label>Corriger la quantité (erreur de saisie uniquement)</label><input type="number" id="eDuckQte" value="${d.quantite || 1}" min="1">${d.issu_du_cycle_id ? `<p class="subtle" style="margin:-2px 0 0;">⚠️ Ce lot provient du nid n° ${escapeHtml(d.issu_du_nid ?? "?")}. Une correction de quantité ici synchronisera le nombre d'éclosions du nid.</p><button type="button" class="btn secondary" id="eDuckSyncNest" style="margin-top:6px;">🔄 Synchroniser le nid avec cette quantité</button>` : ""}</div>
+    <div class="field"><label>Motif de sortie (si vendu/décédé)</label><input type="text" id="eDuckMotif" value="${escapeHtml(d.motif_sortie || "")}"></div>
+    <div class="field"><label>Notes</label><textarea id="eDuckNotes" rows="2">${escapeHtml(d.notes || "")}</textarea></div>
+    <button class="btn secondary" id="eDuckSave">Enregistrer la correction</button>
+    <div class="spacer-s"></div>
+    <button class="btn danger" id="eDuckDelete">Supprimer l'enregistrement</button>
+  `;
+  openModal(`${TYPE_LABELS[d.type] || d.type}`, body, {
+    onMount: () => {
+      const peserBtn = document.getElementById("fPeserBtn");
+      if (peserBtn) peserBtn.addEventListener("click", () => openPeseeModal(d, () => { chargerEtAfficherPesees(d.id); refreshPeseesDashboard(); }));
+      chargerEtAfficherPesees(d.id);
+
+      const requalBtn = document.getElementById("fRequalSave");
+      if (requalBtn) requalBtn.addEventListener("click", async () => {
+        const qte = Number(document.getElementById("fRequalQte").value) || 0;
+        const currentQte = Number(d.quantite) || 1;
+        if (qte <= 0 || qte > currentQte) { toast(`Indiquez une quantité entre 1 et ${currentQte}`); return; }
+        try {
+          if (qte === currentQte) {
+            await updateDoc(doc(db, "ducks", d.id), {
+              type: prochainStade,
+              requalifie_par: getUserName() || "Inconnu",
+              requalifie_le: serverTimestamp()
+            });
+            if (prochainStade === "canardeau") await archiverPassageCanardeau(d, qte, getUserName() || "Inconnu");
+          } else {
+            await updateDoc(doc(db, "ducks", d.id), {
+              quantite: currentQte - qte,
+              modifie_par: getUserName() || "Inconnu",
+              modifie_le: serverTimestamp()
+            });
+            await addDoc(ducksCol, {
+              type: prochainStade,
+              quantite: qte,
+              date_entree: d.date_entree || new Date(),
+              date_naissance: d.date_naissance || null,
+              bague_couleur: d.bague_couleur || null,
+              numero_bague: d.numero_bague || null,
+              notes: null,
+              statut: "actif",
+              date_sortie: null,
+              motif_sortie: null,
+              issu_du_lot: d.id,
+              requalifie_par: getUserName() || "Inconnu",
+              requalifie_le: serverTimestamp(),
               cree_par: getUserName() || "Inconnu",
               createdAt: serverTimestamp()
             });
-            await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "occupe", cycle_actuel_id: cRef.id });
-            await addDoc(pontesCol, {
-              nid_numero: n, cycle_id: cRef.id, date: dateDebut,
-              quantite: initialQte, motif: "ponte_initiale",
-              par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-            });
-            await logNestHistory(n, cRef.id, "ponte_initiale", "Démarrage de ponte", `${initialQte} œuf(s)`);
-            toast(`Ponte démarrée — nid ${n} ✓`);
-            closeModal();
-          } catch (e) { toast("Erreur : " + e.message); }
-        });
-      }
-    });
-    return;
-  }
-
-  const joursDepuisCouvaison = cycle.date_debut_couvaison ? Math.round((Date.now() - (cycle.date_debut_couvaison.toDate?.() || new Date(cycle.date_debut_couvaison))) / 86400000) : null;
-
-  const pctCouvaison = joursDepuisCouvaison !== null ? Math.max(0, Math.min(100, Math.round((joursDepuisCouvaison / DUREE_INCUBATION_JOURS) * 100))) : 0;
-  const joursRestants = joursDepuisCouvaison !== null ? Math.max(0, DUREE_INCUBATION_JOURS - joursDepuisCouvaison) : null;
-
-  openModal(`Nid n° ${n}`, `
-    <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${cycle.statut === 'couvaison' ? (cycle.nombre_eclos ? 'ok' : 'warn') : 'ok'}">${cycle.statut === 'couvaison' ? (cycle.nombre_eclos ? 'Éclosion en cours' : 'Couvaison') : 'Ponte en cours'}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Œufs enregistrés</span></div><span class="row-value">${cycle.nombre_oeufs || 0}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Début du cycle</span></div><span class="row-value">${formatDate(cycle.date_debut)}</span></div>
-    ${cycle.cree_par ? `<div class="row"><div class="row-main"><span class="row-title">Démarré par</span></div><span class="row-value">${escapeHtml(cycle.cree_par)}</span></div>` : ""}
-    ${cycle.statut === "couvaison" ? `
-    <div class="spacer-s"></div>
-    <div class="incubation-progress">
-      <div class="incubation-progress-head">
-        <span class="row-title">Couvaison (canard de Barbarie — ${DUREE_INCUBATION_JOURS} j)</span>
-        <span class="row-value">${joursDepuisCouvaison} / ${DUREE_INCUBATION_JOURS} j</span>
-      </div>
-      <div class="incubation-bar">
-        <div class="incubation-bar-fill" style="width:${pctCouvaison}%;">
-          <span class="incubation-egg">🥚</span>
-        </div>
-      </div>
-      <div class="incubation-caption">${joursRestants > 0 ? `⏳ Éclosion estimée dans ~${joursRestants} jour(s)` : "🐣 Éclosion imminente — vérifiez le nid !"}</div>
-    </div>
-    ` : ""}
-    <div class="spacer-m"></div>
-
-    <div class="field-row">
-      <div class="field"><label>Date du relevé</label><input type="date" id="fAddDate" value="${todayInputValue()}"></div>
-      <div class="field"><label>Ajouter des œufs</label><input type="number" id="fAddOeufs" value="1" min="1"></div>
-    </div>
-    <div class="field"><label>Retirer des œufs (correction, même pendant la couvaison)</label><input type="number" id="fRemoveOeufs" value="1" min="1" max="${cycle.nombre_oeufs || 0}"></div>
-    <div class="field-row">
-      <button class="btn secondary" id="fAddBtn">Enregistrer un ajout</button>
-      <button class="btn secondary" id="fRemoveBtn">Retirer (erreur de saisie)</button>
-    </div>
-    <div class="spacer-s"></div>
-
-    ${cycle.statut === "ponte" ? `
-    <button class="btn yolk" id="fToCouvaison">Démarrer la couvaison</button>
-    ` : `
-    ${cycle.nombre_eclos ? `<p class="subtle" style="margin-bottom:8px;">Déjà enregistré pour ce cycle : <b>${cycle.nombre_eclos}</b> caneton(s) éclos.${cycle.dernier_releve_eclosion ? ` · dernier relevé : <b>${cycle.dernier_releve_eclosion.quantite || 0}</b> par ${escapeHtml(cycle.dernier_releve_eclosion.par || "Inconnu")}` : ""}</p>` : ""}
-    <div id="fRattrapageZone"></div>
-    <div class="field-row">
-      <div class="field"><label>Canetons éclos à ce relevé</label><input type="number" id="fEclos" value="0" min="0"></div>
-      <div class="field"><label>Date de ce relevé</label><input type="date" id="fEclosDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
-    </div>
-    <p class="subtle" style="margin:-4px 0 10px;">Une couvée de canard de Barbarie éclot souvent en plusieurs vagues, étalées sur plusieurs jours. Enregistrez chaque relevé au fur et à mesure — <b>les canetons sont ajoutés au cheptel (tableau de bord inclus) dès ce relevé</b>, sans attendre l'archivage du nid.</p>
-    <div class="field-row">
-      <button class="btn secondary" id="fEclosAddBtn">🐣 Enregistrer (sans archiver)</button>
-    </div>
-    <div class="spacer-s"></div>
-    <div class="field"><label>Date d'éclosion finale (antidatable)</label><input type="date" id="fArchiveDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
-    <p class="subtle" style="margin:-4px 0 10px;">À l'archivage, cette date devient la date de naissance définitive de TOUS les canetons de ce nid (toutes vagues confondues) — modifiez-la si la dernière éclosion a eu lieu un autre jour que celui de la saisie.</p>
-    <button class="btn yolk" id="fFinish">🏁 Archiver ce nid (cycle terminé)</button>
-    <div class="spacer-s"></div>
-    <button class="btn danger" id="fEchec">Déclarer un échec de couvaison</button>
-    `}
-    <div class="spacer-m"></div>
-    <button class="btn danger" id="fResetNest">↺ Réinitialiser ce nid (mauvais nid sélectionné)</button>
-
-    <div class="section-title" style="margin:24px 0 10px;"><div><h2 style="font-size:15px;">Historique de ce nid</h2></div></div>
-    <div id="fNestHistory"><p class="subtle">Chargement…</p></div>
-  `, {
-    onMount: () => {
-      renderNestHistory(n);
-      // ⚠️ RATTRAPAGE (août 2026) : pour un cycle déjà en couvaison AVANT
-      // la mise en place du versement immédiat au cheptel (voir
-      // fEclosAddBtn), des canetons ont pu être enregistrés sur le
-      // cycle (nombre_eclos) sans jamais atterrir dans l'inventaire. On
-      // détecte ce cas précis — et uniquement celui-là, pour ne jamais
-      // créer de doublon — afin de proposer un rattrapage en un clic,
-      // avec une date choisie (par défaut aujourd'hui, antidatable).
-      if (cycle.statut === "couvaison" && Number(cycle.nombre_eclos) > 0) {
-        const zone = document.getElementById("fRattrapageZone");
-        if (zone) {
-          getDoc(cycleDuckDocRef(cycle)).then(existing => {
-            if (existing.exists()) return; // déjà au cheptel, rien à faire
-            zone.innerHTML = `
-              <div class="card" style="background:#FCEBD9; border:none; margin-bottom:12px;">
-                <h3 style="font-size:14px; margin-bottom:2px;">🐥 Canetons pas encore au cheptel</h3>
-                <p class="subtle" style="margin:0 0 10px;"><b>${cycle.nombre_eclos}</b> caneton(s) ont été enregistrés sur ce nid avant la mise en place du versement automatique — ils ne figurent pas encore dans l'inventaire ni le tableau de bord. Ajoutez-les maintenant, avec la date de naissance de votre choix.</p>
-                <div class="field"><label>Date de naissance à utiliser</label><input type="date" id="fRattrapageDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
-                <button class="btn yolk" id="fRattrapageBtn">Ajouter ${cycle.nombre_eclos} caneton(s) au cheptel</button>
-              </div>
-            `;
-            document.getElementById("fRattrapageBtn").addEventListener("click", async () => {
-              const dateVal = document.getElementById("fRattrapageDate").value;
-              const dateChoisie = dateVal ? new Date(dateVal) : new Date();
-              try {
-                await setDoc(cycleDuckDocRef(cycle), {
-                  type: "caneton", quantite: Number(cycle.nombre_eclos) || 0,
-                  date_entree: dateChoisie, date_naissance: dateChoisie,
-                  bague_couleur: null, numero_bague: null,
-                  notes: `Éclosion nid n° ${n} (rattrapage manuel)`,
-                  statut: "actif", date_sortie: null, motif_sortie: null,
-                  issu_du_nid: n, issu_du_cycle_id: cycle.id,
-                  cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-                });
-                toast(`${cycle.nombre_eclos} caneton(s) ajoutés au cheptel ✓`);
-                closeModal();
-              } catch (e) { toast("Erreur : " + e.message); }
-            });
-          }).catch(e => console.error("Erreur vérification rattrapage :", e));
-        }
-      }
-
-      const addBtn = document.getElementById("fAddBtn");
-      if (addBtn) addBtn.addEventListener("click", async () => {
-        const q = Number(document.getElementById("fAddOeufs").value) || 0;
-        const dateReleve = new Date(document.getElementById("fAddDate").value);
-        if (!(await confirmerSiDoublonRecent(n, "ajout_oeufs", "Ajout d'œufs"))) return;
-        try {
-          const cRef = doc(db, "nest_cycles", cycle.id);
-          await updateDoc(cRef, { nombre_oeufs: increment(q) });
-          await addDoc(pontesCol, {
-            nid_numero: n, cycle_id: cycle.id, date: dateReleve,
-            quantite: q, motif: "releve_quotidien",
-            par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
-          await logNestHistory(n, cycle.id, "ajout_oeufs", "Ajout d'œufs", `+${q} œuf(s)`);
-          toast("Relevé du jour enregistré ✓");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-
-      const removeBtn = document.getElementById("fRemoveBtn");
-      if (removeBtn) removeBtn.addEventListener("click", async () => {
-        const q = Number(document.getElementById("fRemoveOeufs").value) || 0;
-        const current = Number(cycle.nombre_oeufs) || 0;
-        if (q <= 0 || q > current) { toast(`Indiquez une quantité entre 1 et ${current}`); return; }
-        if (!(await confirmerSiDoublonRecent(n, "correction", "Retrait / correction d'œufs"))) return;
-        try {
-          const cRef = doc(db, "nest_cycles", cycle.id);
-          await updateDoc(cRef, { nombre_oeufs: increment(-q) });
-          await addDoc(pontesCol, {
-            nid_numero: n, cycle_id: cycle.id, date: new Date(),
-            quantite: -q, motif: "correction",
-            par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
-          await logNestHistory(n, cycle.id, "correction", "Retrait / correction d'œufs", `-${q} œuf(s)`);
-          toast("Correction enregistrée ✓");
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-
-      const resetBtn = document.getElementById("fResetNest");
-      if (resetBtn) resetBtn.addEventListener("click", async () => {
-        if (!confirm(`Réinitialiser le nid ${n} ? Cette action annule le cycle en cours (erreur de saisie) et libère le nid. Utilisez plutôt "Échec de couvaison" s'il s'agit d'un vrai événement à conserver dans les statistiques.`)) return;
-        try {
-          const snap = await getDocs(query(pontesCol, where("cycle_id", "==", cycle.id)));
-          const batch = writeBatch(db);
-          snap.docs.forEach(d => batch.delete(d.ref));
-          // Les canetons déjà versés au cheptel depuis ce cycle (relevés
-          // partiels — voir fEclosAddBtn) doivent disparaître avec lui : un
-          // nid réinitialisé est une erreur de saisie pure, pas un vrai
-          // événement d'élevage.
-          batch.delete(cycleDuckDocRef(cycle));
-          batch.delete(doc(db, "nest_cycles", cycle.id));
-          batch.set(doc(db, "nests", String(n)), { numero: n, statut_actuel: "libre", cycle_actuel_id: null });
-          await batch.commit();
-          await logNestHistory(n, cycle.id, "reset", "Nid réinitialisé");
-          toast(`Nid ${n} réinitialisé ✓`);
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-
-      const toCouv = document.getElementById("fToCouvaison");
-      if (toCouv) toCouv.addEventListener("click", async () => {
-        if (!(await confirmerSiDoublonRecent(n, "couvaison_demarree", "Démarrage de couvaison"))) return;
-        try {
-          await updateDoc(doc(db, "nest_cycles", cycle.id), { statut: "couvaison", date_debut_couvaison: new Date(), modifie_par: getUserName() || "Inconnu" });
-          await logNestHistory(n, cycle.id, "couvaison_demarree", "Démarrage de couvaison");
-          toast(`Couvaison démarrée — nid ${n} ✓`);
-          closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
-      });
-
-      // ⚠️ NOUVEAU (août 2026) : enregistre une vague d'éclosion SANS
-      // archiver le nid — le cycle reste actif ("couvaison") pour
-      // permettre d'autres relevés les jours suivants. Les canetons de
-      // cette vague sont désormais versés IMMÉDIATEMENT dans l'inventaire
-      // (donc dans le total du tableau de bord), avec la date du relevé
-      // comme date de naissance provisoire. Toutes les vagues d'un même
-      // cycle partagent un seul lot d'inventaire (voir cycleDuckDocRef),
-      // dont la quantité s'incrémente à chaque relevé ; sa date de
-      // naissance sera figée définitivement à l'archivage du nid.
-      const eclosAddBtn = document.getElementById("fEclosAddBtn");
-      if (eclosAddBtn) eclosAddBtn.addEventListener("click", async () => {
-        const q = Number(document.getElementById("fEclos").value) || 0;
-        const dateReleveInput = document.getElementById("fEclosDate")?.value;
-        const dateReleve = dateReleveInput ? new Date(dateReleveInput) : new Date();
-        if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
-        try {
-          // Une seule transaction couvre le cycle, le journal d'éclosion,
-          // le lot d'inventaire et l'historique : deux téléphones ne peuvent
-          // donc plus enregistrer simultanément la même vague deux fois.
-          await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput);
-          toast(`${q} éclosion(s) enregistrée(s) et ajoutée(s) au cheptel — nid ${n} toujours actif ✓`);
-          closeModal();
-        } catch (e) {
-          if (e.code === "DOUBLON_ECLOSION") {
-            toast(`⚠️ Doublon bloqué : ${e.par || "un autre utilisateur"} a déjà enregistré cette même éclosion il y a ${e.minutes || 1} min. Aucun ajout effectué.`);
-          } else {
-            console.error(e);
-            toast("Erreur : " + e.message);
+            if (prochainStade === "canardeau") await archiverPassageCanardeau(d, qte, getUserName() || "Inconnu");
           }
+          toast(`${qte} sujet(s) requalifié(s) en ${TYPE_LABELS[prochainStade].toLowerCase()} ✓`);
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+
+      const withdrawBtn = document.getElementById("fWithdrawSave");
+      if (withdrawBtn) withdrawBtn.addEventListener("click", async () => {
+        const qte = Number(document.getElementById("fWithdrawQte").value) || 0;
+        const currentQte = Number(d.quantite) || 1;
+        if (qte <= 0 || qte > currentQte) { toast(`Indiquez une quantité entre 1 et ${currentQte}`); return; }
+        const motif = document.getElementById("fWithdrawMotif").value;
+        const note = document.getElementById("fWithdrawNote").value.trim() || null;
+        const dateRetrait = document.getElementById("fWithdrawDate").value ? new Date(document.getElementById("fWithdrawDate").value) : new Date();
+        try {
+          if (qte === currentQte) {
+            // Le lot entier part : on met simplement à jour ce document
+            await updateDoc(doc(db, "ducks", d.id), {
+              statut: motif,
+              date_sortie: dateRetrait,
+              motif_sortie: note,
+              modifie_par: getUserName() || "Inconnu",
+              modifie_le: serverTimestamp()
+            });
+          } else {
+            // Retrait partiel : on réduit le lot d'origine et on crée un
+            // enregistrement séparé pour la partie sortie, pour garder une
+            // trace complète sans jamais perdre le compte.
+            await updateDoc(doc(db, "ducks", d.id), {
+              quantite: currentQte - qte,
+              modifie_par: getUserName() || "Inconnu",
+              modifie_le: serverTimestamp()
+            });
+            await addDoc(ducksCol, {
+              type: d.type,
+              quantite: qte,
+              date_entree: d.date_entree || new Date(),
+              bague_couleur: d.bague_couleur || null,
+              numero_bague: d.numero_bague || null,
+              notes: null,
+              statut: motif,
+              date_sortie: dateRetrait,
+              motif_sortie: note,
+              issu_du_lot: d.id,
+              cree_par: getUserName() || "Inconnu",
+              createdAt: serverTimestamp()
+            });
+          }
+          toast("Retrait enregistré ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
+      });
+
+      const syncNestBtn = document.getElementById("eDuckSyncNest");
+      if (syncNestBtn) syncNestBtn.addEventListener("click", async () => {
+        const qteInventaire = Number(document.getElementById("eDuckQte").value) || 0;
+        if (qteInventaire <= 0 || !d.issu_du_cycle_id) return;
+        if (!confirm(`Synchroniser le nid n° ${d.issu_du_nid ?? "?"} sur ${qteInventaire} caneton(s) éclos ?\n\nCette action corrige uniquement le total historique du cycle et ajoute une trace de correction.`)) return;
+        try {
+          const cycleRef = doc(db, "nest_cycles", d.issu_du_cycle_id);
+          const cycleSnap = await getDoc(cycleRef);
+          if (!cycleSnap.exists()) { toast("Cycle de nid introuvable"); return; }
+          const cycleData = cycleSnap.data();
+          const ancienTotal = Number(cycleData.nombre_eclos) || 0;
+          if (ancienTotal === qteInventaire) {
+            toast("Le nid est déjà synchronisé ✓");
+            return;
+          }
+          const delta = qteInventaire - ancienTotal;
+          const auteur = getUserName() || "Inconnu";
+          await updateDoc(cycleRef, {
+            nombre_eclos: qteInventaire,
+            corrige_par: auteur,
+            corrige_le: serverTimestamp(),
+            correction_source: "inventaire"
+          });
+          await addDoc(eclosionsCol, {
+            nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
+            cycle_id: d.issu_du_cycle_id, date: new Date(), quantite: delta,
+            motif: "correction_inventaire", par: auteur, createdAt: serverTimestamp()
+          });
+          await addDoc(nestHistoryCol, {
+            nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
+            cycle_id: d.issu_du_cycle_id, action: "correction_inventaire",
+            label: "Synchronisation nid ↔ inventaire",
+            detail: `${ancienTotal} → ${qteInventaire} caneton(s) éclos`,
+            par: auteur, createdAt: serverTimestamp()
+          });
+          toast(`Nid synchronisé : ${qteInventaire} caneton(s) éclos ✓`);
+        } catch (e) {
+          console.error(e);
+          toast("Erreur de synchronisation : " + e.message);
         }
       });
 
-      const finish = document.getElementById("fFinish");
-      if (finish) finish.addEventListener("click", async () => {
-        const eclosSupp = Number(document.getElementById("fEclos").value) || 0;
-        const dateArchiveInput = document.getElementById("fArchiveDate")?.value;
-        const dateArchive = dateArchiveInput ? new Date(dateArchiveInput) : new Date();
-        if (!(await confirmerSiDoublonRecent(n, "archivage", "Archivage du nid"))) return;
-        await archiveCycle(n, cycle, "eclos", eclosSupp, dateArchive);
+      document.getElementById("eDuckSave").addEventListener("click", async () => {
+        const statut = document.getElementById("eDuckStatut").value;
+        const nouveauType = document.getElementById("eDuckType").value;
+        const dateNaissanceVal = document.getElementById("eDuckDateNaissance").value;
+        const nouvelleDateNaissance = dateNaissanceVal ? new Date(dateNaissanceVal) : null;
+        try {
+          const updatePayload = {
+            type: nouveauType,
+            statut,
+            bague_couleur: document.getElementById("eDuckBague").value || null,
+            date_naissance: nouvelleDateNaissance,
+            lot: document.getElementById("eDuckLot").value.trim() || null,
+            verrouille_type: document.getElementById("eDuckLock").checked,
+            quantite: Number(document.getElementById("eDuckQte").value) || 1,
+            motif_sortie: document.getElementById("eDuckMotif").value.trim() || null,
+            notes: document.getElementById("eDuckNotes").value.trim() || null,
+            date_sortie: statut !== "actif" && document.getElementById("eDuckDateSortie").value ? new Date(document.getElementById("eDuckDateSortie").value) : null,
+            modifie_par: getUserName() || "Inconnu",
+            modifie_le: serverTimestamp()
+          };
+          // ⚠️ CORRECTIF (août 2026) : la date d'entrée ("entrée [date]"
+          // affichée dans la liste) ne suivait pas la date de naissance
+          // exacte quand celle-ci était corrigée ici — les deux dates
+          // pouvaient diverger après une correction. La date d'entrée
+          // s'aligne désormais sur la date de naissance dès qu'elle est
+          // renseignée, puisqu'un lot dont on connaît la naissance exacte
+          // est par définition "entré" ce jour-là.
+          if (nouvelleDateNaissance) {
+            updatePayload.date_entree = nouvelleDateNaissance;
+          }
+          await updateDoc(doc(db, "ducks", d.id), updatePayload);
+
+          // Si ce lot provient d'une éclosion de nid et que la quantité est
+          // corrigée explicitement dans l'inventaire, la correction doit
+          // aussi atteindre le cycle du nid. Sans cela, on pouvait afficher
+          // 15 canetons dans le cheptel tout en conservant 30 dans le nid.
+          // On ajoute une ligne de correction dans le journal d'éclosion
+          // pour garder une piste d'audit, au lieu d'effacer l'historique.
+          const ancienneQte = Number(d.quantite) || 0;
+          const nouvelleQte = Number(updatePayload.quantite) || 0;
+          if (d.issu_du_cycle_id && nouvelleQte !== ancienneQte) {
+            try {
+              const cycleRef = doc(db, "nest_cycles", d.issu_du_cycle_id);
+              const cycleSnap = await getDoc(cycleRef);
+              if (cycleSnap.exists()) {
+                const cycleData = cycleSnap.data();
+                const ancienTotalEclos = Number(cycleData.nombre_eclos) || 0;
+                const deltaCorrection = nouvelleQte - ancienTotalEclos;
+                if (deltaCorrection !== 0) {
+                  await updateDoc(cycleRef, {
+                    nombre_eclos: nouvelleQte,
+                    corrige_par: getUserName() || "Inconnu",
+                    corrige_le: serverTimestamp(),
+                    correction_source: "inventaire"
+                  });
+                  await addDoc(eclosionsCol, {
+                    nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
+                    cycle_id: d.issu_du_cycle_id,
+                    date: new Date(),
+                    quantite: deltaCorrection,
+                    motif: "correction_inventaire",
+                    par: getUserName() || "Inconnu",
+                    createdAt: serverTimestamp()
+                  });
+                  await addDoc(nestHistoryCol, {
+                    nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
+                    cycle_id: d.issu_du_cycle_id,
+                    action: "correction_inventaire",
+                    label: "Correction du nombre de canetons éclos",
+                    detail: `${ancienTotalEclos} → ${nouvelleQte} caneton(s)`,
+                    par: getUserName() || "Inconnu",
+                    createdAt: serverTimestamp()
+                  });
+                  toast(`Inventaire et nid synchronisés : ${nouvelleQte} caneton(s) éclos ✓`);
+                }
+              }
+            } catch (syncErr) {
+              console.error("Erreur synchronisation inventaire → nid :", syncErr);
+              toast("Inventaire corrigé, mais la synchronisation du nid a échoué. Vérifiez le nid concerné.");
+            }
+          }
+
+          // Répercute la correction de date sur les archives liées à ce
+          // lot, pour qu'elles restent cohérentes avec le cheptel actif :
+          // - le cycle de nid d'origine (date d'éclosion affichée dans
+          //   Nids > Archives), si ce lot est issu d'une éclosion ;
+          // - les entrées "caneton → canardeau" déjà archivées à partir
+          //   de ce lot (Canards > Archive des canetons produits).
+          if (nouvelleDateNaissance && d.issu_du_cycle_id) {
+            try {
+              await updateDoc(doc(db, "nest_cycles", d.issu_du_cycle_id), {
+                date_fin: nouvelleDateNaissance,
+                corrige_par: getUserName() || "Inconnu",
+                corrige_le: serverTimestamp()
+              });
+            } catch (e) { console.error("Erreur mise à jour du cycle de nid lié :", e); }
+          }
+          if (nouvelleDateNaissance) {
+            try {
+              const liees = await getDocs(query(canetonsProductionCol, where("lot_origine_id", "==", d.id)));
+              if (!liees.empty) {
+                const batch = writeBatch(db);
+                liees.docs.forEach(docSnap => batch.update(docSnap.ref, { date_naissance: nouvelleDateNaissance }));
+                await batch.commit();
+              }
+            } catch (e) { console.error("Erreur mise à jour des archives de production liées :", e); }
+          }
+
+          // Si la correction fait passer le lot en "canardeau" et qu'il ne
+          // l'était pas déjà, on archive ce passage — même logique que la
+          // requalification automatique ou le bouton dédié, pour que
+          // l'archive de production reste complète quelle que soit la
+          // méthode utilisée.
+          if (nouveauType === "canardeau" && (allDucks.find(x => x.id === d.id)?.type || d.type) !== "canardeau") {
+            await archiverPassageCanardeau(d, Number(document.getElementById("eDuckQte").value) || 1, getUserName() || "Inconnu");
+          }
+          toast("Mis à jour ✓");
+          closeModal();
+        } catch (e) { toast("Erreur : " + e.message); }
       });
-      const echec = document.getElementById("fEchec");
-      if (echec) echec.addEventListener("click", async () => {
-        if (!confirm("Confirmer l'échec de la couvaison pour ce nid ?")) return;
-        const dateArchiveInput = document.getElementById("fArchiveDate")?.value;
-        const dateArchive = dateArchiveInput ? new Date(dateArchiveInput) : new Date();
-        await archiveCycle(n, cycle, "echec", 0, dateArchive);
+      document.getElementById("eDuckDelete").addEventListener("click", () => {
+        closeModal();
+        confirmerSuppression(d.id, "Enregistrement", () => deleteDoc(doc(db, "ducks", d.id)), renderList);
       });
     }
   });
-}
-
-// Archive définitivement le cycle. `eclosSupplementaires` est ajouté au
-// total déjà accumulé via les relevés successifs (fEclosAddBtn) — permet
-// d'enregistrer une dernière vague d'éclosion en même temps que
-// l'archivage, en un seul geste. `dateFinChoisie` est la date d'éclosion
-// (ou d'échec) saisie dans le formulaire — antidatable.
-//
-// ⚠️ CORRECTIF (août 2026) : l'archivage n'est plus la condition pour que
-// les canetons apparaissent dans le cheptel — c'est fait dès le premier
-// relevé (voir fEclosAddBtn). L'archivage a maintenant deux rôles :
-// 1) ajouter, si besoin, une toute dernière vague saisie ici sans passer
-//    par "Enregistrer (sans archiver)" ;
-// 2) FIGER la date de naissance définitive de TOUS les canetons de ce
-//    nid (toutes vagues confondues, un seul lot d'inventaire) sur la
-//    date d'éclosion finale choisie — même en cas d'échec partiel, les
-//    canetons déjà nés avant l'échec conservent leur place au cheptel.
-async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChoisie) {
-  try {
-    const dateFin = (dateFinChoisie instanceof Date && !isNaN(dateFinChoisie.getTime())) ? dateFinChoisie : new Date();
-
-    // Une éventuelle dernière vague passe par le même verrou atomique que
-    // les relevés partiels. On recharge ensuite le cycle pour archiver le
-    // total réellement enregistré, et non une copie éventuellement périmée.
-    if (Number(eclosSupplementaires) > 0) {
-      await enregistrerEclosionAtomique(
-        n, cycle, Number(eclosSupplementaires), dateFin,
-        dateFin.toISOString().slice(0, 10)
-      );
-    }
-
-    const cRef = doc(db, "nest_cycles", cycle.id);
-    const freshSnap = await getDoc(cRef);
-    if (!freshSnap.exists()) throw new Error("Cycle de nid introuvable");
-    const cycleActuel = { id: cycle.id, ...freshSnap.data() };
-    const totalEclos = Number(cycleActuel.nombre_eclos) || 0;
-
-    await updateDoc(cRef, {
-      statut, nombre_eclos: totalEclos, date_fin: dateFin, archive_par: getUserName() || "Inconnu"
-    });
-    await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
-
-    if (totalEclos > 0) {
-      const duckRef = cycleDuckDocRef(cycleActuel);
-      const existing = await getDoc(duckRef);
-      if (existing.exists()) {
-        await updateDoc(duckRef, { date_naissance: dateFin, date_entree: dateFin });
-      } else {
-        await setDoc(duckRef, {
-          type: "caneton", quantite: totalEclos,
-          date_entree: dateFin, date_naissance: dateFin,
-          bague_couleur: null, numero_bague: null,
-          notes: `Éclosion nid n° ${n}`,
-          statut: "actif", date_sortie: null, motif_sortie: null,
-          issu_du_nid: n, issu_du_cycle_id: cycle.id,
-          cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-        });
-      }
-    }
-
-    toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) au total, naissance fixée au ${formatDate(dateFin)} ✓` : `Échec enregistré — nid ${n} archivé (${totalEclos} caneton(s) déjà nés conservés au cheptel)`);
-    await logNestHistory(n, cycle.id, "archivage", statut === "eclos" ? "Nid archivé (éclosion)" : "Échec de couvaison déclaré", `${totalEclos} caneton(s) au total`);
-    closeModal();
-  } catch (e) {
-    if (e.code === "DOUBLON_ECLOSION") {
-      toast(`⚠️ Doublon bloqué : ${e.par || "un autre utilisateur"} a déjà enregistré cette même éclosion il y a ${e.minutes || 1} min. Aucun ajout effectué.`);
-    } else {
-      console.error(e);
-      toast("Erreur : " + e.message);
-    }
-  }
 }
