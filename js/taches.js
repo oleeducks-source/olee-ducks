@@ -244,14 +244,12 @@ export function openAddTacheModal() {
         const echeanceVal = document.getElementById("fTacheEcheance").value;
         const notes = document.getElementById("fTacheNotes").value.trim() || null;
         try {
-          const ref = await addDoc(tachesCol, {
-            titre, categorie,
-            date_echeance: echeanceVal ? new Date(echeanceVal) : null,
-            notes,
-            statut: "a_faire",
-            cree_par: getUserName() || "Inconnu",
-            createdAt: serverTimestamp()
-          });
+          const dateEcheance = echeanceVal ? new Date(echeanceVal) : null;
+          const ref = await addDocGuarded("taches",
+            { titre, categorie, date_echeance: dateEcheance, notes, statut: "a_faire" },
+            { titre, categorie, date_echeance: dateEcheance, notes, statut: "a_faire", cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp() },
+            "cette tâche"
+          );
           toast("Tâche ajoutée ✓");
           if (echeanceVal) {
             // Échéance renseignée : on rouvre directement la fiche pour
@@ -261,7 +259,10 @@ export function openAddTacheModal() {
           } else {
             closeModal();
           }
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) {
+          const msg = formatDoublonMessage(e);
+          toast(msg || "Erreur : " + e.message);
+        }
       });
     }
   });
