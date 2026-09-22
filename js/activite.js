@@ -19,18 +19,76 @@ function dateFromDoc(v) { if (!v) return null; const d = v?.toDate ? v.toDate() 
 function formatNumber(n) { return Number(n || 0).toLocaleString('fr-FR'); }
 function mondayStart(d) { const x = startOfDay(d); const day = x.getDay(); const delta = day === 0 ? -6 : 1 - day; x.setDate(x.getDate()+delta); return x; }
 
-function aggregate(docs, signMode = 'positive') {
-  const byDay = {};
+// Certains doublons historiques peuvent exister dans les journaux
+// (avant la mise en place du verrou atomique). L'accueil ne doit pas
+// recompter une même vague deux fois. On déduplique donc les événements
+// qui ont exactement le même contexte métier et ont été créés à quelques
+// minutes d'intervalle. Les vraies vagues séparées dans le temps restent
+// comptées.
+const JOURNAL_DEDUP_MS = 5 * 60 * 1000;
+
+function journalKey(d, type) {
+  const cycle = d.cycle_id || '';
+  const nid = d.nid_numero ?? '';
+  const date = dateFromDoc(d.date);
+  const dateKey = date ? ymd(date) : '';
+  const q = Number(d.quantite) || 0;
+  return `${type}|${cycle}|${nid}|${dateKey}|${q}`;
+}
+
+function dedupeJournalDocs(docs, type) {
+  const groups = new Map();
   for (const snap of docs) {
-    const d = snap.data();
+    const d = snap.data() || {};
+    const date = dateFromDoc(d.date);
+    const q = Number(d.quantite) || 0;
+    if (!date || q <= 0) continue;
+    const key = journalKey(d, type);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ snap, data: d, createdAt: dateFromDoc(d.createdAt) });
+  }
+
+  const kept = [];
+  for (const items of groups.values()) {
+    items.sort((a, b) => {
+      const ta = a.createdAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER;
+      const tb = b.createdAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER;
+      return ta - tb;
+    });
+    let lastAccepted = null;
+    for (const item of items) {
+      const t = item.createdAt?.getTime?.();
+      // Les anciennes lignes peuvent ne pas avoir createdAt : dans ce cas,
+      // on ne les fusionne pas arbitrairement.
+      if (lastAccepted !== null && Number.isFinite(t) && (t - lastAccepted) <= JOURNAL_DEDUP_MS) {
+        continue;
+      }
+      kept.push(item);
+      if (Number.isFinite(t)) lastAccepted = t;
+    }
+  }
+  return kept;
+}
+
+function aggregate(docs, signMode = 'positive', type = 'generic') {
+  const byDay = {};
+  const rows = type === 'eclosion' ? dedupeJournalDocs(docs, type) :
+               type === 'ponte' ? dedupeJournalDocs(docs, type) :
+               docs.map(snap => ({ snap, data: snap.data() || {} }));
+  for (const row of rows) {
+    const d = row.data;
     const date = dateFromDoc(d.date);
     if (!date) continue;
     const key = ymd(date);
     const q = Number(d.quantite) || 0;
     if (signMode === 'positive' && q <= 0) continue;
-    byDay[key] = (byDay[key] || 0) + (signMode === 'positive' ? q : q);
+    byDay[key] = (byDay[key] || 0) + q;
   }
   return byDay;
+}
+
+function sumJournal(docs, type) {
+  return dedupeJournalDocs(docs, type).reduce((sum, row) => sum + (Number(row.data.quantite) || 0), 0);
 }
 
 async function readRange(col, start, end) {
@@ -81,7 +139,7 @@ async function refreshTrend() {
     const start = startOfDay(new Date()); start.setDate(start.getDate()-29);
     const end = endOfDay(new Date());
     const [p,e] = await Promise.all([readRange(pontesCol,start,end),readRange(eclosionsCol,start,end)]);
-    renderChart(aggregate(p,'net'),aggregate(e,'positive'));
+    renderChart(aggregate(p,'net','ponte'),aggregate(e,'positive','eclosion'));
   } catch(err) { console.error('Courbe activité :',err); }
 }
 
@@ -89,8 +147,8 @@ async function refreshToday() {
   try {
     const start=startOfDay(new Date()), end=endOfDay(new Date());
     const [p,e]=await Promise.all([readRange(pontesCol,start,end),readRange(eclosionsCol,start,end)]);
-    const eggs=p.reduce((s,d)=>s+Math.max(0,Number(d.data().quantite)||0),0);
-    const hatch=e.reduce((s,d)=>s+Math.max(0,Number(d.data().quantite)||0),0);
+    const eggs=sumJournal(p,'ponte');
+    const hatch=sumJournal(e,'eclosion');
     renderBanner({eggs,hatchlings:hatch});
   } catch(err) { console.error('Bannière activité :',err); }
 }
@@ -101,8 +159,8 @@ async function refreshWeeklyIfMonday() {
   const end=new Date(today); const start=new Date(today); start.setDate(start.getDate()-7);
   try {
     const [p,e]=await Promise.all([readRange(pontesCol,start,end),readRange(eclosionsCol,start,end)]);
-    const eggs=p.reduce((s,d)=>s+Math.max(0,Number(d.data().quantite)||0),0);
-    const hatch=e.reduce((s,d)=>s+Math.max(0,Number(d.data().quantite)||0),0);
+    const eggs=sumJournal(p,'ponte');
+    const hatch=sumJournal(e,'eclosion');
     const endLabel=new Date(today); endLabel.setDate(endLabel.getDate()-1);
     const label=`${start.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})} → ${endLabel.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}`;
     renderBanner({eggs,hatchlings:hatch,weekly:true,weekLabel:label});
