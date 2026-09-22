@@ -424,26 +424,24 @@ function openValidationModal(t) {
           return;
         }
         try {
-          const numeroPiece = `EC-${ex.annee}-${String((ex.nb_ecritures || 0) + 1).padStart(4, "0")}`;
-          const ecritureRef = await addDoc(journalCol, {
-            numero_piece: numeroPiece,
-            date: t.date,
-            libelle,
-            exercice_id: ex.id,
-            lines,
-            source_transaction_id: t.id,
-            annulee: false,
-            valide_par: getUserName() || "Inconnu",
-            valide_le: serverTimestamp(),
-            createdAt: serverTimestamp()
-          });
-          await updateDoc(doc(db, "exercises", ex.id), { nb_ecritures: increment(1) });
-          await updateDoc(doc(db, "finance_transactions", t.id), {
-            statut_comptable: "valide", ecriture_id: ecritureRef.id
+          let numeroPiece = "";
+          await runGuardedTransaction("journal_ecritures", { source_transaction_id: t.id, exercice_id: ex.id, lines }, "la validation de cette transaction", async (tx, meta) => {
+            const txRef = doc(db, "finance_transactions", t.id);
+            const exRef = doc(db, "exercises", ex.id);
+            const [freshTx, freshEx] = await Promise.all([tx.get(txRef), tx.get(exRef)]);
+            if (!freshTx.exists()) throw new Error("TRANSACTION_FINANCE_INEXISTANTE");
+            if (freshTx.data().statut_comptable === "valide" || freshTx.data().ecriture_id) throw new Error("Cette transaction est déjà validée en comptabilité.");
+            if (!freshEx.exists()) throw new Error("EXERCICE_INEXISTANT");
+            const freshExData = freshEx.data();
+            numeroPiece = `EC-${freshExData.annee}-${String((freshExData.nb_ecritures || 0) + 1).padStart(4, "0")}`;
+            const ecritureRef = doc(journalCol);
+            tx.set(ecritureRef, { numero_piece: numeroPiece, date: t.date, libelle, exercice_id: ex.id, lines, source_transaction_id: t.id, annulee: false, valide_par: meta.auteur, valide_le: meta.now, createdAt: meta.now });
+            tx.update(exRef, { nb_ecritures: increment(1) });
+            tx.update(txRef, { statut_comptable: "valide", ecriture_id: ecritureRef.id });
           });
           toast(`Écriture ${numeroPiece} validée ✓`);
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) { const msg = formatDoublonMessage(e); toast(msg || "Erreur : " + e.message); }
       });
     }
   });
