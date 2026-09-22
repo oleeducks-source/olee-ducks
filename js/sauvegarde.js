@@ -19,10 +19,10 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { toast, getUserName } from "./utils.js";
 
-const COLLECTIONS = [
-  "ducks", "nests", "nest_cycles", "pontes_journalieres",
-  "finance_transactions", "stock_items", "stock_mouvements", "formulations",
-  "accounts", "exercises", "journal_ecritures", "taches", "canetons_production"
+export const COLLECTIONS = [
+  "ducks", "nests", "nest_cycles", "pontes_journalieres", "eclosions_journalieres", "pesees_journalieres",
+  "nest_history", "finance_transactions", "stock_items", "stock_mouvements", "formulations",
+  "accounts", "exercises", "journal_ecritures", "taches", "canetons_production", "write_dedup_guards"
 ];
 
 export function initSauvegarde() {
@@ -66,7 +66,7 @@ async function exporterToutesLesDonnees() {
       application: "Olee Ducks",
       exporte_le: new Date().toISOString(),
       nombre_total_enregistrements: totalDocs,
-      version_format: 1
+      version_format: 2
     };
 
     const json = JSON.stringify(data, null, 2);
