@@ -13,7 +13,7 @@
 import { db } from "./firebase-config.js";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs, onSnapshot,
-  serverTimestamp, query, where, orderBy, limit, increment, writeBatch
+  serverTimestamp, query, where, orderBy, limit, increment, writeBatch, runTransaction, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputValue, getUserName, escapeHtml, animateCountUp } from "./utils.js";
 
@@ -91,6 +91,86 @@ async function renderNestHistory(n) {
 // erreur…). Renvoie true si l'action doit continuer.
 // ---------------------------------------------------------------------
 const DELAI_DOUBLON_MS = 5 * 60 * 1000;
+
+// Enregistrement atomique d'une vague d'éclosion. Le contrôle visuel
+// précédent (confirmerSiDoublonRecent) ne suffisait pas : deux téléphones
+// pouvaient lire l'historique en même temps, puis écrire chacun +15.
+// Ici, Firestore verrouille le cycle pendant la transaction : le premier
+// téléphone gagne, le second relit la version fraîche et est bloqué.
+async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput) {
+  const auteur = getUserName() || "Inconnu";
+  const signature = `${dateReleveInput || ""}|${q}`;
+  const bucket = Math.floor(Date.now() / DELAI_DOUBLON_MS);
+  const eventId = `eclosion_${cycle.id}_${dateReleveInput || "sans_date"}_${q}_${bucket}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const cRef = doc(db, "nest_cycles", cycle.id);
+  const duckRef = cycleDuckDocRef(cycle);
+  const eventRef = doc(db, "eclosions_journalieres", eventId);
+  const historyRef = doc(nestHistoryCol);
+  const maintenant = Timestamp.now();
+
+  await runTransaction(db, async (tx) => {
+    const cSnap = await tx.get(cRef);
+    const eventSnap = await tx.get(eventRef);
+    const duckSnap = await tx.get(duckRef);
+    if (!cSnap.exists()) throw new Error("CYCLE_INEXISTANT");
+
+    const fresh = cSnap.data();
+    const dernier = fresh.dernier_releve_eclosion || null;
+    const dernierAt = dernier?.at?.toMillis?.() || 0;
+    const memeSaisieRecente = dernier && dernier.signature === signature &&
+      (maintenant.toMillis() - dernierAt) >= 0 &&
+      (maintenant.toMillis() - dernierAt) < DELAI_DOUBLON_MS;
+
+    if (memeSaisieRecente || eventSnap.exists()) {
+      const par = dernier?.par || eventSnap.data()?.par || "un autre utilisateur";
+      const ecoule = dernierAt ? Math.max(0, maintenant.toMillis() - dernierAt) : 0;
+      const minutes = Math.max(1, Math.round(ecoule / 60000));
+      const err = new Error(`DOUBLON_ECLOSION|${par}|${minutes}`);
+      err.code = "DOUBLON_ECLOSION";
+      err.par = par;
+      err.minutes = minutes;
+      throw err;
+    }
+
+    tx.update(cRef, {
+      nombre_eclos: increment(q),
+      dernier_releve_eclosion: {
+        signature, quantite: q, date: dateReleve, par: auteur, at: maintenant
+      }
+    });
+
+    tx.set(eventRef, {
+      nid_numero: n, cycle_id: cycle.id, date: dateReleve, quantite: q,
+      par: auteur, createdAt: maintenant,
+      dedup_signature: signature, dedup_bucket: bucket
+    });
+
+    if (duckSnap.exists()) {
+      tx.update(duckRef, {
+        quantite: increment(q),
+        modifie_par: auteur, modifie_le: maintenant
+      });
+    } else {
+      const eclosDejaSurLeCycle = Number(fresh.nombre_eclos) || 0;
+      tx.set(duckRef, {
+        type: "caneton", quantite: eclosDejaSurLeCycle + q,
+        date_entree: dateReleve, date_naissance: dateReleve,
+        bague_couleur: null, numero_bague: null,
+        notes: `Éclosion nid n° ${n}`,
+        statut: "actif", date_sortie: null, motif_sortie: null,
+        issu_du_nid: n, issu_du_cycle_id: cycle.id,
+        cree_par: auteur, createdAt: maintenant
+      });
+    }
+
+    tx.set(historyRef, {
+      nid_numero: n, cycle_id: cycle.id, action: "eclosion_partielle",
+      label: "Relevé d'éclosion", detail: `${q} caneton(s)`,
+      par: auteur, createdAt: maintenant
+    });
+  });
+}
+
 async function confirmerSiDoublonRecent(n, action, label) {
   try {
     const snap = await getDocs(query(nestHistoryCol, where("nid_numero", "==", n), where("action", "==", action), orderBy("createdAt", "desc"), limit(1)));
@@ -736,7 +816,7 @@ function openNestModal(n) {
     ${cycle.statut === "ponte" ? `
     <button class="btn yolk" id="fToCouvaison">Démarrer la couvaison</button>
     ` : `
-    ${cycle.nombre_eclos ? `<p class="subtle" style="margin-bottom:8px;">Déjà enregistré pour ce cycle : <b>${cycle.nombre_eclos}</b> caneton(s) éclos.</p>` : ""}
+    ${cycle.nombre_eclos ? `<p class="subtle" style="margin-bottom:8px;">Déjà enregistré pour ce cycle : <b>${cycle.nombre_eclos}</b> caneton(s) éclos.${cycle.dernier_releve_eclosion ? ` · dernier relevé : <b>${cycle.dernier_releve_eclosion.quantite || 0}</b> par ${escapeHtml(cycle.dernier_releve_eclosion.par || "Inconnu")}` : ""}</p>` : ""}
     <div id="fRattrapageZone"></div>
     <div class="field-row">
       <div class="field"><label>Canetons éclos à ce relevé</label><input type="number" id="fEclos" value="0" min="0"></div>
@@ -888,41 +968,21 @@ function openNestModal(n) {
         const dateReleveInput = document.getElementById("fEclosDate")?.value;
         const dateReleve = dateReleveInput ? new Date(dateReleveInput) : new Date();
         if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
-        if (!(await confirmerSiDoublonRecent(n, "eclosion_partielle", "Relevé d'éclosion"))) return;
         try {
-          await updateDoc(doc(db, "nest_cycles", cycle.id), { nombre_eclos: increment(q) });
-          await addDoc(eclosionsCol, {
-            nid_numero: n, cycle_id: cycle.id, date: dateReleve,
-            quantite: q, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
-
-          const duckRef = cycleDuckDocRef(cycle);
-          const existing = await getDoc(duckRef);
-          if (existing.exists()) {
-            await updateDoc(duckRef, { quantite: increment(q) });
-          } else {
-            // Cas limite : si ce cycle avait déjà des canetons enregistrés
-            // (cycle.nombre_eclos) AVANT ce relevé mais qu'aucun lot
-            // d'inventaire n'existe encore (données antérieures au
-            // versement immédiat), on les inclut dans la création du lot
-            // pour ne rien perdre — plutôt que de ne compter que cette
-            // seule vague.
-            const eclosDejaSurLeCycle = Number(cycle.nombre_eclos) || 0;
-            await setDoc(duckRef, {
-              type: "caneton", quantite: eclosDejaSurLeCycle + q,
-              date_entree: dateReleve, date_naissance: dateReleve,
-              bague_couleur: null, numero_bague: null,
-              notes: `Éclosion nid n° ${n}`,
-              statut: "actif", date_sortie: null, motif_sortie: null,
-              issu_du_nid: n, issu_du_cycle_id: cycle.id,
-              cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-            });
-          }
-
+          // Une seule transaction couvre le cycle, le journal d'éclosion,
+          // le lot d'inventaire et l'historique : deux téléphones ne peuvent
+          // donc plus enregistrer simultanément la même vague deux fois.
+          await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput);
           toast(`${q} éclosion(s) enregistrée(s) et ajoutée(s) au cheptel — nid ${n} toujours actif ✓`);
-          await logNestHistory(n, cycle.id, "eclosion_partielle", "Relevé d'éclosion", `${q} caneton(s)`);
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) {
+          if (e.code === "DOUBLON_ECLOSION") {
+            toast(`⚠️ Doublon bloqué : ${e.par || "un autre utilisateur"} a déjà enregistré cette même éclosion il y a ${e.minutes || 1} min. Aucun ajout effectué.`);
+          } else {
+            console.error(e);
+            toast("Erreur : " + e.message);
+          }
+        }
       });
 
       const finish = document.getElementById("fFinish");
@@ -961,29 +1021,35 @@ function openNestModal(n) {
 //    canetons déjà nés avant l'échec conservent leur place au cheptel.
 async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChoisie) {
   try {
-    const totalEclos = (Number(cycle.nombre_eclos) || 0) + (Number(eclosSupplementaires) || 0);
     const dateFin = (dateFinChoisie instanceof Date && !isNaN(dateFinChoisie.getTime())) ? dateFinChoisie : new Date();
-    if (eclosSupplementaires > 0) {
-      await addDoc(eclosionsCol, {
-        nid_numero: n, cycle_id: cycle.id, date: dateFin,
-        quantite: eclosSupplementaires, par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-      });
+
+    // Une éventuelle dernière vague passe par le même verrou atomique que
+    // les relevés partiels. On recharge ensuite le cycle pour archiver le
+    // total réellement enregistré, et non une copie éventuellement périmée.
+    if (Number(eclosSupplementaires) > 0) {
+      await enregistrerEclosionAtomique(
+        n, cycle, Number(eclosSupplementaires), dateFin,
+        dateFin.toISOString().slice(0, 10)
+      );
     }
-    await updateDoc(doc(db, "nest_cycles", cycle.id), {
+
+    const cRef = doc(db, "nest_cycles", cycle.id);
+    const freshSnap = await getDoc(cRef);
+    if (!freshSnap.exists()) throw new Error("Cycle de nid introuvable");
+    const cycleActuel = { id: cycle.id, ...freshSnap.data() };
+    const totalEclos = Number(cycleActuel.nombre_eclos) || 0;
+
+    await updateDoc(cRef, {
       statut, nombre_eclos: totalEclos, date_fin: dateFin, archive_par: getUserName() || "Inconnu"
     });
     await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
 
     if (totalEclos > 0) {
-      const duckRef = cycleDuckDocRef(cycle);
+      const duckRef = cycleDuckDocRef(cycleActuel);
       const existing = await getDoc(duckRef);
       if (existing.exists()) {
-        const updatePayload = { date_naissance: dateFin, date_entree: dateFin };
-        if (eclosSupplementaires > 0) updatePayload.quantite = increment(eclosSupplementaires);
-        await updateDoc(duckRef, updatePayload);
+        await updateDoc(duckRef, { date_naissance: dateFin, date_entree: dateFin });
       } else {
-        // Aucun relevé partiel n'avait été fait pour ce cycle : toute la
-        // couvée est déclarée d'un coup à l'archivage.
         await setDoc(duckRef, {
           type: "caneton", quantite: totalEclos,
           date_entree: dateFin, date_naissance: dateFin,
@@ -999,5 +1065,12 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChois
     toast(statut === "eclos" ? `Nid ${n} archivé — ${totalEclos} caneton(s) au total, naissance fixée au ${formatDate(dateFin)} ✓` : `Échec enregistré — nid ${n} archivé (${totalEclos} caneton(s) déjà nés conservés au cheptel)`);
     await logNestHistory(n, cycle.id, "archivage", statut === "eclos" ? "Nid archivé (éclosion)" : "Échec de couvaison déclaré", `${totalEclos} caneton(s) au total`);
     closeModal();
-  } catch (e) { toast("Erreur : " + e.message); }
+  } catch (e) {
+    if (e.code === "DOUBLON_ECLOSION") {
+      toast(`⚠️ Doublon bloqué : ${e.par || "un autre utilisateur"} a déjà enregistré cette même éclosion il y a ${e.minutes || 1} min. Aucun ajout effectué.`);
+    } else {
+      console.error(e);
+      toast("Erreur : " + e.message);
+    }
+  }
 }
