@@ -10,6 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard } from "./pesees.js";
+import { addDocGuarded, formatDoublonMessage } from "./doublons.js";
 
 const ducksCol = collection(db, "ducks");
 const eclosionsCol = collection(db, "eclosions_journalieres");
@@ -612,12 +613,17 @@ export function openAddDuckModal() {
           createdAt: serverTimestamp()
         };
         try {
-          await addDoc(ducksCol, payload);
+          await addDocGuarded("ducks",
+            { type: payload.type, quantite: payload.quantite, date_entree: payload.date_entree, date_naissance: payload.date_naissance, bague_couleur: payload.bague_couleur, numero_bague: payload.numero_bague, notes: payload.notes, statut: payload.statut },
+            payload,
+            "cet ajout au cheptel"
+          );
           toast("Ajouté à l'inventaire ✓");
           closeModal();
         } catch (e) {
           console.error(e);
-          toast("Erreur : " + e.message);
+          const msg = formatDoublonMessage(e);
+          toast(msg || "Erreur : " + e.message);
         }
       });
     }
