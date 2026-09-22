@@ -193,20 +193,21 @@ export function openAddFinanceModal(defaultType = "recette") {
         const montant = Number(montantEl.value);
         if (!montant || montant <= 0) { toast("Indiquez un montant valide"); return; }
         try {
-          await addDoc(finCol, {
-            type: currentType,
-            categorie: catSel.value,
-            montant,
-            date: new Date(document.getElementById("fTxDate").value),
-            quantite: Number(qteEl.value) || null,
-            prix_unitaire: Number(puEl.value) || null,
-            description: document.getElementById("fTxDesc").value.trim() || null,
-            cree_par: getUserName() || "Inconnu",
-            createdAt: serverTimestamp()
-          });
+          const dateVal = new Date(document.getElementById("fTxDate").value);
+          const quantite = Number(qteEl.value) || null;
+          const prixUnitaire = Number(puEl.value) || null;
+          const description = document.getElementById("fTxDesc").value.trim() || null;
+          await addDocGuarded("finance_transactions",
+            { type: currentType, categorie: catSel.value, montant, date: dateVal, quantite, prix_unitaire: prixUnitaire, description },
+            { type: currentType, categorie: catSel.value, montant, date: dateVal, quantite, prix_unitaire: prixUnitaire, description, cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp() },
+            currentType === "recette" ? "cette recette" : "cette dépense"
+          );
           toast("Transaction enregistrée ✓");
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) {
+          const msg = formatDoublonMessage(e);
+          toast(msg || "Erreur : " + e.message);
+        }
       });
     }
   });
