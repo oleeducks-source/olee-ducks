@@ -15,6 +15,7 @@ import { initTaches, openAddTacheModal } from "./taches.js";
 import { initSauvegarde } from "./sauvegarde.js";
 import { initPesees } from "./pesees.js";
 import { initValorisation } from "./valorisation.js";
+import { initActiviteAccueil } from "./activite.js";
 
 const PAGES = ["dashboard", "canards", "nids", "finances", "stocks", "taches"];
 let currentPage = "dashboard";
@@ -192,6 +193,7 @@ async function boot() {
   initSauvegarde();
   initPesees();
   initValorisation();
+  initActiviteAccueil();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker non enregistré :", err));
