@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32535647/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32538398/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
 
@@ -101,3 +101,43 @@ base, et méritent d'être décidés avant d'être codés :
   vue à 5 colonnes sur petit écran règlerait le problème, mais elle casse la
   correspondance visuelle avec les 10 rangées du bâtiment. À trancher ensemble.
 - **Comptes nommés et rôles**, incréments atomiques, journal des modifications.
+
+## V22 — Anti-doublons global + activité élevage accueil — 22/09/2026
+
+### Protection anti-doublon multi-appareils
+- Ajout de `js/doublons.js`.
+- Verrou Firestore atomique dans `write_dedup_guards`.
+- Fenêtre anti-doublon glissante de 5 minutes.
+- Le contrôle fonctionne même lorsque deux téléphones valident presque simultanément.
+- Le second utilisateur reçoit le prénom de l'auteur du premier enregistrement et aucun second document métier n'est créé.
+- Protégé : relevés de ponte, éclosions (déjà atomiques), recettes/dépenses, mouvements de stock, création d'articles de stock, ajouts d'inventaire, pesées, tâches et validation comptable d'une transaction.
+- Les modifications/suppressions volontaires restent possibles : la protection cible les créations identiques, pas les corrections légitimes.
+
+### Accueil — activité du jour
+- Bannière dynamique lorsque des œufs ou canetons sont enregistrés aujourd'hui.
+- Les chiffres sont calculés par date civile : ils disparaissent automatiquement le lendemain.
+- Mise à jour en temps réel via Firestore + rafraîchissement au changement de jour.
+
+### Récapitulatif hebdomadaire
+- Chaque lundi, rappel de la semaine précédente (lundi → dimanche).
+- Total des œufs enregistrés et des canetons éclos.
+
+### Courbe
+- Nouvelle courbe SVG sans bibliothèque payante/externe.
+- 30 derniers jours.
+- Évolution des œufs (net des corrections) et des canetons éclos.
+- Lecture seule.
+
+### Sauvegarde
+- Passage du format de sauvegarde à la version 2.
+- Ajout aux exports de `eclosions_journalieres`, `pesees_journalieres`, `nest_history` et `write_dedup_guards`.
+- `COLLECTIONS` est désormais exporté correctement pour la restauration.
+
+### PWA
+- Cache service worker passé de v21 à v22.
+- Ajout des nouveaux modules au shell hors-ligne.
+
+### Firestore
+- Aucune collection existante supprimée.
+- Aucune donnée métier existante modifiée par cette mise à jour.
+- Une nouvelle collection technique `write_dedup_guards` est créée à la première écriture protégée.
