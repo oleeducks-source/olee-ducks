@@ -185,12 +185,11 @@ export function openPeseeModal(lot, onSaved) {
         const age = ageSemainesA(dateRef, datePesee);
 
         try {
-          await addDoc(peseesCol, {
-            duck_id: lot.id, type: lot.type, date: datePesee,
-            taille_echantillon: taille, poids_total_g: total, poids_moyen_g: poidsMoyen,
-            age_semaines: age !== null ? Math.round(age * 10) / 10 : null,
-            cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
+          await addDocGuarded("pesees_journalieres",
+            { duck_id: lot.id, date: datePesee, taille_echantillon: taille, poids_total_g: total },
+            { duck_id: lot.id, type: lot.type, date: datePesee, taille_echantillon: taille, poids_total_g: total, poids_moyen_g: poidsMoyen, age_semaines: age !== null ? Math.round(age * 10) / 10 : null, cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp() },
+            "cette pesée"
+          );
 
           const zone = document.getElementById("fPeseeResultat");
           if (age !== null) {
