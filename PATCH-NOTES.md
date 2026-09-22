@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32538710/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32539015/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
 
@@ -141,3 +141,10 @@ base, et méritent d'être décidés avant d'être codés :
 - Aucune collection existante supprimée.
 - Aucune donnée métier existante modifiée par cette mise à jour.
 - Une nouvelle collection technique `write_dedup_guards` est créée à la première écriture protégée.
+
+## V23 — Correction du compteur d'activité des éclosions
+
+- Correction du récapitulatif d'accueil : les doublons historiques du journal `eclosions_journalieres` ne sont plus additionnés deux fois lorsqu'ils correspondent au même nid, même cycle, même date, même quantité et ont été créés dans une fenêtre de 5 minutes.
+- La même protection de lecture est appliquée aux relevés de ponte afin que la courbe et les bannières restent cohérentes avec l'historique.
+- Les données Firestore ne sont pas supprimées ni modifiées : la correction agit uniquement sur le calcul d'affichage des activités.
+- Cache PWA incrémenté en `oleeducks-shell-v23`.
