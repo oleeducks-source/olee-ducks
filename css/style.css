@@ -674,3 +674,29 @@ select.filter-select:focus{border-color:var(--pond-400);}
 }
 .sack-pop.neg{background:var(--clay-500); color:var(--white);}
 .sack-pop.play{animation:eggPop 1.5s ease forwards;}
+
+
+/* ---------- Activité élevage : accueil ---------- */
+.activity-banner{display:flex;gap:12px;align-items:flex-start;margin:0 0 16px;padding:15px 16px;border:1px solid var(--line);border-radius:var(--radius-m);background:var(--white);box-shadow:var(--shadow-1);animation:activityIn .35s var(--ease);}
+.activity-banner.today{background:linear-gradient(135deg,var(--sage-50),#fff);border-color:#CDE8D4;}
+.activity-banner.weekly{background:linear-gradient(135deg,#FFF8EE,#fff);border-color:#F4D7B1;}
+.activity-banner-icon{font-size:24px;line-height:1.2;flex:none;}
+.activity-banner-main{min-width:0;flex:1;}
+.activity-banner h3{font-size:14px;margin:2px 0 8px;}
+.activity-stats{display:flex;flex-wrap:wrap;gap:7px 14px;font-size:12px;color:var(--ink-600);}
+.activity-stats b{color:var(--ink-900);}
+.activity-trend-card{margin-top:4px;padding:14px 12px 10px;overflow:hidden;}
+.chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px;}
+.chart-head h3{font-size:14px;margin-top:2px;}
+.chart-legend{display:flex;gap:9px;flex-wrap:wrap;font-size:10px;color:var(--ink-600);padding-top:3px;}
+.legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;background:currentColor;}
+.legend-dot.eggs{color:var(--yolk-500)} .legend-dot.hatch{color:var(--pond-600)}
+.chart-wrap{width:100%;overflow:hidden;}
+.chart-wrap svg{display:block;width:100%;height:auto;min-height:170px;}
+.chart-grid{stroke:var(--line-soft);stroke-width:1;}
+.chart-label{fill:var(--ink-600);font-family:var(--font-mono);font-size:8px;}
+.chart-line{fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+.eggs-line{stroke:var(--yolk-500)} .hatch-line{stroke:var(--pond-600)}
+.chart-area{opacity:.08;} .eggs-area{fill:var(--yolk-500)} .hatch-area{fill:var(--pond-600)}
+.chart-dot{stroke:var(--white);stroke-width:1;} .chart-dot.eggs{fill:var(--yolk-500)} .chart-dot.hatch{fill:var(--pond-600)}
+@keyframes activityIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
