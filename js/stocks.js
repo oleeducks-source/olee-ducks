@@ -14,6 +14,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { getActiveDuckCounts } from "./inventaire.js";
+import { addDocGuarded, runGuardedTransaction, formatDoublonMessage } from "./doublons.js";
 
 const itemsCol = collection(db, "stock_items");
 const movCol = collection(db, "stock_mouvements");
@@ -252,19 +253,20 @@ export function openAddStockItemModal() {
         const nom = document.getElementById("fItNom").value.trim();
         if (!nom) { toast("Le nom est requis"); return; }
         try {
-          await addDoc(itemsCol, {
-            nom, type: document.getElementById("fItType").value,
-            unite: document.getElementById("fItUnite").value,
-            quantite_actuelle: Number(document.getElementById("fItQte").value) || 0,
-            seuil_alerte: Number(document.getElementById("fItSeuil").value) || 0,
-            cout_unitaire_moyen: Number(document.getElementById("fItCout").value) || 0,
-            date_peremption: document.getElementById("fItPeremption").value ? new Date(document.getElementById("fItPeremption").value) : null,
-            cree_par: getUserName() || "Inconnu",
-            createdAt: serverTimestamp()
-          });
+          const typeArticle = document.getElementById("fItType").value;
+          const unite = document.getElementById("fItUnite").value;
+          const qteInitiale = Number(document.getElementById("fItQte").value) || 0;
+          const seuil = Number(document.getElementById("fItSeuil").value) || 0;
+          const cout = Number(document.getElementById("fItCout").value) || 0;
+          const peremption = document.getElementById("fItPeremption").value ? new Date(document.getElementById("fItPeremption").value) : null;
+          await addDocGuarded("stock_items",
+            { nom, type: typeArticle, unite, quantite_actuelle: qteInitiale, seuil_alerte: seuil, cout_unitaire_moyen: cout, date_peremption: peremption },
+            { nom, type: typeArticle, unite, quantite_actuelle: qteInitiale, seuil_alerte: seuil, cout_unitaire_moyen: cout, date_peremption: peremption, cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp() },
+            "cet article de stock"
+          );
           toast("Article créé ✓");
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) { const msg = formatDoublonMessage(e); toast(msg || "Erreur : " + e.message); }
       });
     }
   });
@@ -497,30 +499,28 @@ function openMovementModal(item, type) {
             createdAt: serverTimestamp()
           };
 
-          if (isEntree && document.getElementById("fMovLinkFinance").checked) {
-            const financeRef = await addDoc(collection(db, "finance_transactions"), {
-              type: "depense",
-              categorie: item.type === "aliment" ? "aliments" : "veterinaire",
-              montant: movPayload.cout_total,
-              date: dateVal,
-              quantite: qte,
-              prix_unitaire: qte ? Math.round(movPayload.cout_total / qte) : 0,
-              description: `Achat stock : ${item.nom}`,
-              cree_par: getUserName() || "Inconnu",
-              createdAt: serverTimestamp()
-            });
-            movPayload.lien_finance_id = financeRef.id;
-          }
-
-          await addDoc(movCol, movPayload);
-          await updateDoc(doc(db, "stock_items", item.id), {
-            quantite_actuelle: increment(isEntree ? qte : -qte),
-            ...(isEntree && movPayload.cout_total ? { cout_unitaire_moyen: Math.round(movPayload.cout_total / qte) } : {})
-          });
+          await runGuardedTransaction("stock_mouvements",
+            { item_id: item.id, type_mouvement: type, quantite: qte, date: dateVal, motif: movPayload.motif, cout_total: movPayload.cout_total, linkFinance: isEntree && document.getElementById("fMovLinkFinance")?.checked === true },
+            isEntree ? "cet achat de stock" : "cette sortie de stock",
+            async (tx, meta) => {
+              const itemRef = doc(db, "stock_items", item.id);
+              const itemSnap = await tx.get(itemRef);
+              if (!itemSnap.exists()) throw new Error("ARTICLE_STOCK_INEXISTANT");
+              const currentQty = Number(itemSnap.data().quantite_actuelle) || 0;
+              if (!isEntree && qte > currentQty) throw new Error(`Stock insuffisant : ${currentQty} ${item.unite} disponible(s).`);
+              if (isEntree && document.getElementById("fMovLinkFinance")?.checked) {
+                const financeRef = doc(collection(db, "finance_transactions"));
+                tx.set(financeRef, { type: "depense", categorie: item.type === "aliment" ? "aliments" : "veterinaire", montant: movPayload.cout_total, date: dateVal, quantite: qte, prix_unitaire: qte ? Math.round(movPayload.cout_total / qte) : 0, description: `Achat stock : ${item.nom}`, cree_par: meta.auteur, createdAt: meta.now });
+                movPayload.lien_finance_id = financeRef.id;
+              }
+              tx.set(doc(movCol), { ...movPayload, cree_par: meta.auteur, createdAt: meta.now });
+              tx.update(itemRef, { quantite_actuelle: increment(isEntree ? qte : -qte), ...(isEntree && movPayload.cout_total ? { cout_unitaire_moyen: Math.round(movPayload.cout_total / qte) } : {}) });
+            }
+          );
 
           toast("Mouvement enregistré ✓");
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) { const msg = formatDoublonMessage(e); toast(msg || "Erreur : " + e.message); }
       });
     }
   });
