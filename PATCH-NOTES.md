@@ -1,3 +1,22 @@
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32535647/PATCH-NOTES.md)
+
+## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
+
+**`js/nids.js`**
+- Les relevés de canetons éclos sont maintenant écrits dans une **transaction Firestore atomique** couvrant le cycle du nid, le journal `eclosions_journalieres`, le lot d'inventaire et l'historique.
+- Deux téléphones qui saisissent simultanément la même éclosion ne peuvent plus produire deux fois le même ajout.
+- Une même saisie (même date + même quantité) effectuée dans une fenêtre de 5 minutes est bloquée avec le nom de l'utilisateur qui l'a déjà enregistrée.
+- L'archivage avec une dernière vague d'éclosion utilise le même mécanisme anti-doublon et recharge le cycle avant de clôturer le nid.
+
+**`js/inventaire.js`**
+- Une correction de quantité sur un lot issu d'un nid peut désormais synchroniser le `nombre_eclos` du cycle.
+- Une trace de correction est ajoutée dans `eclosions_journalieres` et `nest_history` : aucune ancienne ligne n'est supprimée.
+- Ajout d'un bouton **« Synchroniser le nid avec cette quantité »** pour corriger immédiatement un cas déjà existant, comme un inventaire corrigé à 15 alors que le nid affiche encore 30.
+
+**`sw.js`**
+- Cache PWA porté à `v20` pour forcer la prise en compte du nouveau JavaScript.
+
+**Firestore :** aucune collection existante supprimée, aucune migration destructive. Deux champs techniques peuvent apparaître sur `nest_cycles` (`dernier_releve_eclosion`, `corrige_par/corrige_le/correction_source`) et les journaux existants sont enrichis de motifs de correction/déduplication.
 # Correctifs issus de l'audit — Olee Ducks
 
 Fichiers à copier tels quels à la racine du dépôt `oleeducks-source/olee-ducks`
