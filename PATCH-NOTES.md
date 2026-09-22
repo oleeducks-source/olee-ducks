@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32539015/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32539245/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
 
