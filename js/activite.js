@@ -10,6 +10,7 @@ import { collection, query, where, getDocs, onSnapshot } from "https://www.gstat
 
 const pontesCol = collection(db, "pontes_journalieres");
 const eclosionsCol = collection(db, "eclosions_journalieres");
+const cyclesCol = collection(db, "nest_cycles");
 const MS_DAY = 86400000;
 
 function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
@@ -20,13 +21,23 @@ function formatNumber(n) { return Number(n || 0).toLocaleString('fr-FR'); }
 function mondayStart(d) { const x = startOfDay(d); const day = x.getDay(); const delta = day === 0 ? -6 : 1 - day; x.setDate(x.getDate()+delta); return x; }
 
 // Certains doublons historiques peuvent exister dans les journaux
-// (avant la mise en place du verrou atomique). L'accueil ne doit pas
-// recompter une même vague deux fois. On déduplique donc les événements
-// qui ont exactement le même contexte métier et ont été créés à quelques
-// minutes d'intervalle. Les vraies vagues séparées dans le temps restent
-// comptées.
-const JOURNAL_DEDUP_MS = 5 * 60 * 1000;
-
+// (avant la mise en place du verrou atomique, ou si deux personnes ont
+// saisi la même chose à quelques minutes ou dizaines de minutes
+// d'intervalle — le temps de s'en rendre compte). L'accueil ne doit pas
+// recompter une même vague deux fois.
+//
+// ⚠️ CORRECTIF (septembre 2026) : la version précédente ne fusionnait
+// deux lignes identiques (même cycle, même nid, même jour, même
+// quantité) que si leurs horodatages "createdAt" étaient tous les deux
+// présents ET distants de moins de 5 minutes. En pratique, un doublon
+// n'est souvent repéré que bien plus tard dans la journée — ou l'une des
+// deux lignes n'a pas de "createdAt" du tout (anciennes saisies) — et
+// dans ces deux cas, le filtre ne fusionnait plus rien du tout : c'est
+// ce qui a laissé passer les 56 canetons du 22 septembre au lieu de 38.
+// Le regroupement se fait maintenant uniquement sur l'identité métier
+// (cycle + nid + jour + quantité) : deux lignes qui partagent exactement
+// ces quatre valeurs sont désormais TOUJOURS fusionnées en une seule,
+// quel que soit l'écart de temps entre les deux saisies.
 function journalKey(d, type) {
   const cycle = d.cycle_id || '';
   const nid = d.nid_numero ?? '';
@@ -50,22 +61,17 @@ function dedupeJournalDocs(docs, type) {
 
   const kept = [];
   for (const items of groups.values()) {
+    // Toutes les lignes d'un même groupe partagent déjà la même identité
+    // métier (cycle, nid, jour, quantité) — une seule est conservée,
+    // peu importe leur nombre ou l'écart de temps entre elles. On garde
+    // la plus ancienne (createdAt le plus petit, ou la première dans
+    // l'ordre reçu si l'horodatage manque) pour un résultat stable.
     items.sort((a, b) => {
       const ta = a.createdAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER;
       const tb = b.createdAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER;
       return ta - tb;
     });
-    let lastAccepted = null;
-    for (const item of items) {
-      const t = item.createdAt?.getTime?.();
-      // Les anciennes lignes peuvent ne pas avoir createdAt : dans ce cas,
-      // on ne les fusionne pas arbitrairement.
-      if (lastAccepted !== null && Number.isFinite(t) && (t - lastAccepted) <= JOURNAL_DEDUP_MS) {
-        continue;
-      }
-      kept.push(item);
-      if (Number.isFinite(t)) lastAccepted = t;
-    }
+    kept.push(items[0]);
   }
   return kept;
 }
@@ -167,17 +173,65 @@ async function refreshWeeklyIfMonday() {
   } catch(err) { console.error('Récapitulatif hebdomadaire :',err); }
 }
 
+// ---------------------------------------------------------------------
+// Rappels de mirage — jour 7 (1ère sélection, œufs clairs) et jour 17
+// (contrôle de croissance) après le début de la couvaison. Purement
+// informatif, aucune écriture Firestore : on relit les cycles de nids
+// actuellement en couvaison et on calcule le nombre de jours écoulés
+// depuis "date_debut_couvaison" (même champ que celui affiché dans
+// Nids > le détail du nid).
+// ---------------------------------------------------------------------
+const MIRAGE_JOURS = [
+  { jour: 7, label: "1ère sélection — retirer les œufs clairs" },
+  { jour: 17, label: "Contrôle de croissance" }
+];
+
+function joursDepuisDebutCouvaison(dateDebut) {
+  const d = dateFromDoc(dateDebut);
+  if (!d) return null;
+  return Math.round((startOfDay(new Date()) - startOfDay(d)) / MS_DAY);
+}
+
+function renderMirageBanner(rappels) {
+  const el = document.getElementById('dashMirageBanner');
+  if (!el) return;
+  if (!rappels.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.className = 'activity-banner mirage';
+  const items = rappels
+    .sort((a, b) => a.nid - b.nid)
+    .map(r => `<span>🔦 Nid n° ${r.nid} — jour ${r.jour} (${r.label})</span>`)
+    .join('');
+  el.innerHTML = `<div class="activity-banner-icon">🔦</div><div class="activity-banner-main"><div class="eyebrow">À mirer aujourd'hui</div><h3>${rappels.length} nid${rappels.length > 1 ? 's' : ''} à vérifier</h3><div class="activity-stats">${items}</div></div>`;
+}
+
+async function refreshMirageReminders() {
+  try {
+    const snap = await getDocs(query(cyclesCol, where('statut', '==', 'couvaison')));
+    const rappels = [];
+    snap.docs.forEach(docSnap => {
+      const c = docSnap.data() || {};
+      const jours = joursDepuisDebutCouvaison(c.date_debut_couvaison);
+      if (jours === null) return;
+      const palier = MIRAGE_JOURS.find(p => p.jour === jours);
+      if (palier) rappels.push({ nid: c.nid_numero, jour: palier.jour, label: palier.label });
+    });
+    renderMirageBanner(rappels);
+  } catch (err) { console.error('Rappels de mirage :', err); }
+}
+
 export function initActiviteAccueil() {
-  refreshToday(); refreshWeeklyIfMonday(); refreshTrend();
+  refreshToday(); refreshWeeklyIfMonday(); refreshTrend(); refreshMirageReminders();
   // Mise à jour immédiate après une nouvelle saisie, sans polling permanent.
   const todayStart=startOfDay(new Date()), todayEnd=endOfDay(new Date());
   try {
     onSnapshot(query(pontesCol,where('date','>=',todayStart),where('date','<',todayEnd)),()=>refreshToday(),e=>console.warn('Pontes accueil :',e));
     onSnapshot(query(eclosionsCol,where('date','>=',todayStart),where('date','<',todayEnd)),()=>refreshToday(),e=>console.warn('Éclosions accueil :',e));
+    onSnapshot(query(cyclesCol,where('statut','==','couvaison')),()=>refreshMirageReminders(),e=>console.warn('Rappels de mirage :',e));
   } catch(e) { console.warn('Abonnement activité accueil :',e); }
   // Le jour civil change sans que l'application soit forcément rechargée.
   // Ce petit rafraîchissement garantit que la bannière d'hier disparaît
   // après minuit et que le récapitulatif du lundi apparaît le bon jour.
-  setInterval(() => { refreshToday(); refreshWeeklyIfMonday(); }, 60000);
+  setInterval(() => { refreshToday(); refreshWeeklyIfMonday(); refreshMirageReminders(); }, 60000);
   setInterval(refreshTrend, 10 * 60000);
 }
