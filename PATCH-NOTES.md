@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32581334/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32581543/PATCH-NOTES.md)
 [PATCH-NOTES.md](https://github.com/user-attachments/files/32539245/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
@@ -160,3 +160,10 @@ base, et méritent d'être décidés avant d'être codés :
 - Le second utilisateur ne peut pas marquer deux fois le même mirage : transaction Firestore atomique.
 - La bannière d'accueil conserve les rappels J7/J17 jusqu'à leur réalisation et indique les retards.
 - Les anciennes données restent intactes ; aucun document métier n'est supprimé.
+
+
+## V25 — correctif définitif enregistrement des finances
+- Correction de l’import manquant de `addDocGuarded` et `formatDoublonMessage` dans `js/finances.js`.
+- Les dépenses et recettes passent désormais réellement par le moteur anti-doublon atomique.
+- Le clic sur « Enregistrer » ne peut plus échouer à cause de `ReferenceError: addDocGuarded is not defined` ou `formatDoublonMessage is not defined`.
+- Cache PWA : `oleeducks-shell-v25`.
