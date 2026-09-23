@@ -312,6 +312,121 @@ function cycleForNest(n) {
   return Object.values(cyclesMap).find(c => c.nid_numero === n);
 }
 
+// ---------------------------------------------------------------------
+// MIRAGE : jalons opérationnels J7 / J17
+// Chaque cycle conserve l'état de ses deux contrôles directement dans
+// nest_cycles. Un jalon effectué reste visible et traçable ; tant qu'il
+// n'est pas effectué, le nid reste signalé (y compris si le jour exact
+// est dépassé), afin qu'un mirage oublié ne disparaisse pas de l'interface.
+// ---------------------------------------------------------------------
+const MIRAGE_STEPS = [
+  { key: "mirage_7", jour: 7, label: "1er mirage", detail: "Sélection des œufs clairs" },
+  { key: "mirage_17", jour: 17, label: "2e mirage", detail: "Contrôle de développement" }
+];
+
+function getMirageState(cycle, key) {
+  const raw = cycle?.[key];
+  return raw && typeof raw === "object" ? raw : null;
+}
+
+function joursDepuisCouvaisonCycle(cycle) {
+  if (!cycle?.date_debut_couvaison) return null;
+  const d = cycle.date_debut_couvaison?.toDate ? cycle.date_debut_couvaison.toDate() : new Date(cycle.date_debut_couvaison);
+  if (Number.isNaN(d.getTime())) return null;
+  const a = new Date(); a.setHours(0,0,0,0);
+  const b = new Date(d); b.setHours(0,0,0,0);
+  return Math.round((a - b) / 86400000);
+}
+
+function mirageStepStatus(cycle, step) {
+  const jours = joursDepuisCouvaisonCycle(cycle);
+  const state = getMirageState(cycle, step.key);
+  if (state?.effectue) return { ...step, state, jours, status: "fait" };
+  if (jours === null) return { ...step, state, jours, status: "a_venir" };
+  if (jours >= step.jour) return { ...step, state, jours, status: jours === step.jour ? "a_faire" : "en_retard" };
+  return { ...step, state, jours, status: "a_venir" };
+}
+
+function mirageUrgent(cycle) {
+  if (!cycle || cycle.statut !== "couvaison") return false;
+  return MIRAGE_STEPS.some(step => {
+    const st = mirageStepStatus(cycle, step);
+    return st.status === "a_faire" || st.status === "en_retard";
+  });
+}
+
+function mirageBadge(cycle) {
+  if (!mirageUrgent(cycle)) return "";
+  const pending = MIRAGE_STEPS.map(step => mirageStepStatus(cycle, step)).find(st => st.status === "a_faire" || st.status === "en_retard");
+  if (!pending) return "";
+  return `<span class="mirage-nest-badge" title="${escapeHtml(pending.label)} à effectuer">🔦 J${pending.jour}</span>`;
+}
+
+function mirageCardsHtml(cycle) {
+  return MIRAGE_STEPS.map(step => {
+    const st = mirageStepStatus(cycle, step);
+    const state = st.state || {};
+    const done = st.status === "fait";
+    const urgent = st.status === "a_faire" || st.status === "en_retard";
+    const retard = st.status === "en_retard";
+    const statusText = done ? `✓ Effectué${state.retires != null ? ` · ${Number(state.retires) || 0} œuf(s) retiré(s)` : ""}` :
+      st.status === "a_venir" ? `Prévu au jour ${step.jour}` :
+      retard ? `⚠️ En retard de ${Math.max(0, (st.jours || step.jour) - step.jour)} jour(s)` : `🔦 À effectuer aujourd'hui`;
+    return `<div class="mirage-card ${urgent ? "is-due" : ""} ${done ? "is-done" : ""}">
+      <div class="mirage-card-top"><div><span class="mirage-day">J${step.jour}</span><strong>${step.label}</strong></div><span class="mirage-status">${statusText}</span></div>
+      <div class="mirage-card-detail">${step.detail}</div>
+      ${done ? `<div class="mirage-completed-meta">Le ${state.date_effectuee?.toDate ? formatDateTime(state.date_effectuee.toDate()) : "—"} · ${escapeHtml(state.par || "Inconnu")}</div>
+        <div class="field-row"><div class="field"><label>Œufs retirés</label><input type="number" min="0" id="fMirageRetires_${step.jour}" value="${Number(state.retires) || 0}"></div><button class="btn secondary small" id="fMirageEdit_${step.jour}">Modifier</button></div>` :
+        urgent ? `<div class="field-row"><div class="field"><label>Nombre d'œufs retirés</label><input type="number" min="0" id="fMirageRetires_${step.jour}" value="0"></div><button class="btn yolk" id="fMirageDone_${step.jour}">✓ Marquer effectué</button></div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+async function enregistrerMirage(cycle, step, retires, boutonId) {
+  const cRef = doc(db, "nest_cycles", cycle.id);
+  const auteur = getUserName() || "Inconnu";
+  const now = Timestamp.now();
+  try {
+    await runTransaction(db, async tx => {
+      const snap = await tx.get(cRef);
+      if (!snap.exists()) throw new Error("CYCLE_INEXISTANT");
+      const fresh = snap.data() || {};
+      const existing = fresh[step.key];
+      if (existing?.effectue) {
+        const err = new Error(`MIRAGE_DEJA_EFFECTUE|${existing.par || "un autre utilisateur"}`);
+        err.code = "MIRAGE_DEJA_EFFECTUE"; err.par = existing.par || "un autre utilisateur";
+        throw err;
+      }
+      tx.update(cRef, {
+        [step.key]: {
+          effectue: true,
+          retires: Math.max(0, Number(retires) || 0),
+          date_effectuee: now,
+          par: auteur
+        },
+        modifie_par: auteur,
+        modifie_le: now
+      });
+      const historyRef = doc(nestHistoryCol);
+      tx.set(historyRef, {
+        nid_numero: cycle.nid_numero,
+        cycle_id: cycle.id,
+        action: step.key,
+        label: `${step.label} effectué`,
+        detail: `${Math.max(0, Number(retires) || 0)} œuf(s) retiré(s)`,
+        par: auteur,
+        createdAt: now
+      });
+    });
+    toast(`${step.label} enregistré ✓`);
+    openNestModal(Number(cycle.nid_numero));
+  } catch (e) {
+    if (e.code === "MIRAGE_DEJA_EFFECTUE") toast(`🔦 Ce ${step.label.toLowerCase()} vient déjà d'être effectué par ${e.par}.`);
+    else toast("Erreur : " + (e.message || e));
+  }
+}
+
+
 // Anime un petit badge "+N" (ou "-N") avec une icône d'œuf dans le coin
 // supérieur droit du nid concerné, sur toutes les grilles visibles
 // (mini-grille du tableau de bord + grille complète de la page Nids).
@@ -335,8 +450,9 @@ function renderGrids() {
     for (let n = 1; n <= 100; n++) {
       const c = cycleForNest(n);
       const cls = c ? (c.statut === "couvaison" ? "couvaison" : "ponte") : "";
+      const urgentMirage = mirageUrgent(c);
       const icon = c ? (c.statut === "couvaison" ? "ic-nest-couvaison" : "ic-nest-ponte") : "ic-nest-libre";
-      html += `<div class="nest-cell ${cls}" data-n="${n}"><svg><use href="#${icon}"/></svg><span class="nest-num">${n}</span></div>`;
+      html += `<div class="nest-cell ${cls}${urgentMirage ? " mirage-due" : ""}" data-n="${n}"><svg><use href="#${icon}"/></svg><span class="nest-num">${n}</span>${mirageBadge(c)}</div>`;
     }
     el.innerHTML = html;
     el.querySelectorAll(".nest-cell").forEach(cell => {
@@ -800,6 +916,13 @@ function openNestModal(n) {
       <div class="incubation-caption">${joursRestants > 0 ? `⏳ Éclosion estimée dans ~${joursRestants} jour(s)` : "🐣 Éclosion imminente — vérifiez le nid !"}</div>
     </div>
     ` : ""}
+    ${cycle.statut === "couvaison" ? `
+    <div class="mirage-panel">
+      <div class="mirage-panel-head"><div><span class="eyebrow">Contrôles de couvaison</span><h3>🔦 Points de mirage</h3></div><span class="subtle">J7 & J17</span></div>
+      <p class="subtle mirage-panel-intro">Le nid est signalé automatiquement au jour prévu et reste en alerte tant que le contrôle n'est pas marqué effectué.</p>
+      <div class="mirage-cards">${mirageCardsHtml(cycle)}</div>
+    </div>
+    ` : ""}
     <div class="spacer-m"></div>
 
     <div class="field-row">
@@ -841,6 +964,30 @@ function openNestModal(n) {
   `, {
     onMount: () => {
       renderNestHistory(n);
+      if (cycle.statut === "couvaison") {
+        MIRAGE_STEPS.forEach(step => {
+          const doneBtn = document.getElementById(`fMirageDone_${step.jour}`);
+          const editBtn = document.getElementById(`fMirageEdit_${step.jour}`);
+          const input = document.getElementById(`fMirageRetires_${step.jour}`);
+          if (doneBtn && input) doneBtn.addEventListener("click", async () => {
+            const retires = Math.max(0, Number(input.value) || 0);
+            await enregistrerMirage(cycle, step, retires, doneBtn.id);
+          });
+          if (editBtn && input) editBtn.addEventListener("click", async () => {
+            const retires = Math.max(0, Number(input.value) || 0);
+            try {
+              const cRef = doc(db, "nest_cycles", cycle.id);
+              await updateDoc(cRef, {
+                [`${step.key}.retires`]: retires,
+                [`${step.key}.modifie_le`]: Timestamp.now(),
+                [`${step.key}.modifie_par`]: getUserName() || "Inconnu"
+              });
+              toast("Nombre d'œufs retirés corrigé ✓");
+              openNestModal(n);
+            } catch (e) { toast("Erreur : " + (e.message || e)); }
+          });
+        });
+      }
       // ⚠️ RATTRAPAGE (août 2026) : pour un cycle déjà en couvaison AVANT
       // la mise en place du versement immédiat au cheptel (voir
       // fEclosAddBtn), des canetons ont pu être enregistrés sur le
@@ -946,7 +1093,7 @@ function openNestModal(n) {
       if (toCouv) toCouv.addEventListener("click", async () => {
         if (!(await confirmerSiDoublonRecent(n, "couvaison_demarree", "Démarrage de couvaison"))) return;
         try {
-          await updateDoc(doc(db, "nest_cycles", cycle.id), { statut: "couvaison", date_debut_couvaison: new Date(), modifie_par: getUserName() || "Inconnu" });
+          await updateDoc(doc(db, "nest_cycles", cycle.id), { statut: "couvaison", date_debut_couvaison: new Date(), mirage_7: null, mirage_17: null, modifie_par: getUserName() || "Inconnu" });
           await logNestHistory(n, cycle.id, "couvaison_demarree", "Démarrage de couvaison");
           toast(`Couvaison démarrée — nid ${n} ✓`);
           closeModal();
