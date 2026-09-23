@@ -16,6 +16,7 @@ import {
   serverTimestamp, query, orderBy, where
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
+import { formatDoublonMessage } from "./doublons.js";
 
 const tachesCol = collection(db, "taches");
 let allTaches = [];
