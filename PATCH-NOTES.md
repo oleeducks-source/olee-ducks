@@ -1,3 +1,4 @@
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32581334/PATCH-NOTES.md)
 [PATCH-NOTES.md](https://github.com/user-attachments/files/32539245/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
@@ -148,3 +149,14 @@ base, et méritent d'être décidés avant d'être codés :
 - La même protection de lecture est appliquée aux relevés de ponte afin que la courbe et les bannières restent cohérentes avec l'historique.
 - Les données Firestore ne sont pas supprimées ni modifiées : la correction agit uniquement sur le calcul d'affichage des activités.
 - Cache PWA incrémenté en `oleeducks-shell-v23`.
+
+
+## V24 — Correctif dépenses + mirage J7/J17
+- Corrige le `ReferenceError: formatDoublonMessage is not defined` qui pouvait masquer l'erreur réelle dans les modules Comptabilité et Tâches.
+- Ajoute deux points de mirage opérationnels par cycle de couvaison : J7 et J17.
+- Le nid clignote dans la grille lorsqu'un mirage est dû ou en retard.
+- Chaque mirage peut être marqué effectué avec le nombre d'œufs retirés.
+- Les contrôles effectués restent visibles et traçables dans `nest_cycles` et `nest_history`.
+- Le second utilisateur ne peut pas marquer deux fois le même mirage : transaction Firestore atomique.
+- La bannière d'accueil conserve les rappels J7/J17 jusqu'à leur réalisation et indique les retards.
+- Les anciennes données restent intactes ; aucun document métier n'est supprimé.
