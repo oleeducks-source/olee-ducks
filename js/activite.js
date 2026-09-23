@@ -175,15 +175,15 @@ async function refreshWeeklyIfMonday() {
 
 // ---------------------------------------------------------------------
 // Rappels de mirage — jour 7 (1ère sélection, œufs clairs) et jour 17
-// (contrôle de croissance) après le début de la couvaison. Purement
-// informatif, aucune écriture Firestore : on relit les cycles de nids
-// actuellement en couvaison et on calcule le nombre de jours écoulés
+// (contrôle de croissance) après le début de la couvaison. Le rappel
+// reste actif jusqu'à ce que le contrôle soit marqué effectué dans la fiche
+// du nid ; la bannière est donc un vrai aide-mémoire opérationnel.
 // depuis "date_debut_couvaison" (même champ que celui affiché dans
 // Nids > le détail du nid).
 // ---------------------------------------------------------------------
 const MIRAGE_JOURS = [
-  { jour: 7, label: "1ère sélection — retirer les œufs clairs" },
-  { jour: 17, label: "Contrôle de croissance" }
+  { jour: 7, key: "mirage_7", label: "1er mirage — retirer les œufs clairs" },
+  { jour: 17, key: "mirage_17", label: "2e mirage — contrôler le développement" }
 ];
 
 function joursDepuisDebutCouvaison(dateDebut) {
@@ -200,7 +200,7 @@ function renderMirageBanner(rappels) {
   el.className = 'activity-banner mirage';
   const items = rappels
     .sort((a, b) => a.nid - b.nid)
-    .map(r => `<span>🔦 Nid n° ${r.nid} — jour ${r.jour} (${r.label})</span>`)
+    .map(r => `<span>🔦 Nid n° ${r.nid} — jour ${r.jour}${r.retard ? ` · en retard de ${r.retard} j` : ""} (${r.label})</span>`)
     .join('');
   el.innerHTML = `<div class="activity-banner-icon">🔦</div><div class="activity-banner-main"><div class="eyebrow">À mirer aujourd'hui</div><h3>${rappels.length} nid${rappels.length > 1 ? 's' : ''} à vérifier</h3><div class="activity-stats">${items}</div></div>`;
 }
@@ -213,8 +213,13 @@ async function refreshMirageReminders() {
       const c = docSnap.data() || {};
       const jours = joursDepuisDebutCouvaison(c.date_debut_couvaison);
       if (jours === null) return;
-      const palier = MIRAGE_JOURS.find(p => p.jour === jours);
-      if (palier) rappels.push({ nid: c.nid_numero, jour: palier.jour, label: palier.label });
+      MIRAGE_JOURS.forEach(palier => {
+        const state = c[palier.key] || null;
+        if (state?.effectue) return;
+        if (jours >= palier.jour) {
+          rappels.push({ nid: c.nid_numero, jour: palier.jour, label: palier.label, retard: jours > palier.jour ? jours - palier.jour : 0 });
+        }
+      });
     });
     renderMirageBanner(rappels);
   } catch (err) { console.error('Rappels de mirage :', err); }
