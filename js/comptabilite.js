@@ -20,6 +20,7 @@ import {
   serverTimestamp, query, where, orderBy, increment, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatFCFA, formatFCFAPdf, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { formatDoublonMessage } from "./doublons.js";
 
 const accountsCol = collection(db, "accounts");
 const exercisesCol = collection(db, "exercises");
