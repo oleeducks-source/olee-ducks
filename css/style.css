@@ -653,6 +653,45 @@ select.filter-select:focus{border-color:var(--pond-400);}
   50%{box-shadow:0 0 0 5px rgba(29,90,84,0);}
 }
 
+
+/* ---------- Mirage J7/J17 : signal opérationnel ---------- */
+.nest-cell.mirage-due{
+  outline:2px solid #F0A43A;
+  outline-offset:1px;
+  animation:mirageBlink 1.05s ease-in-out infinite;
+  z-index:2;
+}
+.mirage-nest-badge{
+  position:absolute; right:-4px; top:-6px; z-index:7;
+  padding:2px 5px; border-radius:999px;
+  background:#F0A43A; color:#173B35;
+  font:700 9px var(--font-mono);
+  box-shadow:var(--shadow-2);
+  animation:mirageBadgePulse 1s ease-in-out infinite;
+}
+@keyframes mirageBlink{
+  0%,100%{box-shadow:0 0 0 0 rgba(240,164,58,.15); filter:brightness(1);}
+  50%{box-shadow:0 0 0 5px rgba(240,164,58,.34); filter:brightness(1.12);}
+}
+@keyframes mirageBadgePulse{0%,100%{transform:scale(1);opacity:1;}50%{transform:scale(1.08);opacity:.78;}}
+.mirage-panel{margin:4px 0 0;padding:14px;border:1px solid #F0C27E;border-radius:14px;background:linear-gradient(135deg,#FFF7EC,#fff);}
+.mirage-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.mirage-panel-head h3{font-size:15px;margin:2px 0 0;}
+.mirage-panel-intro{margin:6px 0 10px;}
+.mirage-cards{display:grid;gap:9px;}
+.mirage-card{padding:11px;border:1px solid var(--line);border-radius:12px;background:var(--white);}
+.mirage-card.is-due{border-color:#F0C27E;box-shadow:0 0 0 2px rgba(240,164,58,.08);}
+.mirage-card.is-done{border-color:#CDE8D4;background:linear-gradient(135deg,#F4FBF6,#fff);}
+.mirage-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.mirage-card-top strong{display:block;font-size:13px;margin-top:2px;}
+.mirage-day{display:inline-block;padding:2px 6px;border-radius:999px;background:var(--sage-100);font:700 10px var(--font-mono);color:var(--pond-800);}
+.mirage-status{font-size:10px;color:var(--ink-600);text-align:right;}
+.mirage-card.is-due .mirage-status{color:#A95D00;font-weight:700;}
+.mirage-card.is-done .mirage-status{color:var(--pond-700);}
+.mirage-card-detail{font-size:11px;color:var(--ink-600);margin-top:5px;}
+.mirage-completed-meta{font-size:10px;color:var(--ink-500);margin:8px 0;}
+@media (prefers-reduced-motion:reduce){.nest-cell.mirage-due,.mirage-nest-badge{animation:none;}}
+
 /* ---------- Sacs de stock : jauge de remplissage réelle ---------- */
 .sack-gauge{flex:none; width:32px; height:40px;}
 .sack-gauge .sack-outline{fill:none; stroke-width:2;}
