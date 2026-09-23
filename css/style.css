@@ -680,6 +680,7 @@ select.filter-select:focus{border-color:var(--pond-400);}
 .activity-banner{display:flex;gap:12px;align-items:flex-start;margin:0 0 16px;padding:15px 16px;border:1px solid var(--line);border-radius:var(--radius-m);background:var(--white);box-shadow:var(--shadow-1);animation:activityIn .35s var(--ease);}
 .activity-banner.today{background:linear-gradient(135deg,var(--sage-50),#fff);border-color:#CDE8D4;}
 .activity-banner.weekly{background:linear-gradient(135deg,#FFF8EE,#fff);border-color:#F4D7B1;}
+.activity-banner.mirage{background:linear-gradient(135deg,#FCEBD9,#fff);border-color:#F0C27E;}
 .activity-banner-icon{font-size:24px;line-height:1.2;flex:none;}
 .activity-banner-main{min-width:0;flex:1;}
 .activity-banner h3{font-size:14px;margin:2px 0 8px;}
