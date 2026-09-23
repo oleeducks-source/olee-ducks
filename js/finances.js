@@ -14,6 +14,7 @@ import {
 import { formatFCFA, formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, setMaskableText, initEyeToggle, animateBalanceCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { reverserEcriture } from "./comptabilite.js";
 import { attacherRecu, retirerRecu } from "./pieces-jointes.js";
+import { addDocGuarded, formatDoublonMessage } from "./doublons.js";
 
 const finCol = collection(db, "finance_transactions");
 let allTx = [];
