@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32581543/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32581932/PATCH-NOTES.md)
 [PATCH-NOTES.md](https://github.com/user-attachments/files/32539245/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
@@ -167,3 +167,18 @@ base, et méritent d'être décidés avant d'être codés :
 - Les dépenses et recettes passent désormais réellement par le moteur anti-doublon atomique.
 - Le clic sur « Enregistrer » ne peut plus échouer à cause de `ReferenceError: addDocGuarded is not defined` ou `formatDoublonMessage is not defined`.
 - Cache PWA : `oleeducks-shell-v25`.
+
+
+## V26 — Bannière mirage compacte
+- La bannière « À mirer aujourd'hui » est désormais repliée par défaut.
+- Bouton Afficher/Réduire avec état mémorisé sur l'appareil.
+- La liste complète des nids reste accessible sans occuper l'accueil.
+- Liste scrollable si de nombreux nids sont à mirer.
+- Cache PWA v26.
+
+
+## V27 — Contrôles de couvaison compacts
+- Réduction du panneau « Contrôles de couvaison / Points de mirage ».
+- Boutons « Marquer effectué » et « Modifier » ramenés à une taille raisonnable.
+- Champs « Œufs retirés » compacts et alignés avec les actions.
+- Aucun changement Firestore.
