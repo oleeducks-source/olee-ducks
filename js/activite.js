@@ -196,13 +196,52 @@ function renderMirageBanner(rappels) {
   const el = document.getElementById('dashMirageBanner');
   if (!el) return;
   if (!rappels.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
   el.classList.remove('hidden');
   el.className = 'activity-banner mirage';
-  const items = rappels
-    .sort((a, b) => a.nid - b.nid)
-    .map(r => `<span>🔦 Nid n° ${r.nid} — jour ${r.jour}${r.retard ? ` · en retard de ${r.retard} j` : ""} (${r.label})</span>`)
-    .join('');
-  el.innerHTML = `<div class="activity-banner-icon">🔦</div><div class="activity-banner-main"><div class="eyebrow">À mirer aujourd'hui</div><h3>${rappels.length} nid${rappels.length > 1 ? 's' : ''} à vérifier</h3><div class="activity-stats">${items}</div></div>`;
+
+  const sorted = rappels.slice().sort((a, b) => a.nid - b.nid || a.jour - b.jour);
+  const countLabel = `${sorted.length} nid${sorted.length > 1 ? 's' : ''} à vérifier`;
+  const collapsedKey = 'oleeducks.mirageBanner.collapsed';
+  let collapsed = localStorage.getItem(collapsedKey);
+  // Par défaut, la bannière est compacte : l'accueil ne doit pas être envahi
+  // lorsqu'un grand nombre de nids arrivent simultanément à J7/J17.
+  if (collapsed === null) collapsed = 'true';
+
+  const items = sorted.map(r => `
+    <div class="mirage-reminder-row">
+      <span class="mirage-reminder-main">🔦 Nid n° ${r.nid} — J${r.jour}</span>
+      <span class="mirage-reminder-detail">${r.retard ? `En retard de ${r.retard} j · ` : ''}${r.label}</span>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="activity-banner-icon">🔦</div>
+    <div class="activity-banner-main mirage-banner-main">
+      <div class="mirage-banner-head">
+        <div>
+          <div class="eyebrow">À mirer aujourd'hui</div>
+          <h3>${countLabel}</h3>
+        </div>
+        <button type="button" class="btn secondary small mirage-toggle"
+          aria-expanded="${collapsed !== 'true'}" aria-controls="mirageReminderList">
+          ${collapsed === 'true' ? 'Afficher' : 'Réduire'}
+        </button>
+      </div>
+      <div id="mirageReminderList" class="mirage-reminder-list${collapsed === 'true' ? ' is-collapsed' : ''}">
+        ${items}
+      </div>
+    </div>`;
+
+  const toggle = el.querySelector('.mirage-toggle');
+  const list = el.querySelector('#mirageReminderList');
+  if (toggle && list) {
+    toggle.addEventListener('click', () => {
+      const isCollapsed = list.classList.toggle('is-collapsed');
+      localStorage.setItem(collapsedKey, String(isCollapsed));
+      toggle.setAttribute('aria-expanded', String(!isCollapsed));
+      toggle.textContent = isCollapsed ? 'Afficher' : 'Réduire';
+    });
+  }
 }
 
 async function refreshMirageReminders() {
