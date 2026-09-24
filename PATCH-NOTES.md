@@ -1,4 +1,16 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32581932/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32614456/PATCH-NOTES.md)
+# V28 — Archives nids, anti-doublon 15 min et courbe interactive
+
+- Archives : regroupement par numéro de nid avec taux total + cycles détaillables.
+- Chaque cycle affiche sa date, ses œufs, ses éclosions et son taux individuel.
+- Anti-doublon des saisies de nids porté à 15 minutes.
+- Ajout/retrait d'œufs protégés par transaction et confirmation en cas de doublon récent.
+- Mirage J7/J17 protégé par la même logique de confirmation.
+- Éclosions sans archivage : confirmation possible si une saisie identique est réellement une nouvelle vague.
+- Activités : les écritures identiques sont dédupliquées seulement lorsqu'elles sont à moins de 15 minutes ; deux événements distincts confirmés restent comptabilisés.
+- Courbe 30 jours : points cliquables avec infobulle date + œufs + canetons.
+- Cache PWA V28.
+- Aucune suppression de données métier.
 [PATCH-NOTES.md](https://github.com/user-attachments/files/32539245/PATCH-NOTES.md)
 
 ## Correctif septembre 2026 — éclosions concurrentes et synchronisation nid ↔ inventaire
