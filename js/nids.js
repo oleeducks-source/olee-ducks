@@ -16,6 +16,7 @@ import {
   serverTimestamp, query, where, orderBy, limit, increment, writeBatch, runTransaction, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, formatDateTime, toast, openModal, closeModal, todayInputValue, getUserName, escapeHtml, animateCountUp } from "./utils.js";
+import { runGuardedTransaction, formatDoublonMessage, DELAI_DOUBLON_MS as DELAI_GLOBAL_DOUBLON_MS } from "./doublons.js";
 
 const nestsCol = collection(db, "nests");
 const cyclesCol = collection(db, "nest_cycles");
@@ -90,21 +91,20 @@ async function renderNestHistory(n) {
 // l'utilisateur avant de continuer (double-clic, saisie en double par
 // erreur…). Renvoie true si l'action doit continuer.
 // ---------------------------------------------------------------------
-const DELAI_DOUBLON_MS = 5 * 60 * 1000;
+const DELAI_DOUBLON_MS = DELAI_GLOBAL_DOUBLON_MS;
 
 // Enregistrement atomique d'une vague d'éclosion. Le contrôle visuel
 // précédent (confirmerSiDoublonRecent) ne suffisait pas : deux téléphones
 // pouvaient lire l'historique en même temps, puis écrire chacun +15.
 // Ici, Firestore verrouille le cycle pendant la transaction : le premier
 // téléphone gagne, le second relit la version fraîche et est bloqué.
-async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput) {
+async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, force = false) {
   const auteur = getUserName() || "Inconnu";
   const signature = `${dateReleveInput || ""}|${q}`;
   const bucket = Math.floor(Date.now() / DELAI_DOUBLON_MS);
-  const eventId = `eclosion_${cycle.id}_${dateReleveInput || "sans_date"}_${q}_${bucket}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const eventRef = doc(eclosionsCol);
   const cRef = doc(db, "nest_cycles", cycle.id);
   const duckRef = cycleDuckDocRef(cycle);
-  const eventRef = doc(db, "eclosions_journalieres", eventId);
   const historyRef = doc(nestHistoryCol);
   const maintenant = Timestamp.now();
 
@@ -121,7 +121,7 @@ async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveIn
       (maintenant.toMillis() - dernierAt) >= 0 &&
       (maintenant.toMillis() - dernierAt) < DELAI_DOUBLON_MS;
 
-    if (memeSaisieRecente || eventSnap.exists()) {
+    if (!force && (memeSaisieRecente || eventSnap.exists())) {
       const par = dernier?.par || eventSnap.data()?.par || "un autre utilisateur";
       const ecoule = dernierAt ? Math.max(0, maintenant.toMillis() - dernierAt) : 0;
       const minutes = Math.max(1, Math.round(ecoule / 60000));
@@ -169,6 +169,20 @@ async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveIn
       par: auteur, createdAt: maintenant
     });
   });
+}
+
+async function transactionNidAvecConfirmation(fields, label, work) {
+  try {
+    return await runGuardedTransaction("nest_actions", fields, label, work);
+  } catch (e) {
+    if (e?.code === "DOUBLON_BLOQUE") {
+      const msg = formatDoublonMessage(e) || `⚠️ ${label} a déjà été enregistré récemment.`;
+      const ok = confirm(`${msg}\n\nSi cette saisie correspond réellement à un nouvel événement distinct, cliquez sur OK pour l'enregistrer malgré l'alerte.`);
+      if (!ok) return null;
+      return runGuardedTransaction("nest_actions", fields, label, work, { force: true });
+    }
+    throw e;
+  }
 }
 
 async function confirmerSiDoublonRecent(n, action, label) {
@@ -387,7 +401,10 @@ async function enregistrerMirage(cycle, step, retires, boutonId) {
   const auteur = getUserName() || "Inconnu";
   const now = Timestamp.now();
   try {
-    await runTransaction(db, async tx => {
+    const resultat = await transactionNidAvecConfirmation(
+      { type: "mirage", cycle_id: cycle.id, step: step.key, retires: Math.max(0, Number(retires) || 0) },
+      `${step.label.toLowerCase()} du nid n° ${cycle.nid_numero}`,
+      async (tx, meta) => {
       const snap = await tx.get(cRef);
       if (!snap.exists()) throw new Error("CYCLE_INEXISTANT");
       const fresh = snap.data() || {};
@@ -417,7 +434,9 @@ async function enregistrerMirage(cycle, step, retires, boutonId) {
         par: auteur,
         createdAt: now
       });
-    });
+      }
+    );
+    if (resultat === null) return;
     toast(`${step.label} enregistré ✓`);
     openNestModal(Number(cycle.nid_numero));
   } catch (e) {
@@ -609,25 +628,67 @@ function renderArchives() {
     el.innerHTML = `<div class="empty-state"><div class="glyph">📦</div><p>Aucun cycle archivé pour le moment.</p></div>`;
     return;
   }
-  el.innerHTML = archivedCycles.map(c => {
-    const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
-    const succes = c.statut === "eclos";
-    return `
-    <div class="row with-icon archive-row" data-id="${c.id}" style="cursor:pointer;">
-      <div class="row-icon ${succes ? 'pos' : 'neg'}"><svg><use href="#${succes ? 'ic-nest-eclos' : 'ic-nest-echec'}"/></svg></div>
-      <div class="row-main">
-        <span class="row-title">Nid n° ${c.nid_numero} — ${formatDate(c.date_fin)}</span>
-        <span class="row-sub">${c.nombre_oeufs || 0} œufs → ${c.nombre_eclos || 0} éclos${c.archive_par ? " · par " + escapeHtml(c.archive_par) : ""}</span>
-      </div>
-      <span class="tag ${succes ? 'ok' : 'danger'}">${taux}%</span>
+
+  const byNest = new Map();
+  archivedCycles.forEach(c => {
+    const n = String(c.nid_numero);
+    if (!byNest.has(n)) byNest.set(n, []);
+    byNest.get(n).push(c);
+  });
+
+  const groups = [...byNest.entries()].map(([n, cycles]) => {
+    cycles.sort((a,b) => toDateObj(b.date_fin).getTime() - toDateObj(a.date_fin).getTime());
+    const oeufs = cycles.reduce((s,c) => s + (Number(c.nombre_oeufs)||0), 0);
+    const eclos = cycles.reduce((s,c) => s + (Number(c.nombre_eclos)||0), 0);
+    return { n, cycles, oeufs, eclos, taux: oeufs ? Math.round(eclos / oeufs * 100) : 0 };
+  }).sort((a,b) => Number(a.n)-Number(b.n));
+
+  el.innerHTML = groups.map(g => {
+    const plural = g.cycles.length > 1;
+    const rows = g.cycles.map((c, idx) => {
+      const taux = c.nombre_oeufs ? Math.round((c.nombre_eclos || 0) / c.nombre_oeufs * 100) : 0;
+      const succes = c.statut === "eclos";
+      const dateFin = c.date_fin ? formatDate(c.date_fin) : "—";
+      const dateDebut = c.date_debut ? formatDate(c.date_debut) : "—";
+      return `<div class="nest-archive-cycle archive-cycle-detail" data-id="${c.id}" role="button" tabindex="0">
+        <div class="nest-archive-cycle-main">
+          <div class="nest-archive-cycle-date"><span class="nest-archive-cycle-dot ${succes ? 'ok' : 'fail'}"></span><strong>${dateFin}</strong>${dateDebut !== dateFin ? `<span>Cycle débuté le ${dateDebut}</span>` : ''}</div>
+          <div class="nest-archive-cycle-meta">${c.nombre_oeufs || 0} œufs → ${c.nombre_eclos || 0} éclos · ${c.archive_par ? `par ${escapeHtml(c.archive_par)}` : '—'}</div>
+        </div>
+        <span class="tag ${succes ? 'ok' : 'danger'}">${taux}%</span>
+      </div>`;
+    }).join('');
+    return `<div class="nest-archive-group ${plural ? 'has-history' : ''}" data-nest="${escapeHtml(g.n)}">
+      <button class="nest-archive-summary" type="button" aria-expanded="false">
+        <span class="nest-archive-chevron">›</span>
+        <span class="nest-archive-icon">🪺</span>
+        <span class="nest-archive-main"><strong>Nid n° ${escapeHtml(g.n)}</strong><small>${g.cycles.length} cycle${g.cycles.length > 1 ? 's' : ''} · ${g.oeufs} œufs · ${g.eclos} éclos</small></span>
+        <span class="tag ${g.taux >= 80 ? 'ok' : 'danger'}">${g.taux}% total</span>
+      </button>
+      <div class="nest-archive-details" hidden>${rows}</div>
     </div>`;
-  }).join("");
-  el.querySelectorAll(".archive-row").forEach(rowEl => {
-    rowEl.addEventListener("click", () => {
-      const c = archivedCycles.find(x => x.id === rowEl.dataset.id);
-      if (c) openArchiveDetailModal(c);
+  }).join('');
+
+  el.querySelectorAll('.nest-archive-summary').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const details = btn.nextElementSibling;
+      const open = !details.hidden;
+      details.hidden = open;
+      btn.setAttribute('aria-expanded', String(!open));
+      btn.querySelector('.nest-archive-chevron')?.classList.toggle('open', !open);
     });
   });
+  el.querySelectorAll('.archive-cycle-detail').forEach(row => {
+    const open = () => {
+      const c = archivedCycles.find(x => x.id === row.dataset.id);
+      if (c) openArchiveDetailModal(c);
+    };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  });
+
+  // Un nid avec plusieurs cycles reste compact par défaut : on n'ouvre
+  // l'historique détaillé qu'à la demande de l'utilisateur.
 }
 
 // Correction d'un cycle déjà archivé (nombre d'œufs/éclos erroné à la
@@ -1033,19 +1094,21 @@ function openNestModal(n) {
       if (addBtn) addBtn.addEventListener("click", async () => {
         const q = Number(document.getElementById("fAddOeufs").value) || 0;
         const dateReleve = new Date(document.getElementById("fAddDate").value);
-        if (!(await confirmerSiDoublonRecent(n, "ajout_oeufs", "Ajout d'œufs"))) return;
         try {
-          const cRef = doc(db, "nest_cycles", cycle.id);
-          await updateDoc(cRef, { nombre_oeufs: increment(q) });
-          await addDoc(pontesCol, {
-            nid_numero: n, cycle_id: cycle.id, date: dateReleve,
-            quantite: q, motif: "releve_quotidien",
-            par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
-          await logNestHistory(n, cycle.id, "ajout_oeufs", "Ajout d'œufs", `+${q} œuf(s)`);
+          const resultat = await transactionNidAvecConfirmation(
+            { type: "ponte", action: "ajout", cycle_id: cycle.id, nid: n, date: document.getElementById("fAddDate").value, quantite: q },
+            `ajout de ${q} œuf(s) sur le nid n° ${n}`,
+            async tx => {
+              const cRef = doc(db, "nest_cycles", cycle.id);
+              tx.update(cRef, { nombre_oeufs: increment(q) });
+              tx.set(doc(pontesCol), { nid_numero: n, cycle_id: cycle.id, date: dateReleve, quantite: q, motif: "releve_quotidien", par: getUserName() || "Inconnu", createdAt: serverTimestamp() });
+              tx.set(doc(nestHistoryCol), { nid_numero: n, cycle_id: cycle.id, action: "ajout_oeufs", label: "Ajout d'œufs", detail: `+${q} œuf(s)`, par: getUserName() || "Inconnu", createdAt: serverTimestamp() });
+            }
+          );
+          if (resultat === null) return;
           toast("Relevé du jour enregistré ✓");
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) { toast(formatDoublonMessage(e) || "Erreur : " + e.message); }
       });
 
       const removeBtn = document.getElementById("fRemoveBtn");
@@ -1053,19 +1116,21 @@ function openNestModal(n) {
         const q = Number(document.getElementById("fRemoveOeufs").value) || 0;
         const current = Number(cycle.nombre_oeufs) || 0;
         if (q <= 0 || q > current) { toast(`Indiquez une quantité entre 1 et ${current}`); return; }
-        if (!(await confirmerSiDoublonRecent(n, "correction", "Retrait / correction d'œufs"))) return;
         try {
-          const cRef = doc(db, "nest_cycles", cycle.id);
-          await updateDoc(cRef, { nombre_oeufs: increment(-q) });
-          await addDoc(pontesCol, {
-            nid_numero: n, cycle_id: cycle.id, date: new Date(),
-            quantite: -q, motif: "correction",
-            par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-          });
-          await logNestHistory(n, cycle.id, "correction", "Retrait / correction d'œufs", `-${q} œuf(s)`);
+          const resultat = await transactionNidAvecConfirmation(
+            { type: "ponte", action: "retrait", cycle_id: cycle.id, nid: n, quantite: q },
+            `retrait de ${q} œuf(s) sur le nid n° ${n}`,
+            async tx => {
+              const cRef = doc(db, "nest_cycles", cycle.id);
+              tx.update(cRef, { nombre_oeufs: increment(-q) });
+              tx.set(doc(pontesCol), { nid_numero: n, cycle_id: cycle.id, date: new Date(), quantite: -q, motif: "correction", par: getUserName() || "Inconnu", createdAt: serverTimestamp() });
+              tx.set(doc(nestHistoryCol), { nid_numero: n, cycle_id: cycle.id, action: "correction", label: "Retrait / correction d'œufs", detail: `-${q} œuf(s)`, par: getUserName() || "Inconnu", createdAt: serverTimestamp() });
+            }
+          );
+          if (resultat === null) return;
           toast("Correction enregistrée ✓");
           closeModal();
-        } catch (e) { toast("Erreur : " + e.message); }
+        } catch (e) { toast(formatDoublonMessage(e) || "Erreur : " + e.message); }
       });
 
       const resetBtn = document.getElementById("fResetNest");
@@ -1124,7 +1189,16 @@ function openNestModal(n) {
           closeModal();
         } catch (e) {
           if (e.code === "DOUBLON_ECLOSION") {
-            toast(`⚠️ Doublon bloqué : ${e.par || "un autre utilisateur"} a déjà enregistré cette même éclosion il y a ${e.minutes || 1} min. Aucun ajout effectué.`);
+            const ok = confirm(`⚠️ ${e.par || "Un autre utilisateur"} a déjà enregistré ${q} caneton(s) pour ce nid il y a ${e.minutes || 1} min.\n\nSi cette saisie correspond réellement à une nouvelle vague distincte, cliquez sur OK pour l'enregistrer malgré l'alerte.`);
+            if (!ok) return;
+            try {
+              await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, true);
+              toast(`${q} éclosion(s) distincte(s) enregistrée(s) et ajoutée(s) au cheptel ✓`);
+              closeModal();
+            } catch (e2) {
+              console.error(e2);
+              toast("Erreur : " + e2.message);
+            }
           } else {
             console.error(e);
             toast("Erreur : " + e.message);
