@@ -12,6 +12,7 @@ const pontesCol = collection(db, "pontes_journalieres");
 const eclosionsCol = collection(db, "eclosions_journalieres");
 const cyclesCol = collection(db, "nest_cycles");
 const MS_DAY = 86400000;
+const DEDUP_WINDOW_MS = 15 * 60 * 1000;
 
 function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
 function endOfDay(d) { const x = startOfDay(d); x.setDate(x.getDate()+1); return x; }
@@ -61,17 +62,20 @@ function dedupeJournalDocs(docs, type) {
 
   const kept = [];
   for (const items of groups.values()) {
-    // Toutes les lignes d'un même groupe partagent déjà la même identité
-    // métier (cycle, nid, jour, quantité) — une seule est conservée,
-    // peu importe leur nombre ou l'écart de temps entre elles. On garde
-    // la plus ancienne (createdAt le plus petit, ou la première dans
-    // l'ordre reçu si l'horodatage manque) pour un résultat stable.
-    items.sort((a, b) => {
-      const ta = a.createdAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER;
-      const tb = b.createdAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER;
-      return ta - tb;
-    });
-    kept.push(items[0]);
+    // On ne fusionne que les écritures suffisamment proches pour être
+    // considérées comme un doublon accidentel. Deux saisies identiques
+    // confirmées comme distinctes à plus de 15 min d'intervalle restent
+    // donc visibles dans les statistiques.
+    items.sort((a,b) => (a.createdAt?.getTime?.() ?? 0) - (b.createdAt?.getTime?.() ?? 0));
+    const clusters = [];
+    for (const item of items) {
+      const last = clusters[clusters.length - 1];
+      const t = item.createdAt?.getTime?.();
+      const lt = last?.[last.length - 1]?.createdAt?.getTime?.();
+      if (last && t != null && lt != null && Math.abs(t - lt) < DEDUP_WINDOW_MS) last.push(item);
+      else clusters.push([item]);
+    }
+    clusters.forEach(cluster => kept.push(cluster[0]));
   }
   return kept;
 }
@@ -128,7 +132,7 @@ function renderChart(eggMap, hatchMap, days = 30) {
   const points = [];
   for (let i=days-1;i>=0;i--) { const d=new Date(end); d.setDate(d.getDate()-i); const k=ymd(d); points.push({d,k,eggs:eggMap[k]||0,hatch:hatchMap[k]||0}); }
   const max = Math.max(1, ...points.flatMap(p => [p.eggs,p.hatch]));
-  const W=520,H=190, padL=34,padR=12,padT=14,padB=28;
+  const W=520,H=190, padL=38,padR=12,padT=14,padB=28;
   const iw=W-padL-padR, ih=H-padT-padB;
   const x=i=>padL+(i/(points.length-1))*iw;
   const y=v=>padT+ih-(v/max)*ih;
@@ -136,8 +140,28 @@ function renderChart(eggMap, hatchMap, days = 30) {
   const area=(key)=>`M ${x(0)} ${padT+ih} L ${poly(key).replace(/ /g,' L ')} L ${x(points.length-1)} ${padT+ih} Z`;
   const grid=[0,.25,.5,.75,1].map(r=>{const yy=padT+ih-r*ih; const val=Math.round(max*r); return `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" class="chart-grid"/><text x="${padL-6}" y="${yy+4}" text-anchor="end" class="chart-label">${val}</text>`;}).join('');
   const labels=[0,7,14,21,29].map(i=>{const p=points[i]; return `<text x="${x(i)}" y="${H-8}" text-anchor="middle" class="chart-label">${p.d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})}</text>`;}).join('');
-  const dots=(key, cls)=>points.map((p,i)=>p[key]>0?`<circle cx="${x(i)}" cy="${y(p[key])}" r="2.4" class="chart-dot ${cls}"/>`:'' ).join('');
-  el.innerHTML=`<div class="chart-head"><div><span class="eyebrow">30 derniers jours</span><h3>Évolution ponte & éclosion</h3></div><div class="chart-legend"><span><i class="legend-dot eggs"></i>Œufs</span><span><i class="legend-dot hatch"></i>Canetons</span></div></div><div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution des œufs et canetons éclos sur 30 jours"><g>${grid}</g><path d="${area('eggs')}" class="chart-area eggs-area"/><path d="${area('hatch')}" class="chart-area hatch-area"/><polyline points="${poly('eggs')}" class="chart-line eggs-line"/><polyline points="${poly('hatch')}" class="chart-line hatch-line"/>${dots('eggs','eggs')}${dots('hatch','hatch')}${labels}</svg></div>`;
+  const dots=(key, cls)=>points.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p[key])}" r="${p[key]>0?3:1.8}" class="chart-dot ${cls}" data-index="${i}" data-series="${key}" tabindex="0"/>`).join('');
+  const hits=points.map((p,i)=>`<rect x="${Math.max(padL,x(i)-7)}" y="${padT}" width="14" height="${ih}" class="chart-hit" data-index="${i}" tabindex="0"/>`).join('');
+  el.innerHTML=`<div class="chart-head"><div><span class="eyebrow">30 derniers jours</span><h3>Évolution ponte & éclosion</h3></div><div class="chart-legend"><span><i class="legend-dot eggs"></i>Œufs</span><span><i class="legend-dot hatch"></i>Canetons</span></div></div><div class="chart-interactive"><div class="chart-tooltip" id="activityChartTooltip" hidden></div><div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution des œufs et canetons éclos sur 30 jours"><g>${grid}</g><path d="${area('eggs')}" class="chart-area eggs-area"/><path d="${area('hatch')}" class="chart-area hatch-area"/><polyline points="${poly('eggs')}" class="chart-line eggs-line"/><polyline points="${poly('hatch')}" class="chart-line hatch-line"/><g class="chart-hit-layer">${hits}</g>${dots('eggs','eggs')}${dots('hatch','hatch')}${labels}</svg></div></div>`;
+
+  const tooltip = el.querySelector('#activityChartTooltip');
+  const showPoint = (i, anchor) => {
+    const p = points[i]; if (!p || !tooltip) return;
+    tooltip.innerHTML = `<strong>${p.d.toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'long'})}</strong><span>🥚 ${formatNumber(p.eggs)} œuf${p.eggs>1?'s':''}</span><span>🐣 ${formatNumber(p.hatch)} caneton${p.hatch>1?'s':''}</span>`;
+    tooltip.hidden = false;
+    const wrap = el.querySelector('.chart-interactive').getBoundingClientRect();
+    const svgRect = anchor?.getBoundingClientRect?.() || wrap;
+    const left = Math.min(Math.max(8, svgRect.left - wrap.left + 10), Math.max(8, wrap.width - 170));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = '8px';
+  };
+  const hidePoint = () => { if (tooltip) tooltip.hidden = true; };
+  el.querySelectorAll('.chart-hit,.chart-dot').forEach(node => {
+    const i = Number(node.dataset.index);
+    node.addEventListener('click', e => { e.stopPropagation(); showPoint(i, node); });
+    node.addEventListener('keydown', e => { if (e.key==='Enter' || e.key===' ') { e.preventDefault(); showPoint(i,node); } });
+  });
+  el.querySelector('.chart-interactive')?.addEventListener('click', e => { if (!e.target.closest('.chart-hit,.chart-dot')) hidePoint(); });
 }
 
 async function refreshTrend() {
