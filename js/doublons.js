@@ -8,7 +8,7 @@ import { db } from "./firebase-config.js";
 import { collection, doc, runTransaction, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { getUserName } from "./utils.js";
 
-export const DELAI_DOUBLON_MS = 5 * 60 * 1000;
+export const DELAI_DOUBLON_MS = 15 * 60 * 1000;
 const GUARD_COL = collection(db, "write_dedup_guards");
 
 function normalise(v) {
@@ -54,7 +54,7 @@ export class DoublonBloqueError extends Error {
  * `fields` contient uniquement les champs métier qui définissent une
  * saisie identique ; `payload` peut contenir serverTimestamp().
  */
-export async function addDocGuarded(collectionName, fields, payload, label = "cet enregistrement") {
+export async function addDocGuarded(collectionName, fields, payload, label = "cet enregistrement", { force = false } = {}) {
   const signature = makeDedupSignature(collectionName, fields);
   const now = Timestamp.now();
   const guardRef = doc(GUARD_COL, guardId(signature));
@@ -63,7 +63,7 @@ export async function addDocGuarded(collectionName, fields, payload, label = "ce
 
   await runTransaction(db, async (tx) => {
     const guardSnap = await tx.get(guardRef);
-    if (guardSnap.exists()) {
+    if (guardSnap.exists() && !force) {
       const g = guardSnap.data() || {};
       const age = Math.max(0, now.toMillis() - (g.createdAt?.toMillis?.() || now.toMillis()));
       if (age < DELAI_DOUBLON_MS) {
@@ -82,14 +82,14 @@ export async function addDocGuarded(collectionName, fields, payload, label = "ce
   return targetRef;
 }
 
-export async function runGuardedTransaction(collectionName, fields, label, work) {
+export async function runGuardedTransaction(collectionName, fields, label, work, { force = false } = {}) {
   const signature = makeDedupSignature(collectionName, fields);
   const now = Timestamp.now();
   const guardRef = doc(GUARD_COL, guardId(signature));
   const auteur = getUserName() || "Inconnu";
   return runTransaction(db, async (tx) => {
     const guardSnap = await tx.get(guardRef);
-    if (guardSnap.exists()) {
+    if (guardSnap.exists() && !force) {
       const g = guardSnap.data() || {};
       const age = Math.max(0, now.toMillis() - (g.createdAt?.toMillis?.() || now.toMillis()));
       if (age < DELAI_DOUBLON_MS) {
