@@ -755,6 +755,38 @@ select.filter-select:focus{border-color:var(--pond-400);}
 .chart-dot{stroke:var(--white);stroke-width:1;} .chart-dot.eggs{fill:var(--yolk-500)} .chart-dot.hatch{fill:var(--pond-600)}
 @keyframes activityIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 
+
+/* ---------- Archives des nids : un nid = une fiche, cycles dépliables ---------- */
+.nest-archive-group{border:1px solid var(--line);border-radius:12px;background:var(--white);overflow:hidden;margin-bottom:7px;}
+.nest-archive-summary{width:100%;display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:10px 11px;text-align:left;cursor:pointer;color:var(--ink-900);}
+.nest-archive-summary:hover{background:var(--sage-50);}
+.nest-archive-chevron{width:16px;height:16px;display:grid;place-items:center;font-size:19px;line-height:1;color:var(--ink-500);transition:transform .18s ease;}
+.nest-archive-chevron.open{transform:rotate(90deg);}
+.nest-archive-icon{font-size:17px;flex:none;}
+.nest-archive-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px;}
+.nest-archive-main strong{font-size:13px;}
+.nest-archive-main small{font-size:10.5px;color:var(--ink-600);}
+.nest-archive-details{padding:0 10px 9px 35px;border-top:1px solid var(--line-soft);}
+.nest-archive-cycle{display:flex;cursor:pointer;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px dashed var(--line-soft);}
+.nest-archive-cycle:last-child{border-bottom:0;}
+.nest-archive-cycle:hover{background:var(--sage-50);}
+.nest-archive-cycle-main{min-width:0;}
+.nest-archive-cycle-date{display:flex;align-items:center;gap:6px;font-size:11.5px;}
+.nest-archive-cycle-date span:not(.nest-archive-cycle-dot){color:var(--ink-500);font-size:10px;}
+.nest-archive-cycle-dot{width:7px;height:7px;border-radius:50%;background:var(--pond-600);flex:none;}
+.nest-archive-cycle-dot.fail{background:#C56A5A;}
+.nest-archive-cycle-meta{font-size:10px;color:var(--ink-600);margin-top:3px;}
+
+/* ---------- Courbe activité : lecture interactive façon finance ---------- */
+.chart-interactive{position:relative;}
+.chart-hit-layer{pointer-events:auto;}
+.chart-hit{fill:transparent;cursor:crosshair;outline:none;}
+.chart-hit:hover,.chart-hit:focus{fill:rgba(28,111,78,.06);}
+.chart-dot{cursor:pointer;}
+.chart-dot:focus{stroke-width:2.5;}
+.chart-tooltip{position:absolute;z-index:8;min-width:145px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.97);box-shadow:var(--shadow-2);display:flex;flex-direction:column;gap:2px;font-size:10.5px;color:var(--ink-700);pointer-events:none;}
+.chart-tooltip strong{font-size:11px;color:var(--ink-900);margin-bottom:2px;}
+.chart-tooltip span{line-height:1.3;}
 /* ---------- Mirage : bannière compacte et dépliable ---------- */
 .mirage-banner-main{width:100%;}
 .mirage-banner-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
