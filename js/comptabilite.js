@@ -469,28 +469,36 @@ export async function reverserEcriture(ecritureId) {
   }));
   const numeroPiece = `EC-${ex.annee}-${String((ex.nb_ecritures || 0) + 1).padStart(4, "0")}`;
 
-  const reversalRef = await addDoc(journalCol, {
-    numero_piece: numeroPiece,
-    date: new Date(),
-    libelle: "ANNULATION — " + ecriture.libelle,
-    exercice_id: ecriture.exercice_id,
-    lines: lignesInversees,
-    source_transaction_id: ecriture.source_transaction_id,
-    contre_passation_de: ecriture.id,
-    annulee: false,
-    valide_par: getUserName() || "Inconnu",
-    valide_le: serverTimestamp(),
-    createdAt: serverTimestamp()
-  });
-  await updateDoc(doc(db, "exercises", ex.id), { nb_ecritures: increment(1) });
-  await updateDoc(doc(db, "journal_ecritures", ecriture.id), { annulee: true, annulee_par_ecriture_id: reversalRef.id });
-
-  if (ecriture.source_transaction_id) {
-    await updateDoc(doc(db, "finance_transactions", ecriture.source_transaction_id), {
-      statut_comptable: "brouillon", ecriture_id: null
-    });
-  }
-  return reversalRef.id;
+  const reversalId = await runGuardedTransaction(
+    "journal_ecritures",
+    { action: "contre_passation", source_ecriture_id: ecriture.id },
+    `la contre-passation de ${numeroPiece}`,
+    async (tx, meta) => {
+      const reversalRef = doc(journalCol);
+      tx.set(reversalRef, {
+        numero_piece: numeroPiece,
+        date: new Date(),
+        libelle: "ANNULATION — " + ecriture.libelle,
+        exercice_id: ecriture.exercice_id,
+        lines: lignesInversees,
+        source_transaction_id: ecriture.source_transaction_id,
+        contre_passation_de: ecriture.id,
+        annulee: false,
+        valide_par: meta.auteur,
+        valide_le: meta.now,
+        createdAt: meta.now
+      });
+      tx.update(doc(db, "exercises", ex.id), { nb_ecritures: increment(1) });
+      tx.update(doc(db, "journal_ecritures", ecriture.id), { annulee: true, annulee_par_ecriture_id: reversalRef.id });
+      if (ecriture.source_transaction_id) {
+        tx.update(doc(db, "finance_transactions", ecriture.source_transaction_id), {
+          statut_comptable: "brouillon", ecriture_id: null
+        });
+      }
+      return reversalRef.id;
+    }
+  );
+  return reversalId;
 }
 
 // ---------------------------------------------------------------------
