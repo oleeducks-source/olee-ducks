@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32659673/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32660167/PATCH-NOTES.md)
 # V30 — Audit des écritures, éclosions nettes et refonte Statistiques des nids
 
 - **Activité du jour / courbe :** les corrections négatives d'éclosion provenant d'une correction d'inventaire sont désormais intégrées au calcul net. Exemple : `+11` puis `-2` affiche correctement **9 canetons** au lieu de 11.
@@ -213,3 +213,8 @@ base, et méritent d'être décidés avant d'être codés :
 - Boutons « Marquer effectué » et « Modifier » ramenés à une taille raisonnable.
 - Champs « Œufs retirés » compacts et alignés avec les actions.
 - Aucun changement Firestore.
+
+## V31 — Réconciliation activité des éclosions
+- Correction de l'affichage du nombre de canetons éclos du jour : l'accueil réconcilie le journal `eclosions_journalieres` avec le cumul métier du cycle (`nest_cycles.nombre_eclos`) lorsqu'une correction a été faite dans l'inventaire.
+- Exemple : un journal à +11 avec un cycle corrigé à 9 affiche désormais 9 dans Activités et sur le point du jour de la courbe.
+- Aucune donnée Firestore n'est supprimée ou modifiée par ce correctif.
