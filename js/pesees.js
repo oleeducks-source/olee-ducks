@@ -28,6 +28,7 @@ import {
   collection, addDoc, doc, getDocs, query, where, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName } from "./utils.js";
+import { addDocGuarded, formatDoublonMessage } from "./doublons.js";
 
 const peseesCol = collection(db, "pesees_journalieres");
 const SEMAINE_MS = 7 * 24 * 60 * 60 * 1000;
