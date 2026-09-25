@@ -10,7 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, animateCountUp, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
 import { openPeseeModal, chargerHistoriquePesees, rendreHistoriquePeseesHtml, refreshPeseesDashboard } from "./pesees.js";
-import { addDocGuarded, formatDoublonMessage } from "./doublons.js";
+import { addDocGuarded, runGuardedTransaction, formatDoublonMessage } from "./doublons.js";
 
 const ducksCol = collection(db, "ducks");
 const eclosionsCol = collection(db, "eclosions_journalieres");
@@ -858,25 +858,30 @@ function openEditModal(d) {
             return;
           }
           const delta = qteInventaire - ancienTotal;
-          const auteur = getUserName() || "Inconnu";
-          await updateDoc(cycleRef, {
-            nombre_eclos: qteInventaire,
-            corrige_par: auteur,
-            corrige_le: serverTimestamp(),
-            correction_source: "inventaire"
-          });
-          await addDoc(eclosionsCol, {
-            nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
-            cycle_id: d.issu_du_cycle_id, date: new Date(), quantite: delta,
-            motif: "correction_inventaire", par: auteur, createdAt: serverTimestamp()
-          });
-          await addDoc(nestHistoryCol, {
-            nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
-            cycle_id: d.issu_du_cycle_id, action: "correction_inventaire",
-            label: "Synchronisation nid ↔ inventaire",
-            detail: `${ancienTotal} → ${qteInventaire} caneton(s) éclos`,
-            par: auteur, createdAt: serverTimestamp()
-          });
+          await runGuardedTransaction(
+            "nest_actions",
+            { type: "correction_inventaire", cycle_id: d.issu_du_cycle_id, quantite_cible: qteInventaire },
+            "la synchronisation du nid avec l'inventaire",
+            async (tx, meta) => {
+              const freshRef = doc(db, "nest_cycles", d.issu_du_cycle_id);
+              const freshSnap = await tx.get(freshRef);
+              if (!freshSnap.exists()) throw new Error("Cycle de nid introuvable");
+              const freshTotal = Number(freshSnap.data()?.nombre_eclos) || 0;
+              if (freshTotal === qteInventaire) return;
+              tx.update(freshRef, { nombre_eclos: qteInventaire, corrige_par: meta.auteur, corrige_le: meta.now, correction_source: "inventaire" });
+              tx.set(doc(eclosionsCol), {
+                nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
+                cycle_id: d.issu_du_cycle_id, date: new Date(), quantite: qteInventaire - freshTotal,
+                motif: "correction_inventaire", par: meta.auteur, createdAt: meta.now
+              });
+              tx.set(doc(nestHistoryCol), {
+                nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null, cycle_id: d.issu_du_cycle_id, action: "correction_inventaire",
+                label: "Synchronisation nid ↔ inventaire",
+                detail: `${freshTotal} → ${qteInventaire} caneton(s) éclos`,
+                par: meta.auteur, createdAt: meta.now
+              });
+            }
+          );
           toast(`Nid synchronisé : ${qteInventaire} caneton(s) éclos ✓`);
         } catch (e) {
           console.error(e);
@@ -933,30 +938,29 @@ function openEditModal(d) {
                 const ancienTotalEclos = Number(cycleData.nombre_eclos) || 0;
                 const deltaCorrection = nouvelleQte - ancienTotalEclos;
                 if (deltaCorrection !== 0) {
-                  await updateDoc(cycleRef, {
-                    nombre_eclos: nouvelleQte,
-                    corrige_par: getUserName() || "Inconnu",
-                    corrige_le: serverTimestamp(),
-                    correction_source: "inventaire"
-                  });
-                  await addDoc(eclosionsCol, {
-                    nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
-                    cycle_id: d.issu_du_cycle_id,
-                    date: new Date(),
-                    quantite: deltaCorrection,
-                    motif: "correction_inventaire",
-                    par: getUserName() || "Inconnu",
-                    createdAt: serverTimestamp()
-                  });
-                  await addDoc(nestHistoryCol, {
-                    nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
-                    cycle_id: d.issu_du_cycle_id,
-                    action: "correction_inventaire",
-                    label: "Correction du nombre de canetons éclos",
-                    detail: `${ancienTotalEclos} → ${nouvelleQte} caneton(s)`,
-                    par: getUserName() || "Inconnu",
-                    createdAt: serverTimestamp()
-                  });
+                  await runGuardedTransaction(
+                    "nest_actions",
+                    { type: "correction_inventaire", cycle_id: d.issu_du_cycle_id, quantite_cible: nouvelleQte },
+                    "la correction du nombre de canetons éclos",
+                    async (tx, meta) => {
+                      const freshRef = doc(db, "nest_cycles", d.issu_du_cycle_id);
+                      const freshSnap = await tx.get(freshRef);
+                      if (!freshSnap.exists()) throw new Error("Cycle de nid introuvable");
+                      const freshTotal = Number(freshSnap.data()?.nombre_eclos) || 0;
+                      if (freshTotal === nouvelleQte) return;
+                      tx.update(freshRef, { nombre_eclos: nouvelleQte, corrige_par: meta.auteur, corrige_le: meta.now, correction_source: "inventaire" });
+                      tx.set(doc(eclosionsCol), {
+                        nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null, cycle_id: d.issu_du_cycle_id,
+                        date: new Date(), quantite: nouvelleQte - freshTotal, motif: "correction_inventaire",
+                        par: meta.auteur, createdAt: meta.now
+                      });
+                      tx.set(doc(nestHistoryCol), {
+                        nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null, cycle_id: d.issu_du_cycle_id,
+                        action: "correction_inventaire", label: "Correction du nombre de canetons éclos",
+                        detail: `${freshTotal} → ${nouvelleQte} caneton(s)`, par: meta.auteur, createdAt: meta.now
+                      });
+                    }
+                  );
                   toast(`Inventaire et nid synchronisés : ${nouvelleQte} caneton(s) éclos ✓`);
                 }
               }
