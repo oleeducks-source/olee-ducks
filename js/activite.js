@@ -54,7 +54,11 @@ function dedupeJournalDocs(docs, type) {
     const d = snap.data() || {};
     const date = dateFromDoc(d.date);
     const q = Number(d.quantite) || 0;
-    if (!date || q <= 0) continue;
+    // Pour les éclosions, une correction d'inventaire peut être négative
+    // (ex. +11 puis -2 = 9 réellement constatés). On conserve donc les
+    // mouvements signés pour permettre au tableau de bord de refléter le
+    // total net. Les lignes sans quantité restent ignorées.
+    if (!date || q === 0) continue;
     const key = journalKey(d, type);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push({ snap, data: d, createdAt: dateFromDoc(d.createdAt) });
@@ -83,7 +87,7 @@ function dedupeJournalDocs(docs, type) {
 function aggregate(docs, signMode = 'positive', type = 'generic') {
   const byDay = {};
   const rows = type === 'eclosion' ? dedupeJournalDocs(docs, type) :
-               type === 'ponte' ? dedupeJournalDocs(docs, type) :
+               type === 'ponte' ? dedupeJournalDocs(docs, type).filter(r => (Number(r.data.quantite) || 0) > 0) :
                docs.map(snap => ({ snap, data: snap.data() || {} }));
   for (const row of rows) {
     const d = row.data;
@@ -92,13 +96,15 @@ function aggregate(docs, signMode = 'positive', type = 'generic') {
     const key = ymd(date);
     const q = Number(d.quantite) || 0;
     if (signMode === 'positive' && q <= 0) continue;
+    if (signMode === 'net' && q === 0) continue;
     byDay[key] = (byDay[key] || 0) + q;
   }
   return byDay;
 }
 
 function sumJournal(docs, type) {
-  return dedupeJournalDocs(docs, type).reduce((sum, row) => sum + (Number(row.data.quantite) || 0), 0);
+  const rows = dedupeJournalDocs(docs, type);
+  return rows.reduce((sum, row) => sum + (Number(row.data.quantite) || 0), 0);
 }
 
 async function readRange(col, start, end) {
@@ -169,7 +175,7 @@ async function refreshTrend() {
     const start = startOfDay(new Date()); start.setDate(start.getDate()-29);
     const end = endOfDay(new Date());
     const [p,e] = await Promise.all([readRange(pontesCol,start,end),readRange(eclosionsCol,start,end)]);
-    renderChart(aggregate(p,'net','ponte'),aggregate(e,'positive','eclosion'));
+    renderChart(aggregate(p,'positive','ponte'),aggregate(e,'net','eclosion'));
   } catch(err) { console.error('Courbe activité :',err); }
 }
 
