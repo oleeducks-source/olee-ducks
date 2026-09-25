@@ -1,4 +1,12 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32614456/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32658375/PATCH-NOTES.md)
+# V29 — Correctif tâches / protections anti-doublons
+
+- Correction de l'import manquant de `addDocGuarded` dans `js/taches.js`, responsable de l'erreur `addDocGuarded is not defined` lors de l'ajout d'une tâche.
+- Correction préventive de l'import `addDocGuarded` dans `js/pesees.js`.
+- Correction préventive de l'import `runGuardedTransaction` dans `js/comptabilite.js`.
+- Cache PWA porté à `oleeducks-shell-v29`.
+- Aucune suppression ni migration de données Firestore.
+
 # V28 — Archives nids, anti-doublon 15 min et courbe interactive
 
 - Archives : regroupement par numéro de nid avec taux total + cycles détaillables.
