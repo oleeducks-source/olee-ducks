@@ -789,20 +789,42 @@ function renderDailyAverages() {
   const el = document.getElementById("dailyAverageStats");
   if (!el) return;
 
-  const ponte = calculerMoyenneParJour(pontesLog, "date", "quantite");
+  const pontesNettes = pontesLog.filter(p => toDateObj(p.date));
+  const ponte = calculerMoyenneParJour(pontesNettes, "date", "quantite");
   const eclosions = archivedCycles.filter(c => c.statut === "eclos" && c.date_fin);
   const canetons = calculerMoyenneParJour(eclosions, "date_fin", "nombre_eclos");
 
   el.innerHTML = `
     <div class="row">
-      <div class="row-main"><span class="row-title">Ponte moyenne / jour</span><span class="row-sub">${ponte.jours} jour(s) couverts, du premier au dernier relevé</span></div>
+      <div class="row-main"><span class="row-title">Ponte nette moyenne / jour</span><span class="row-sub">${ponte.jours} jour(s) couverts · corrections incluses</span></div>
       <span class="row-value">${ponte.moyenne.toFixed(1)} œuf(s)</span>
     </div>
     <div class="row">
-      <div class="row-main"><span class="row-title">Canetons éclos / jour</span><span class="row-sub">${canetons.jours} jour(s) couverts, entre la 1ère et la dernière éclosion</span></div>
+      <div class="row-main"><span class="row-title">Éclosion moyenne / jour</span><span class="row-sub">${canetons.jours} jour(s) couverts · cycles archivés</span></div>
       <span class="row-value">${canetons.moyenne.toFixed(1)} caneton(s)</span>
     </div>
   `;
+
+  const avgEl = document.getElementById("statsMoyennePonte");
+  if (avgEl) avgEl.textContent = `${ponte.moyenne.toFixed(1)} œuf/j`;
+
+  const barsEl = document.getElementById("nestStatsBars");
+  if (barsEl) {
+    const byDay = {};
+    pontesLog.forEach(p => {
+      const d = toDateObj(p.date); if (!d) return;
+      const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      byDay[k] = (byDay[k] || 0) + (Number(p.quantite) || 0);
+    });
+    const keys = Object.keys(byDay).sort().slice(-14);
+    const max = Math.max(1, ...keys.map(k => Math.max(0, byDay[k] || 0)));
+    barsEl.innerHTML = keys.length ? keys.map(k => {
+      const value = Math.max(0, byDay[k] || 0);
+      const h = Math.max(4, Math.round(value / max * 100));
+      const label = k.slice(8);
+      return `<div class="bar-wrap" title="${value} œuf(s) · ${k}"><i class="bar" style="height:${h}%"></i><span class="bar-label">${label}</span></div>`;
+    }).join('') : `<span class="subtle">Pas encore assez de données pour afficher la tendance.</span>`;
+  }
 }
 
 // ⚠️ NOUVEAU (août 2026) : historique BRUT du nombre d'œufs pondus dans
@@ -883,10 +905,11 @@ function renderStats() {
     topEl.innerHTML = `<p class="subtle">Pas encore assez de cycles archivés pour établir un classement.</p>`;
   } else {
     topEl.innerHTML = ranked.map((r, i) => `
-      <div class="row with-icon">
-        <div class="row-icon pos"><svg><use href="#ic-nest-eclos"/></svg></div>
-        <div class="row-main"><span class="row-title">#${i + 1} — Nid n° ${r.n}</span><span class="row-sub">${r.cycles} cycle(s) · ${r.eclos}/${r.oeufs} œufs éclos</span></div>
-        <span class="row-value pos">${Math.round(r.taux * 100)}%</span>
+      <div class="nest-rank-row">
+        <span class="nest-rank-pos">${i + 1}</span>
+        <div><span class="nest-rank-name">Nid n° ${escapeHtml(r.n)}</span><small class="nest-rank-meta">${r.cycles} cycle(s) · ${r.eclos}/${r.oeufs} œufs éclos</small></div>
+        <div class="nest-rank-bar"><i style="width:${Math.min(100,Math.round(r.taux*100))}%"></i></div>
+        <strong class="nest-rank-rate">${Math.round(r.taux * 100)}%</strong>
       </div>`).join("");
   }
 
@@ -895,10 +918,21 @@ function renderStats() {
   const taux = totalOeufs ? Math.round((totalEclos / totalOeufs) * 100) : 0;
   const kpiT = document.getElementById("kpiTauxEclosion");
   if (kpiT) animateCountUp("kpiTauxEclosion", taux, { suffix: "%" });
+  const totalOeufsEl = document.getElementById("statsTotalOeufs");
+  const totalEclosEl = document.getElementById("statsTotalEclos");
+  const totalCyclesEl = document.getElementById("statsTotalCycles");
+  if (totalOeufsEl) totalOeufsEl.textContent = totalOeufs.toLocaleString('fr-FR');
+  if (totalEclosEl) totalEclosEl.textContent = totalEclos.toLocaleString('fr-FR');
+  if (totalCyclesEl) totalCyclesEl.textContent = archivedCycles.length.toLocaleString('fr-FR');
   globalEl.innerHTML = `
-    <div class="row"><div class="row-main"><span class="row-title">Œufs couvés (archivés)</span></div><span class="row-value">${totalOeufs}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Canetons éclos</span></div><span class="row-value pos">${totalEclos}</span></div>
-    <div class="row"><div class="row-main"><span class="row-title">Taux d'éclosion global</span></div><span class="row-value">${taux}%</span></div>
+    <div class="nest-global-ring" style="--pct:${Math.min(100,taux)}%">
+      <div class="nest-global-ring-inner"><strong>${taux}%</strong><span>éclosion</span></div>
+    </div>
+    <div class="nest-global-breakdown">
+      <div><small>Œufs couvés</small><b>${totalOeufs.toLocaleString('fr-FR')}</b></div>
+      <div><small>Canetons éclos</small><b>${totalEclos.toLocaleString('fr-FR')}</b></div>
+      <div><small>Cycles analysés</small><b>${archivedCycles.length.toLocaleString('fr-FR')}</b></div>
+    </div>
   `;
 }
 
@@ -923,29 +957,44 @@ function openNestModal(n) {
         document.getElementById("fStart").addEventListener("click", async () => {
           const initialQte = Number(document.getElementById("fOeufs").value) || 0;
           const dateDebut = new Date(document.getElementById("fPonteDate").value);
-          if (!(await confirmerSiDoublonRecent(n, "ponte_initiale", "Démarrage de ponte"))) return;
           try {
-            const cRef = await addDoc(cyclesCol, {
-              nid_numero: n,
-              statut: "ponte",
-              date_debut: dateDebut,
-              nombre_oeufs: initialQte,
-              date_debut_couvaison: null,
-              date_fin: null,
-              nombre_eclos: null,
-              cree_par: getUserName() || "Inconnu",
-              createdAt: serverTimestamp()
-            });
-            await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "occupe", cycle_actuel_id: cRef.id });
-            await addDoc(pontesCol, {
-              nid_numero: n, cycle_id: cRef.id, date: dateDebut,
-              quantite: initialQte, motif: "ponte_initiale",
-              par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-            });
-            await logNestHistory(n, cRef.id, "ponte_initiale", "Démarrage de ponte", `${initialQte} œuf(s)`);
+            const resultat = await transactionNidAvecConfirmation(
+              { type: "ponte_initiale", nid: n, date: dateDebut, quantite: initialQte },
+              `le démarrage de ponte du nid n° ${n}`,
+              async (tx, meta) => {
+                const nestRef = doc(db, "nests", String(n));
+                const nestSnap = await tx.get(nestRef);
+                if (nestSnap.exists() && nestSnap.data()?.statut_actuel === "occupe") {
+                  throw new Error("NID_DEJA_OCCUPE");
+                }
+                const cRef = doc(cyclesCol);
+                tx.set(cRef, {
+                  nid_numero: n, statut: "ponte", date_debut: dateDebut,
+                  nombre_oeufs: initialQte, date_debut_couvaison: null,
+                  date_fin: null, nombre_eclos: null,
+                  cree_par: meta.auteur, createdAt: meta.now
+                });
+                tx.update(nestRef, { statut_actuel: "occupe", cycle_actuel_id: cRef.id });
+                tx.set(doc(pontesCol), {
+                  nid_numero: n, cycle_id: cRef.id, date: dateDebut,
+                  quantite: initialQte, motif: "ponte_initiale",
+                  par: meta.auteur, createdAt: meta.now
+                });
+                tx.set(doc(nestHistoryCol), {
+                  nid_numero: n, cycle_id: cRef.id, action: "ponte_initiale",
+                  label: "Démarrage de ponte", detail: `${initialQte} œuf(s)`,
+                  par: meta.auteur, createdAt: meta.now
+                });
+                return cRef.id;
+              }
+            );
+            if (resultat === null) return;
             toast(`Ponte démarrée — nid ${n} ✓`);
             closeModal();
-          } catch (e) { toast("Erreur : " + e.message); }
+          } catch (e) {
+            if (e.message === "NID_DEJA_OCCUPE") toast(`⚠️ Le nid ${n} est déjà occupé par un cycle en cours.`);
+            else toast(formatDoublonMessage(e) || "Erreur : " + e.message);
+          }
         });
       }
     });
