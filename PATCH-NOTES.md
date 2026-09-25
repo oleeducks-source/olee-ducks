@@ -1,4 +1,15 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/32658375/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/32659673/PATCH-NOTES.md)
+# V30 — Audit des écritures, éclosions nettes et refonte Statistiques des nids
+
+- **Activité du jour / courbe :** les corrections négatives d'éclosion provenant d'une correction d'inventaire sont désormais intégrées au calcul net. Exemple : `+11` puis `-2` affiche correctement **9 canetons** au lieu de 11.
+- **Tâches automatiques :** le rappel hebdomadaire de sauvegarde passe lui aussi par le moteur anti-doublon.
+- **Comptabilité :** la contre-passation est désormais atomique et protégée contre un double clic / une double validation.
+- **Nids :** le démarrage d'une ponte est désormais atomique : cycle, occupation du nid, journal de ponte et historique sont écrits ensemble ; un nid déjà occupé ne peut pas être réinitialisé accidentellement par une seconde saisie.
+- **Inventaire ↔ Nids :** les corrections de quantité des lots issus d'un nid sont désormais atomiques et protégées contre les doubles synchronisations.
+- **Statistiques des nids :** refonte complète de la présentation avec hero de synthèse, KPI, taux global circulaire, classement visuel des nids et tendance de ponte plus lisible.
+- **PWA :** cache porté à `oleeducks-shell-v30`.
+- **Données :** aucune suppression de données métier, aucune migration destructive.
+
 # V29 — Correctif tâches / protections anti-doublons
 
 - Correction de l'import manquant de `addDocGuarded` dans `js/taches.js`, responsable de l'erreur `addDocGuarded is not defined` lors de l'ajout d'une tâche.
