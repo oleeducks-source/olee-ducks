@@ -6,7 +6,7 @@
 // Lecture seule : aucune écriture Firestore.
 // =====================================================================
 import { db } from "./firebase-config.js";
-import { collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { collection, query, where, getDocs, getDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const pontesCol = collection(db, "pontes_journalieres");
 const eclosionsCol = collection(db, "eclosions_journalieres");
@@ -170,12 +170,67 @@ function renderChart(eggMap, hatchMap, days = 30) {
   el.querySelector('.chart-interactive')?.addEventListener('click', e => { if (!e.target.closest('.chart-hit,.chart-dot')) hidePoint(); });
 }
 
+async function reconciledHatchTotalForDay(journalDocs, dayStart, dayEnd) {
+  // Le journal est la trace des mouvements, mais le cycle du nid est la
+  // valeur métier de référence pour le total réellement constaté. Cela
+  // permet de corriger l'affichage lorsqu'une correction d'inventaire a
+  // ramené, par exemple, un cycle de 11 à 9 sans avoir créé un mouvement
+  // négatif dans eclosions_journalieres.
+  let total = sumJournal(journalDocs, 'eclosion');
+  const cycleIds = [...new Set(journalDocs.map(s => s.data()?.cycle_id).filter(Boolean))];
+  if (!cycleIds.length) return total;
+
+  for (const cycleId of cycleIds) {
+    try {
+      const cycleSnap = await getDoc(doc(cyclesCol, cycleId));
+      if (!cycleSnap.exists()) continue;
+      const cycle = cycleSnap.data() || {};
+      const cycleTotal = Number(cycle.nombre_eclos);
+      if (!Number.isFinite(cycleTotal)) continue;
+
+      const allCycleDocs = await getDocs(query(eclosionsCol, where('cycle_id', '==', cycleId)));
+      const journalCycleTotal = sumJournal(allCycleDocs.docs, 'eclosion');
+      const todayCycleRows = dedupeJournalDocs(journalDocs.filter(s => s.data()?.cycle_id === cycleId), 'eclosion');
+      const todayCycleTotal = todayCycleRows.reduce((sum, row) => sum + (Number(row.data.quantite) || 0), 0);
+
+      // S'il existe un écart entre le cumul du cycle et son journal, on
+      // considère la correction comme portant sur le dernier relevé,
+      // donc sur aujourd'hui lorsque ce cycle possède un relevé aujourd'hui.
+      const dernier = cycle.dernier_releve_eclosion || null;
+      const dernierDate = dateFromDoc(dernier?.date);
+      const dernierEstAujourdHui = dernierDate && dernierDate >= dayStart && dernierDate < dayEnd;
+      if (dernierEstAujourdHui && journalCycleTotal !== cycleTotal) {
+        total += (cycleTotal - journalCycleTotal);
+      }
+    } catch (e) {
+      console.warn('Réconciliation éclosion du cycle', cycleId, e);
+    }
+  }
+  return Math.max(0, total);
+}
+
+async function reconciledHatchMap(journalDocs, start, end) {
+  const map = aggregate(journalDocs, 'net', 'eclosion');
+  const today = startOfDay(new Date());
+  const todayEnd = endOfDay(today);
+  // La réconciliation métier est surtout nécessaire sur le jour courant :
+  // c'est celui qui doit toujours correspondre au nombre affiché dans le nid
+  // et dans l'archive après une correction.
+  if (today >= start && today < end) {
+    map[ymd(today)] = await reconciledHatchTotalForDay(
+      journalDocs.filter(s => { const d = dateFromDoc(s.data()?.date); return d && d >= today && d < todayEnd; }),
+      today, todayEnd
+    );
+  }
+  return map;
+}
+
 async function refreshTrend() {
   try {
     const start = startOfDay(new Date()); start.setDate(start.getDate()-29);
     const end = endOfDay(new Date());
     const [p,e] = await Promise.all([readRange(pontesCol,start,end),readRange(eclosionsCol,start,end)]);
-    renderChart(aggregate(p,'positive','ponte'),aggregate(e,'net','eclosion'));
+    renderChart(aggregate(p,'positive','ponte'), await reconciledHatchMap(e,start,end));
   } catch(err) { console.error('Courbe activité :',err); }
 }
 
@@ -184,7 +239,7 @@ async function refreshToday() {
     const start=startOfDay(new Date()), end=endOfDay(new Date());
     const [p,e]=await Promise.all([readRange(pontesCol,start,end),readRange(eclosionsCol,start,end)]);
     const eggs=sumJournal(p,'ponte');
-    const hatch=sumJournal(e,'eclosion');
+    const hatch=await reconciledHatchTotalForDay(e,start,end);
     renderBanner({eggs,hatchlings:hatch});
   } catch(err) { console.error('Bannière activité :',err); }
 }
