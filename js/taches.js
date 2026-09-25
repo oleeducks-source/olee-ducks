@@ -207,15 +207,20 @@ async function verifierRappelSauvegardeMensuelle() {
     const existanteSnap = await getDocs(query(tachesCol, where("categorie", "==", "sauvegarde"), where("statut", "==", "a_faire")));
     if (!existanteSnap.empty) return; // rappel déjà en attente, pas de doublon
 
-    await addDoc(tachesCol, {
-      titre: "Sauvegarder les données de la ferme",
-      categorie: "sauvegarde",
-      date_echeance: prochainSamedi,
-      notes: "Rappel automatique hebdomadaire (samedi 12h) — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
-      statut: "a_faire",
-      cree_par: "Système (auto)",
-      createdAt: serverTimestamp()
-    });
+    await addDocGuarded("taches",
+      { titre: "Sauvegarder les données de la ferme", categorie: "sauvegarde", cycle_samedi: debutCycle },
+      {
+        titre: "Sauvegarder les données de la ferme",
+        categorie: "sauvegarde",
+        date_echeance: prochainSamedi,
+        notes: "Rappel automatique hebdomadaire (samedi 12h) — utilisez le bouton 💾 Sauvegarde sur le tableau de bord.",
+        statut: "a_faire",
+        cree_par: "Système (auto)",
+        createdAt: serverTimestamp()
+      },
+      "ce rappel automatique de sauvegarde",
+      { force: false }
+    );
   } catch (e) {
     console.error("Erreur vérification rappel sauvegarde :", e);
   }
