@@ -939,6 +939,73 @@ function renderStats() {
 // ---------------------------------------------------------------------
 // Modal de détail / actions sur un nid
 // ---------------------------------------------------------------------
+function getPonteEntriesForCycle(cycleId) {
+  return pontesLog
+    .filter(p => p.cycle_id === cycleId && (Number(p.quantite) || 0) > 0)
+    .sort((a, b) => toDateObj(a.date).getTime() - toDateObj(b.date).getTime());
+}
+
+// Affiche la mémoire de ponte du cycle : toutes les dates auxquelles des œufs
+// ont été ajoutés/relevés, avec la quantité ajoutée ce jour-là. Les corrections
+// négatives ne sont pas mélangées à ces relevés : elles restent visibles dans
+// l'historique du nid. Cela permet de savoir immédiatement quand le dernier
+// relevé positif a été effectué, même lorsque plusieurs jours se sont écoulés.
+function renderPonteDates(cycle) {
+  const zone = document.getElementById("fPonteDates");
+  if (!zone) return;
+  const entries = getPonteEntriesForCycle(cycle.id);
+  if (!entries.length) {
+    zone.innerHTML = `<div class="ponte-memory-empty">Aucun relevé d'œufs enregistré pour ce cycle.</div>`;
+    return;
+  }
+
+  const byDay = new Map();
+  entries.forEach(p => {
+    const d = toDateObj(p.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const current = byDay.get(key) || { date: d, quantite: 0, mouvements: 0, par: [] };
+    current.quantite += Number(p.quantite) || 0;
+    current.mouvements += 1;
+    if (p.par && !current.par.includes(p.par)) current.par.push(p.par);
+    byDay.set(key, current);
+  });
+
+  const days = [...byDay.values()].sort((a,b) => b.date - a.date);
+  const dernier = days[0];
+  const totalAjouts = entries.reduce((s,p) => s + (Number(p.quantite)||0), 0);
+  const anciennete = Math.max(0, Math.floor((Date.now() - dernier.date.getTime()) / 86400000));
+  const ageText = anciennete === 0 ? "aujourd'hui" : anciennete === 1 ? "il y a 1 jour" : `il y a ${anciennete} jours`;
+
+  zone.innerHTML = `
+    <div class="ponte-memory">
+      <div class="ponte-memory-head">
+        <div>
+          <span class="eyebrow">Mémoire de ponte</span>
+          <strong>Dernier relevé : ${formatDate(dernier.date)}</strong>
+        </div>
+        <span class="ponte-memory-age">${ageText}</span>
+      </div>
+      <div class="ponte-memory-summary">
+        <span>🥚 ${totalAjouts} œuf(s) ajoutés</span>
+        <span>·</span>
+        <span>${days.length} date(s) de relevé</span>
+      </div>
+      <details class="ponte-memory-details">
+        <summary>Voir les dates des relevés <span>(${days.length})</span></summary>
+        <div class="ponte-memory-list">
+          ${days.map((x, i) => `
+            <div class="ponte-memory-row ${i === 0 ? 'latest' : ''}">
+              <div class="ponte-memory-date"><span class="ponte-memory-dot"></span><b>${formatDate(x.date)}</b>${i === 0 ? '<em>Dernier</em>' : ''}</div>
+              <div class="ponte-memory-qty">+${x.quantite} œuf(s)</div>
+              <div class="ponte-memory-by">${x.par.length ? escapeHtml(x.par.join(', ')) : '—'}${x.mouvements > 1 ? ` · ${x.mouvements} relevés` : ''}</div>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
 function openNestModal(n) {
   const cycle = cycleForNest(n);
 
@@ -1009,6 +1076,7 @@ function openNestModal(n) {
   openModal(`Nid n° ${n}`, `
     <div class="row"><div class="row-main"><span class="row-title">Statut</span></div><span class="tag ${cycle.statut === 'couvaison' ? (cycle.nombre_eclos ? 'ok' : 'warn') : 'ok'}">${cycle.statut === 'couvaison' ? (cycle.nombre_eclos ? 'Éclosion en cours' : 'Couvaison') : 'Ponte en cours'}</span></div>
     <div class="row"><div class="row-main"><span class="row-title">Œufs enregistrés</span></div><span class="row-value">${cycle.nombre_oeufs || 0}</span></div>
+    <div id="fPonteDates"></div>
     <div class="row"><div class="row-main"><span class="row-title">Début du cycle</span></div><span class="row-value">${formatDate(cycle.date_debut)}</span></div>
     ${cycle.cree_par ? `<div class="row"><div class="row-main"><span class="row-title">Démarré par</span></div><span class="row-value">${escapeHtml(cycle.cree_par)}</span></div>` : ""}
     ${cycle.statut === "couvaison" ? `
@@ -1074,6 +1142,7 @@ function openNestModal(n) {
   `, {
     onMount: () => {
       renderNestHistory(n);
+      renderPonteDates(cycle);
       if (cycle.statut === "couvaison") {
         MIRAGE_STEPS.forEach(step => {
           const doneBtn = document.getElementById(`fMirageDone_${step.jour}`);
