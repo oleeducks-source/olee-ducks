@@ -821,3 +821,28 @@ select.filter-select:focus{border-color:var(--pond-400);}
 @media(max-width:760px){.nest-stats-hero{padding:17px;border-radius:17px}.nest-stats-hero-copy h2{font-size:21px}.nest-stats-hero-badge{width:76px;height:76px;min-width:76px}.nest-stats-hero-badge strong{font-size:19px}.nest-stats-hero-badge span{top:9px;font-size:12px}.nest-stats-hero-badge small{font-size:7px}.nest-stats-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.nest-stats-main-grid{grid-template-columns:1fr}.nest-stats-panel{padding:14px!important}.nest-stats-average{grid-template-columns:1fr}.nest-rank-row{grid-template-columns:27px minmax(0,1fr) 58px 45px}.nest-history-filters{gap:8px}}
 .nest-global-ring{width:128px;height:128px;border-radius:50%;margin:4px auto 15px;display:grid;place-items:center;background:conic-gradient(#1b8a5a var(--pct),#e9f0ec 0);position:relative}.nest-global-ring::after{content:"";position:absolute;inset:10px;border-radius:50%;background:#fff}.nest-global-ring-inner{position:relative;z-index:1;text-align:center}.nest-global-ring-inner strong{display:block;font-size:24px;color:#0b4a30}.nest-global-ring-inner span{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#82918b;font-weight:800}.nest-global-breakdown{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.nest-global-breakdown>div{padding:9px;border-radius:11px;background:#f7faf8;text-align:center}.nest-global-breakdown small{display:block;font-size:8px;color:#82918b}.nest-global-breakdown b{display:block;font-size:13px;color:#164c35;margin-top:3px}
 @media(max-width:760px){.nest-global-breakdown{grid-template-columns:1fr 1fr 1fr}.nest-global-ring{width:112px;height:112px}}
+
+
+/* Mémoire de ponte — dates des relevés du cycle courant */
+.ponte-memory{margin:7px 0 10px;padding:9px 10px;border:1px solid var(--line);border-radius:11px;background:linear-gradient(180deg,var(--sage-50),#fff);}
+.ponte-memory-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.ponte-memory-head>div{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ponte-memory-head .eyebrow{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--pond-600);font-weight:800;}
+.ponte-memory-head strong{font-size:12px;color:var(--ink-900);}
+.ponte-memory-age{flex:none;padding:4px 7px;border-radius:999px;background:#fff;border:1px solid var(--line);font-size:9.5px;color:var(--ink-600);}
+.ponte-memory-summary{display:flex;gap:5px;align-items:center;margin-top:5px;font-size:10px;color:var(--ink-600);}
+.ponte-memory-details{margin-top:7px;border-top:1px solid var(--line-soft);padding-top:6px;}
+.ponte-memory-details summary{cursor:pointer;list-style:none;font-size:10.5px;font-weight:800;color:var(--pond-700);display:flex;justify-content:space-between;align-items:center;}
+.ponte-memory-details summary::-webkit-details-marker{display:none;}
+.ponte-memory-list{margin-top:5px;max-height:190px;overflow:auto;padding-right:2px;}
+.ponte-memory-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;padding:6px 4px;border-bottom:1px dashed var(--line-soft);font-size:10px;}
+.ponte-memory-row:last-child{border-bottom:0;}
+.ponte-memory-row.latest{background:rgba(231,245,236,.55);border-radius:7px;}
+.ponte-memory-date{display:flex;align-items:center;gap:5px;min-width:0;}
+.ponte-memory-date b{font-size:10.5px;}
+.ponte-memory-date em{font-style:normal;font-size:8.5px;padding:2px 5px;border-radius:999px;background:var(--pond-100);color:var(--pond-700);font-weight:800;}
+.ponte-memory-dot{width:6px;height:6px;border-radius:50%;background:var(--pond-600);flex:none;}
+.ponte-memory-qty{font-weight:800;color:var(--ink-800);white-space:nowrap;}
+.ponte-memory-by{grid-column:1/-1;color:var(--ink-500);font-size:9px;padding-left:11px;}
+.ponte-memory-empty{margin:7px 0 10px;padding:8px 10px;border-radius:9px;background:var(--sage-50);font-size:10px;color:var(--ink-500);}
+@media (max-width:520px){.ponte-memory{padding:8px}.ponte-memory-head strong{font-size:11.5px}.ponte-memory-list{max-height:165px}}
