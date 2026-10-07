@@ -447,8 +447,8 @@ function renderList() {
       ${selectionMode ? `<input type="checkbox" class="row-select-checkbox" data-id="${d.id}" ${checked}>` : ""}
       <div class="row-icon" style="color:${bagueColorVar}"><svg><use href="#${TYPE_ICONS[d.type] || 'ic-duck-canard'}"/></svg></div>
       <div class="row-main">
-        <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}${d.lot ? `<span class="lot-chip">🏷️ ${escapeHtml(d.lot)}</span>` : ""}</span>
-        <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · ${dateLabel}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
+        <span class="row-title">${TYPE_LABELS[d.type] || d.type} ${d.quantite > 1 ? `× ${d.quantite}` : ""}${d.lot ? `<span class="lot-chip">🏷️ ${escapeHtml(d.lot)}</span>` : ""}${d.eclosion_vague_id ? `<span class="lot-chip lot-chip-hatch">🐣 Vague</span>` : ""}</span>
+        <span class="row-sub">${d.numero_bague ? "N° " + escapeHtml(d.numero_bague) + " · " : ""}${d.bague_couleur ? "Bague " + BAGUE_LABELS[d.bague_couleur] : "Sans bague"} · ${dateLabel}${d.issu_du_nid ? " · Nid " + escapeHtml(d.issu_du_nid) : ""}${d.cree_par ? " · par " + escapeHtml(d.cree_par) : ""}</span>
       </div>
       <span class="tag ${d.statut === 'actif' ? 'ok' : d.statut === 'mort' ? 'danger' : 'warn'}">${STATUT_LABELS[d.statut] || d.statut}</span>
     </div>
@@ -722,6 +722,7 @@ function openEditModal(d) {
       </select>
     </div>
     <div class="field"><label>Date de naissance exacte (optionnel — prioritaire sur la date d'entrée pour le calcul d'âge)</label><input type="date" id="eDuckDateNaissance" value="${d.date_naissance ? formatInputDate(d.date_naissance) : ""}"></div>
+    ${Array.isArray(d.historique_eclosions) && d.historique_eclosions.length ? `<div class="card hatch-history-card"><div class="eyebrow">Historique des vagues</div><h3 style="font-size:14px;margin:2px 0 8px;">🐣 Éclosions regroupées dans ce lot</h3>${d.historique_eclosions.slice().reverse().map(v => `<div class="row"><div class="row-main"><span class="row-title">+${Number(v.quantite)||0} caneton(s)</span><span class="row-sub">${formatDate(v.date)}${v.par ? " · " + escapeHtml(v.par) : ""}</span></div></div>`).join("")}</div>` : ""}
     <div class="field"><label>Lot (optionnel — ex. "Abri A")</label><input type="text" id="eDuckLot" list="eDuckLotSuggestions" value="${escapeHtml(d.lot || "")}" placeholder="Non affecté à un lot">
       <datalist id="eDuckLotSuggestions">${Array.from(new Set(allDucks.map(x => x.lot).filter(Boolean))).sort().map(l => `<option value="${escapeHtml(l)}"></option>`).join("")}</datalist>
     </div>
@@ -866,18 +867,21 @@ function openEditModal(d) {
               const freshRef = doc(db, "nest_cycles", d.issu_du_cycle_id);
               const freshSnap = await tx.get(freshRef);
               if (!freshSnap.exists()) throw new Error("Cycle de nid introuvable");
-              const freshTotal = Number(freshSnap.data()?.nombre_eclos) || 0;
-              if (freshTotal === qteInventaire) return;
-              tx.update(freshRef, { nombre_eclos: qteInventaire, corrige_par: meta.auteur, corrige_le: meta.now, correction_source: "inventaire" });
+              const freshTotalCycle = Number(freshSnap.data()?.nombre_eclos) || 0;
+              const ancienLot = Number(d.quantite) || 0;
+              const deltaLot = qteInventaire - ancienLot;
+              if (deltaLot === 0) return;
+              const nouveauTotalCycle = Math.max(0, freshTotalCycle + deltaLot);
+              tx.update(freshRef, { nombre_eclos: nouveauTotalCycle, corrige_par: meta.auteur, corrige_le: meta.now, correction_source: "inventaire_lot" });
               tx.set(doc(eclosionsCol), {
                 nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null,
-                cycle_id: d.issu_du_cycle_id, date: new Date(), quantite: qteInventaire - freshTotal,
-                motif: "correction_inventaire", par: meta.auteur, createdAt: meta.now
+                cycle_id: d.issu_du_cycle_id, date: new Date(), quantite: deltaLot,
+                motif: "correction_inventaire_lot", lot_id: d.id, par: meta.auteur, createdAt: meta.now
               });
               tx.set(doc(nestHistoryCol), {
                 nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null, cycle_id: d.issu_du_cycle_id, action: "correction_inventaire",
-                label: "Synchronisation nid ↔ inventaire",
-                detail: `${freshTotal} → ${qteInventaire} caneton(s) éclos`,
+                label: "Correction d'un lot d'éclosion",
+                detail: `Lot ${ancienLot} → ${qteInventaire} · cycle ${freshTotalCycle} → ${nouveauTotalCycle} caneton(s)`,
                 par: meta.auteur, createdAt: meta.now
               });
             }
@@ -936,8 +940,8 @@ function openEditModal(d) {
               if (cycleSnap.exists()) {
                 const cycleData = cycleSnap.data();
                 const ancienTotalEclos = Number(cycleData.nombre_eclos) || 0;
-                const deltaCorrection = nouvelleQte - ancienTotalEclos;
-                if (deltaCorrection !== 0) {
+                const deltaLotPourControle = nouvelleQte - ancienneQte;
+                if (deltaLotPourControle !== 0) {
                   await runGuardedTransaction(
                     "nest_actions",
                     { type: "correction_inventaire", cycle_id: d.issu_du_cycle_id, quantite_cible: nouvelleQte },
@@ -946,18 +950,20 @@ function openEditModal(d) {
                       const freshRef = doc(db, "nest_cycles", d.issu_du_cycle_id);
                       const freshSnap = await tx.get(freshRef);
                       if (!freshSnap.exists()) throw new Error("Cycle de nid introuvable");
-                      const freshTotal = Number(freshSnap.data()?.nombre_eclos) || 0;
-                      if (freshTotal === nouvelleQte) return;
-                      tx.update(freshRef, { nombre_eclos: nouvelleQte, corrige_par: meta.auteur, corrige_le: meta.now, correction_source: "inventaire" });
+                      const freshTotalCycle = Number(freshSnap.data()?.nombre_eclos) || 0;
+                      const deltaLot = nouvelleQte - ancienneQte;
+                      if (deltaLot === 0) return;
+                      const nouveauTotalCycle = Math.max(0, freshTotalCycle + deltaLot);
+                      tx.update(freshRef, { nombre_eclos: nouveauTotalCycle, corrige_par: meta.auteur, corrige_le: meta.now, correction_source: "inventaire_lot" });
                       tx.set(doc(eclosionsCol), {
                         nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null, cycle_id: d.issu_du_cycle_id,
-                        date: new Date(), quantite: nouvelleQte - freshTotal, motif: "correction_inventaire",
+                        date: new Date(), quantite: deltaLot, motif: "correction_inventaire_lot", lot_id: d.id,
                         par: meta.auteur, createdAt: meta.now
                       });
                       tx.set(doc(nestHistoryCol), {
                         nid_numero: d.issu_du_nid ?? cycleData.nid_numero ?? null, cycle_id: d.issu_du_cycle_id,
-                        action: "correction_inventaire", label: "Correction du nombre de canetons éclos",
-                        detail: `${freshTotal} → ${nouvelleQte} caneton(s)`, par: meta.auteur, createdAt: meta.now
+                        action: "correction_inventaire", label: "Correction d'un lot d'éclosion",
+                        detail: `Lot ${ancienneQte} → ${nouvelleQte} · cycle ${freshTotalCycle} → ${nouveauTotalCycle} caneton(s)`, par: meta.auteur, createdAt: meta.now
                       });
                     }
                   );
