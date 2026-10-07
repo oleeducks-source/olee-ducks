@@ -1,4 +1,4 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/33159595/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/33159766/PATCH-NOTES.md)
 # Olee Ducks V34 — correctif responsive / débordement horizontal
 
 - Correction globale des débordements horizontaux sur petits écrans.
