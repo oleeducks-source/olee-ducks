@@ -80,7 +80,19 @@ body{
   overscroll-behavior:none;
 }
 button{font-family:inherit;}
-input,select,textarea{font-family:inherit; font-size:16px;}
+input,select,textarea{font-family:inherit; font-size:16px; max-width:100%; min-width:0;}
+/* Garde-fou responsive : aucun contrôle ne doit imposer une largeur
+   supérieure à la zone d'affichage, notamment les <select> mobiles dont
+   les options longues peuvent sinon agrandir leur largeur intrinsèque. */
+#app, .modal, .card, .section, .field, .field-row, .filters-row,
+.eclosion-lot-choice, .eclosion-lot-choice > div, .row, .row-main,
+.nest-stats-panel, .nest-stats-main-grid, .nest-stats-hero {
+  min-width:0;
+  max-width:100%;
+}
+img,svg,video,canvas{max-width:100%;}
+select{min-width:0; max-width:100%;}
+textarea{overflow:auto; overflow-wrap:anywhere;}
 a{color:inherit;}
 :focus-visible{outline:3px solid var(--yolk-500); outline-offset:2px;}
 
@@ -314,8 +326,9 @@ h1,h2,h3{font-family:var(--font-display); color:var(--pond-950); margin:0 0 4px;
   transition:border-color .15s ease, background .15s ease;
 }
 .field input:focus, .field select:focus, .field textarea:focus{border-color:var(--pond-400); background:var(--white);}
-.field-row{display:flex; gap:10px;}
-.field-row .field{flex:1;}
+.field-row{display:flex; gap:10px; min-width:0;}
+.field-row .field{flex:1 1 0; min-width:0;}
+@media (max-width:420px){.field-row{flex-wrap:wrap;} .field-row .field{flex:1 1 100%;}}
 
 /* ---------- Filtres fusionnés (ligne compacte : type + statut) ---------- */
 .filters-row{display:flex; gap:8px; flex-wrap:wrap;}
@@ -862,13 +875,14 @@ select.filter-select:focus{border-color:var(--pond-400);}
 .eclosion-lot-choice-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:7px; }
 .eclosion-lot-choice-head b { display:block; font-size:13px; line-height:1.25; }
 .eclosion-lot-reco { flex:0 0 auto; font-size:11px; font-weight:700; padding:5px 8px; border-radius:999px; background:var(--sage-100, #e8f4ec); color:var(--pond-800, #075b35); }
-.eclosion-lot-choice select { width:100%; min-height:42px; }
+.eclosion-lot-choice select { width:100%; max-width:100%; min-width:0; min-height:42px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .eclosion-lot-help { display:block; margin-top:6px; line-height:1.35; }
 .lot-chip-hatch { background:var(--sage-100, #e8f4ec); color:var(--pond-800, #075b35); }
 .hatch-history-card { margin:6px 0 12px; background:var(--sage-50, #f6faf7); border:none; }
 .hatch-history-card .row { padding:7px 0; border-bottom:1px solid rgba(0,0,0,.06); }
 .hatch-history-card .row:last-child { border-bottom:0; }
 @media (max-width: 520px) {
+  .modal{padding-left:14px; padding-right:14px;}
   .eclosion-lot-choice-head { flex-direction:column; gap:6px; }
   .eclosion-lot-reco { align-self:flex-start; }
 }
