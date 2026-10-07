@@ -1,4 +1,16 @@
-[PATCH-NOTES.md](https://github.com/user-attachments/files/33110989/PATCH-NOTES.md)
+[PATCH-NOTES.md](https://github.com/user-attachments/files/33158232/PATCH-NOTES.md)
+# V33 — Lots d'éclosion par vague
+
+- Un même nid/cycle peut désormais produire plusieurs lots d'inventaire distincts, un par vague d'éclosion.
+- Lors d'un nouveau relevé d'éclosion, l'utilisateur choisit **Nouveau lot** ou **Regrouper avec un lot existant**. L'écart en jours est affiché pour aider à décider.
+- Chaque lot conserve sa propre `date_naissance`, sa quantité et un historique des vagues lorsqu'il est regroupé.
+- Les lots issus du même cycle restent reliés à `issu_du_cycle_id`; `nest_cycles.nombre_eclos` reste le total agrégé du cycle.
+- Les corrections de quantité dans Inventaire ajustent désormais le total du cycle par **delta du lot**, au lieu de remplacer le total du cycle par la quantité du lot. Cela évite de casser les autres lots du même nid.
+- L'archive du nid n'écrase plus la date de naissance des nouveaux lots avec la date de clôture.
+- Le rattrapage des anciens cycles vérifie désormais la somme des lots liés avant de proposer un ajout, afin d'éviter un doublon.
+- L'inventaire affiche les lots issus d'une vague et leur historique de vagues lorsqu'ils ont été regroupés.
+- Cache PWA : V33.
+- Aucune suppression de collection ni migration destructive.
 # V30 — Audit des écritures, éclosions nettes et refonte Statistiques des nids
 
 - **Activité du jour / courbe :** les corrections négatives d'éclosion provenant d'une correction d'inventaire sont désormais intégrées au calcul net. Exemple : `+11` puis `-2` affiche correctement **9 canetons** au lieu de 11.
