@@ -38,15 +38,71 @@ const DUREE_INCUBATION_JOURS = 36; // canard de Barbarie (muscovy) — 35 à 37 
 
 let premierChargementCycles = true;
 
-// Un cycle de nid produit AU PLUS un seul lot de canetons dans
-// l'inventaire — identifié par un ID dérivé du cycle lui-même. Toutes les
-// vagues d'éclosion successives (relevés partiels + archivage final)
-// s'accumulent dans CE MÊME document via `increment`, plutôt que de créer
-// un nouveau lot à chaque relevé. Cela permet de récupérer / mettre à
-// jour ce lot de façon fiable, sans requête, depuis n'importe quel point
-// du code (relevé partiel, archivage, rattrapage manuel).
+// Compatibilité avec les anciens cycles : avant V33, toutes les vagues
+// d'un même cycle étaient fusionnées dans un seul document. On conserve
+// cette référence pour lire/corriger ces anciens lots sans les casser.
 function cycleDuckDocRef(cycle) {
   return doc(db, "ducks", `eclosion_${cycle.id}`);
+}
+
+// Nouveau modèle : chaque vague d'éclosion peut devenir son propre lot.
+// L'ID de l'événement d'éclosion garantit qu'une seconde vague le même
+// jour peut elle aussi rester distincte si l'éleveur le souhaite.
+function eclosionLotDocRef(cycle, eventId) {
+  return doc(db, "ducks", `eclosion_${cycle.id}_${eventId}`);
+}
+
+function formatInputDateLocal(d) {
+  const x = d?.toDate ? d.toDate() : new Date(d);
+  if (isNaN(x.getTime())) return "";
+  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
+}
+
+async function getEclosionLotsForCycle(cycleId) {
+  const snap = await getDocs(query(ducksCol, where("issu_du_cycle_id", "==", cycleId)));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .filter(d => d.type === "caneton" && d.statut === "actif" && Number(d.quantite) > 0);
+}
+
+function eclosionLotLabel(lot, dateReleve) {
+  const base = lot.date_naissance ? new Date(lot.date_naissance?.toDate ? lot.date_naissance.toDate() : lot.date_naissance) : null;
+  const current = dateReleve ? new Date(dateReleve) : new Date();
+  const gap = base && !isNaN(base) ? Math.round(Math.abs(startOfDayMs(current) - startOfDayMs(base)) / 86400000) : null;
+  return `${lot.lot ? escapeHtml(lot.lot) + " · " : ""}${lot.quantite || 0} caneton(s) · né(s) le ${base && !isNaN(base) ? formatDate(base) : "date inconnue"}${gap !== null ? ` · écart ${gap} j` : ""}`;
+}
+
+function startOfDayMs(d) { const x = new Date(d); x.setHours(0,0,0,0); return x.getTime(); }
+
+async function renderEclosionLotChoices(cycle, n) {
+  const zone = document.getElementById("fEclosionLotChoice");
+  if (!zone) return;
+  try {
+    const dateVal = document.getElementById("fEclosDate")?.value;
+    const dateReleve = dateVal ? new Date(dateVal) : new Date();
+    const lots = await getEclosionLotsForCycle(cycle.id);
+    if (!lots.length) {
+      zone.innerHTML = `<div class="eclosion-lot-choice empty"><span>🪺</span><div><b>Nouveau lot</b><small>Première vague enregistrée pour ce cycle.</small></div></div>`;
+      return;
+    }
+    const sorted = lots.slice().sort((a,b) => startOfDayMs(a.date_naissance || 0) - startOfDayMs(b.date_naissance || 0));
+    const nearest = sorted.reduce((best, lot) => {
+      if (!best) return lot;
+      const gap = Math.abs(startOfDayMs(dateReleve) - startOfDayMs(lot.date_naissance || 0));
+      const bestGap = Math.abs(startOfDayMs(dateReleve) - startOfDayMs(best.date_naissance || 0));
+      return gap < bestGap ? lot : best;
+    }, null);
+    const nearestGap = nearest?.date_naissance ? Math.round(Math.abs(startOfDayMs(dateReleve)-startOfDayMs(nearest.date_naissance))/86400000) : 999;
+    zone.innerHTML = `
+      <div class="eclosion-lot-choice-head"><div><span class="eyebrow">Gestion du lot</span><b>Cette vague doit-elle rejoindre un lot existant ?</b></div><span class="eclosion-lot-reco">${nearestGap <= 1 ? "Regroupement possible" : nearestGap <= 3 ? "Choix à confirmer" : "Nouveau lot conseillé"}</span></div>
+      <select id="fEclosionLotMode" aria-label="Choix du lot d'éclosion">
+        <option value="new">🆕 Créer un nouveau lot — conserver son âge propre</option>
+        ${sorted.map(lot => `<option value="merge:${escapeHtml(lot.id)}">🔗 Regrouper avec : ${eclosionLotLabel(lot, dateReleve)}</option>`).join("")}
+      </select>
+      <small class="subtle eclosion-lot-help">Un écart important peut créer des âges différents. Si vous regroupez malgré tout, l'historique des vagues et leurs dates sera conservé.</small>`;
+  } catch (e) {
+    console.error("Erreur choix des lots d'éclosion :", e);
+    zone.innerHTML = `<div class="subtle">Gestion des lots indisponible hors connexion. Le système créera un nouveau lot si vous enregistrez.</div>`;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -98,20 +154,21 @@ const DELAI_DOUBLON_MS = DELAI_GLOBAL_DOUBLON_MS;
 // pouvaient lire l'historique en même temps, puis écrire chacun +15.
 // Ici, Firestore verrouille le cycle pendant la transaction : le premier
 // téléphone gagne, le second relit la version fraîche et est bloqué.
-async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, force = false) {
+async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, force = false, lotTargetId = null) {
   const auteur = getUserName() || "Inconnu";
   const signature = `${dateReleveInput || ""}|${q}`;
   const bucket = Math.floor(Date.now() / DELAI_DOUBLON_MS);
   const eventRef = doc(eclosionsCol);
   const cRef = doc(db, "nest_cycles", cycle.id);
-  const duckRef = cycleDuckDocRef(cycle);
   const historyRef = doc(nestHistoryCol);
   const maintenant = Timestamp.now();
+  const newLotRef = eclosionLotDocRef(cycle, eventRef.id);
+  const targetLotRef = lotTargetId ? doc(db, "ducks", lotTargetId) : newLotRef;
 
   await runTransaction(db, async (tx) => {
     const cSnap = await tx.get(cRef);
     const eventSnap = await tx.get(eventRef);
-    const duckSnap = await tx.get(duckRef);
+    const duckSnap = await tx.get(targetLotRef);
     if (!cSnap.exists()) throw new Error("CYCLE_INEXISTANT");
 
     const fresh = cSnap.data();
@@ -142,23 +199,34 @@ async function enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveIn
     tx.set(eventRef, {
       nid_numero: n, cycle_id: cycle.id, date: dateReleve, quantite: q,
       par: auteur, createdAt: maintenant,
-      dedup_signature: signature, dedup_bucket: bucket
+      dedup_signature: signature, dedup_bucket: bucket,
+      lot_mode: lotTargetId ? "merge" : "new", lot_id: lotTargetId || newLotRef.id
     });
 
-    if (duckSnap.exists()) {
-      tx.update(duckRef, {
+    if (lotTargetId) {
+      if (!duckSnap.exists()) throw new Error("LOT_ECLOSION_INEXISTANT");
+      const lot = duckSnap.data() || {};
+      if (lot.issu_du_cycle_id !== cycle.id || lot.type !== "caneton") throw new Error("LOT_ECLOSION_INVALIDE");
+      const historique = Array.isArray(lot.historique_eclosions) ? lot.historique_eclosions.slice(-19) : [];
+      historique.push({ date: dateReleve, quantite: q, par: auteur, at: maintenant });
+      tx.update(targetLotRef, {
         quantite: increment(q),
+        historique_eclosions: historique,
+        dernier_releve_eclosion: { date: dateReleve, quantite: q, par: auteur, at: maintenant },
+        lot_regroupe: true,
         modifie_par: auteur, modifie_le: maintenant
       });
     } else {
-      const eclosDejaSurLeCycle = Number(fresh.nombre_eclos) || 0;
-      tx.set(duckRef, {
-        type: "caneton", quantite: eclosDejaSurLeCycle + q,
+      tx.set(targetLotRef, {
+        type: "caneton", quantite: q,
         date_entree: dateReleve, date_naissance: dateReleve,
         bague_couleur: null, numero_bague: null,
-        notes: `Éclosion nid n° ${n}`,
+        notes: `Éclosion nid n° ${n} · vague du ${formatDate(dateReleve)}`,
+        lot: `Nid ${n} · ${formatDate(dateReleve)}`,
         statut: "actif", date_sortie: null, motif_sortie: null,
         issu_du_nid: n, issu_du_cycle_id: cycle.id,
+        eclosion_vague_id: eventRef.id,
+        historique_eclosions: [{ date: dateReleve, quantite: q, par: auteur, at: maintenant }],
         cree_par: auteur, createdAt: maintenant
       });
     }
@@ -725,33 +793,31 @@ async function openArchiveDetailModal(c) {
     onMount: async () => {
       if (c.statut !== "eclos" || !(c.nombre_eclos > 0)) return;
       const zone = document.getElementById("fArchInventaireZone");
-      // ⚠️ SIMPLIFIÉ (août 2026) : depuis le passage au lot d'inventaire
-      // unique par cycle (voir cycleDuckDocRef), il suffit de vérifier si
-      // ce document précis existe déjà — plus besoin d'une recherche
-      // heuristique par date/quantité sur toute la collection.
-      const duckRef = cycleDuckDocRef(c);
-      const existing = await getDoc(duckRef);
-      const dejaAjoute = existing.exists();
+      const linked = await getDocs(query(ducksCol, where("issu_du_cycle_id", "==", c.id)));
+      const lots = linked.docs.map(s => ({ id: s.id, ...s.data() }));
+      const totalInventaire = lots.filter(x => x.statut === "actif").reduce((sum,x) => sum + (Number(x.quantite)||0), 0);
+      const dejaAjoute = totalInventaire > 0;
       zone.innerHTML = `
         <div class="spacer-m"></div>
         <div class="card" style="background:${dejaAjoute ? 'var(--sage-100)' : '#FCEBD9'}; border:none;">
           <h3 style="font-size:14px; margin-bottom:4px;">Inventaire des canards</h3>
           ${dejaAjoute
-            ? `<p class="subtle" style="margin:0;">✓ Ces canetons figurent déjà dans l'inventaire.</p>`
-            : `<p class="subtle" style="margin:0 0 10px;">Ce cycle a été archivé avant la mise en place du lien automatique avec l'inventaire — les canetons nés ici n'y figurent pas encore.</p>
+            ? `<p class="subtle" style="margin:0 0 8px;">✓ ${lots.filter(x => x.statut === "actif").length} lot(s) issu(s) de ce nid · ${totalInventaire} caneton(s) actuellement actifs.</p>
+               <div class="subtle">${lots.filter(x => x.statut === "actif").map(x => `• ${x.quantite} · ${x.date_naissance ? formatDate(x.date_naissance) : "date inconnue"}`).join("<br>")}</div>`
+            : `<p class="subtle" style="margin:0 0 10px;">Ce cycle a été archivé avant le versement automatique dans l'inventaire.</p>
                <button class="btn yolk" id="fArchAddInventaire">🐥 Ajouter ${c.nombre_eclos} caneton(s) au cheptel</button>`}
         </div>
       `;
       const addBtn = document.getElementById("fArchAddInventaire");
       if (addBtn) addBtn.addEventListener("click", async () => {
         try {
-          await setDoc(duckRef, {
+          await setDoc(doc(db, "ducks", `eclosion_${c.id}_rattrapage_${Date.now()}`), {
             type: "caneton", quantite: Number(c.nombre_eclos) || 0,
             date_entree: c.date_fin || new Date(), date_naissance: c.date_fin || new Date(),
             bague_couleur: null, numero_bague: null,
             notes: `Éclosion nid n° ${c.nid_numero} (rattrapage manuel)`,
             statut: "actif", date_sortie: null, motif_sortie: null,
-            issu_du_nid: c.nid_numero, issu_du_cycle_id: c.id,
+            issu_du_nid: c.nid_numero, issu_du_cycle_id: c.id, eclosion_vague_id: `rattrapage_${Date.now()}`,
             cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
           });
           toast(`${c.nombre_eclos} caneton(s) ajoutés à l'inventaire ✓`);
@@ -1124,12 +1190,13 @@ function openNestModal(n) {
       <div class="field"><label>Date de ce relevé</label><input type="date" id="fEclosDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
     </div>
     <p class="subtle" style="margin:-4px 0 10px;">Une couvée de canard de Barbarie éclot souvent en plusieurs vagues, étalées sur plusieurs jours. Enregistrez chaque relevé au fur et à mesure — <b>les canetons sont ajoutés au cheptel (tableau de bord inclus) dès ce relevé</b>, sans attendre l'archivage du nid.</p>
+    <div id="fEclosionLotChoice" class="eclosion-lot-choice-wrap"></div>
     <div class="field-row">
       <button class="btn secondary" id="fEclosAddBtn">🐣 Enregistrer (sans archiver)</button>
     </div>
     <div class="spacer-s"></div>
     <div class="field"><label>Date d'éclosion finale (antidatable)</label><input type="date" id="fArchiveDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
-    <p class="subtle" style="margin:-4px 0 10px;">À l'archivage, cette date devient la date de naissance définitive de TOUS les canetons de ce nid (toutes vagues confondues) — modifiez-la si la dernière éclosion a eu lieu un autre jour que celui de la saisie.</p>
+    <p class="subtle" style="margin:-4px 0 10px;">À l'archivage, cette date sert de date de clôture du cycle. Chaque lot d'éclosion conserve désormais sa propre date de naissance ; si une dernière vague est saisie ici, choisissez son lot ci-dessus.</p>
     <button class="btn yolk" id="fFinish">🏁 Archiver ce nid (cycle terminé)</button>
     <div class="spacer-s"></div>
     <button class="btn danger" id="fEchec">Déclarer un échec de couvaison</button>
@@ -1143,6 +1210,10 @@ function openNestModal(n) {
     onMount: () => {
       renderNestHistory(n);
       renderPonteDates(cycle);
+      if (cycle.statut === "couvaison") {
+        renderEclosionLotChoices(cycle, n);
+        document.getElementById("fEclosDate")?.addEventListener("change", () => renderEclosionLotChoices(cycle, n));
+      }
       if (cycle.statut === "couvaison") {
         MIRAGE_STEPS.forEach(step => {
           const doneBtn = document.getElementById(`fMirageDone_${step.jour}`);
@@ -1177,30 +1248,32 @@ function openNestModal(n) {
       if (cycle.statut === "couvaison" && Number(cycle.nombre_eclos) > 0) {
         const zone = document.getElementById("fRattrapageZone");
         if (zone) {
-          getDoc(cycleDuckDocRef(cycle)).then(existing => {
-            if (existing.exists()) return; // déjà au cheptel, rien à faire
+          getDocs(query(ducksCol, where("issu_du_cycle_id", "==", cycle.id))).then(snap => {
+            const totalActif = snap.docs.reduce((sum, d) => { const x=d.data()||{}; return sum + (x.statut === "actif" ? (Number(x.quantite)||0) : 0); }, 0);
+            const manque = Math.max(0, (Number(cycle.nombre_eclos)||0) - totalActif);
+            if (manque <= 0) return;
             zone.innerHTML = `
               <div class="card" style="background:#FCEBD9; border:none; margin-bottom:12px;">
                 <h3 style="font-size:14px; margin-bottom:2px;">🐥 Canetons pas encore au cheptel</h3>
-                <p class="subtle" style="margin:0 0 10px;"><b>${cycle.nombre_eclos}</b> caneton(s) ont été enregistrés sur ce nid avant la mise en place du versement automatique — ils ne figurent pas encore dans l'inventaire ni le tableau de bord. Ajoutez-les maintenant, avec la date de naissance de votre choix.</p>
+                <p class="subtle" style="margin:0 0 10px;"><b>${manque}</b> caneton(s) de ce cycle ne figurent pas encore dans l'inventaire. Ajoutez-les maintenant avec leur date de naissance réelle.</p>
                 <div class="field"><label>Date de naissance à utiliser</label><input type="date" id="fRattrapageDate" value="${todayInputValue()}" max="${todayInputValue()}"></div>
-                <button class="btn yolk" id="fRattrapageBtn">Ajouter ${cycle.nombre_eclos} caneton(s) au cheptel</button>
+                <button class="btn yolk" id="fRattrapageBtn">Ajouter ${manque} caneton(s) au cheptel</button>
               </div>
             `;
             document.getElementById("fRattrapageBtn").addEventListener("click", async () => {
               const dateVal = document.getElementById("fRattrapageDate").value;
               const dateChoisie = dateVal ? new Date(dateVal) : new Date();
               try {
-                await setDoc(cycleDuckDocRef(cycle), {
-                  type: "caneton", quantite: Number(cycle.nombre_eclos) || 0,
+                await setDoc(doc(db, "ducks", `eclosion_${cycle.id}_rattrapage_${Date.now()}`), {
+                  type: "caneton", quantite: manque,
                   date_entree: dateChoisie, date_naissance: dateChoisie,
                   bague_couleur: null, numero_bague: null,
-                  notes: `Éclosion nid n° ${n} (rattrapage manuel)`,
+                  notes: `Éclosion nid n° ${n} (rattrapage manuel)`, lot: `Nid ${n} · rattrapage`,
                   statut: "actif", date_sortie: null, motif_sortie: null,
-                  issu_du_nid: n, issu_du_cycle_id: cycle.id,
+                  issu_du_nid: n, issu_du_cycle_id: cycle.id, eclosion_vague_id: `rattrapage_${Date.now()}`,
                   cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
                 });
-                toast(`${cycle.nombre_eclos} caneton(s) ajoutés au cheptel ✓`);
+                toast(`${manque} caneton(s) ajoutés au cheptel ✓`);
                 closeModal();
               } catch (e) { toast("Erreur : " + e.message); }
             });
@@ -1258,11 +1331,11 @@ function openNestModal(n) {
           const snap = await getDocs(query(pontesCol, where("cycle_id", "==", cycle.id)));
           const batch = writeBatch(db);
           snap.docs.forEach(d => batch.delete(d.ref));
-          // Les canetons déjà versés au cheptel depuis ce cycle (relevés
-          // partiels — voir fEclosAddBtn) doivent disparaître avec lui : un
-          // nid réinitialisé est une erreur de saisie pure, pas un vrai
-          // événement d'élevage.
-          batch.delete(cycleDuckDocRef(cycle));
+          // Un cycle réinitialisé est une erreur de saisie : supprimer tous
+          // les lots de canetons issus de ce cycle, y compris les nouvelles
+          // vagues séparées et l'ancien lot historique.
+          const linkedLots = await getDocs(query(ducksCol, where("issu_du_cycle_id", "==", cycle.id)));
+          linkedLots.docs.forEach(lotSnap => batch.delete(lotSnap.ref));
           batch.delete(doc(db, "nest_cycles", cycle.id));
           batch.set(doc(db, "nests", String(n)), { numero: n, statut_actuel: "libre", cycle_actuel_id: null });
           await batch.commit();
@@ -1289,9 +1362,9 @@ function openNestModal(n) {
       // cette vague sont désormais versés IMMÉDIATEMENT dans l'inventaire
       // (donc dans le total du tableau de bord), avec la date du relevé
       // comme date de naissance provisoire. Toutes les vagues d'un même
-      // cycle partagent un seul lot d'inventaire (voir cycleDuckDocRef),
-      // dont la quantité s'incrémente à chaque relevé ; sa date de
-      // naissance sera figée définitivement à l'archivage du nid.
+      // cycle peuvent désormais être réparties dans plusieurs lots ;
+      // chaque vague conserve sa date de naissance propre. Un regroupement
+      // volontaire conserve en plus l'historique des vagues dans le lot.
       const eclosAddBtn = document.getElementById("fEclosAddBtn");
       if (eclosAddBtn) eclosAddBtn.addEventListener("click", async () => {
         const q = Number(document.getElementById("fEclos").value) || 0;
@@ -1299,19 +1372,22 @@ function openNestModal(n) {
         const dateReleve = dateReleveInput ? new Date(dateReleveInput) : new Date();
         if (q <= 0) { toast("Indiquez un nombre de canetons éclos supérieur à 0"); return; }
         try {
+          const lotMode = document.getElementById("fEclosionLotMode")?.value || "new";
+          const lotTargetId = lotMode.startsWith("merge:") ? lotMode.slice(6) : null;
           // Une seule transaction couvre le cycle, le journal d'éclosion,
-          // le lot d'inventaire et l'historique : deux téléphones ne peuvent
-          // donc plus enregistrer simultanément la même vague deux fois.
-          await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput);
-          toast(`${q} éclosion(s) enregistrée(s) et ajoutée(s) au cheptel — nid ${n} toujours actif ✓`);
+          // le lot choisi/créé et l'historique.
+          await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, false, lotTargetId);
+          toast(`${q} éclosion(s) enregistrée(s) — ${lotTargetId ? "ajoutées au lot existant" : "nouveau lot créé"} ✓`);
           closeModal();
         } catch (e) {
           if (e.code === "DOUBLON_ECLOSION") {
             const ok = confirm(`⚠️ ${e.par || "Un autre utilisateur"} a déjà enregistré ${q} caneton(s) pour ce nid il y a ${e.minutes || 1} min.\n\nSi cette saisie correspond réellement à une nouvelle vague distincte, cliquez sur OK pour l'enregistrer malgré l'alerte.`);
             if (!ok) return;
             try {
-              await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, true);
-              toast(`${q} éclosion(s) distincte(s) enregistrée(s) et ajoutée(s) au cheptel ✓`);
+              const lotModeForce = document.getElementById("fEclosionLotMode")?.value || "new";
+              const lotTargetIdForce = lotModeForce.startsWith("merge:") ? lotModeForce.slice(6) : null;
+              await enregistrerEclosionAtomique(n, cycle, q, dateReleve, dateReleveInput, true, lotTargetIdForce);
+              toast(`${q} éclosion(s) distincte(s) enregistrée(s) — ${lotTargetIdForce ? "lot existant" : "nouveau lot"} ✓`);
               closeModal();
             } catch (e2) {
               console.error(e2);
@@ -1354,10 +1430,8 @@ function openNestModal(n) {
 // relevé (voir fEclosAddBtn). L'archivage a maintenant deux rôles :
 // 1) ajouter, si besoin, une toute dernière vague saisie ici sans passer
 //    par "Enregistrer (sans archiver)" ;
-// 2) FIGER la date de naissance définitive de TOUS les canetons de ce
-//    nid (toutes vagues confondues, un seul lot d'inventaire) sur la
-//    date d'éclosion finale choisie — même en cas d'échec partiel, les
-//    canetons déjà nés avant l'échec conservent leur place au cheptel.
+// 2) clôturer le cycle sans écraser les dates de naissance propres aux
+//    lots/vagues déjà enregistrés. Les canetons déjà nés restent au cheptel.
 async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChoisie) {
   try {
     const dateFin = (dateFinChoisie instanceof Date && !isNaN(dateFinChoisie.getTime())) ? dateFinChoisie : new Date();
@@ -1366,9 +1440,11 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChois
     // les relevés partiels. On recharge ensuite le cycle pour archiver le
     // total réellement enregistré, et non une copie éventuellement périmée.
     if (Number(eclosSupplementaires) > 0) {
+      const lotMode = document.getElementById("fEclosionLotMode")?.value || "new";
+      const lotTargetId = lotMode.startsWith("merge:") ? lotMode.slice(6) : null;
       await enregistrerEclosionAtomique(
         n, cycle, Number(eclosSupplementaires), dateFin,
-        dateFin.toISOString().slice(0, 10)
+        dateFin.toISOString().slice(0, 10), false, lotTargetId
       );
     }
 
@@ -1384,20 +1460,16 @@ async function archiveCycle(n, cycle, statut, eclosSupplementaires, dateFinChois
     await updateDoc(doc(db, "nests", String(n)), { statut_actuel: "libre", cycle_actuel_id: null });
 
     if (totalEclos > 0) {
-      const duckRef = cycleDuckDocRef(cycleActuel);
-      const existing = await getDoc(duckRef);
-      if (existing.exists()) {
-        await updateDoc(duckRef, { date_naissance: dateFin, date_entree: dateFin });
-      } else {
-        await setDoc(duckRef, {
-          type: "caneton", quantite: totalEclos,
-          date_entree: dateFin, date_naissance: dateFin,
-          bague_couleur: null, numero_bague: null,
-          notes: `Éclosion nid n° ${n}`,
-          statut: "actif", date_sortie: null, motif_sortie: null,
-          issu_du_nid: n, issu_du_cycle_id: cycle.id,
-          cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp()
-        });
+      // Les anciens cycles utilisent encore le lot historique `eclosion_<cycle>`.
+      // On ne touche à sa date que pour préserver la compatibilité avec ce
+      // modèle. Les nouveaux lots de vagues gardent chacun leur date réelle.
+      const legacyDuckRef = cycleDuckDocRef(cycleActuel);
+      const legacyExisting = await getDoc(legacyDuckRef);
+      if (legacyExisting.exists()) {
+        const legacy = legacyExisting.data() || {};
+        if (!legacy.eclosion_vague_id) {
+          await updateDoc(legacyDuckRef, { date_naissance: legacy.date_naissance || dateFin, date_entree: legacy.date_entree || legacy.date_naissance || dateFin });
+        }
       }
     }
 
