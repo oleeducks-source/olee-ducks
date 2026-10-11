@@ -1,14 +1,161 @@
 rules_version = '2';
+// =====================================================================
+// OLEE DUCKS — Règles de sécurité Firestore
+// =====================================================================
+// Principe : tout est fermé par défaut. Seuls les utilisateurs
+// authentifiés avec un profil "actif" peuvent lire/écrire. Les
+// administrateurs ont accès à tout ; les utilisateurs simples n'ont
+// accès qu'à leurs tâches assignées.
+//
+// ⚠️ Les règles s'appuient sur la collection "users" qui doit contenir
+// un document par utilisateur, avec l'UID Firebase Auth comme ID.
+//
+// Fonctionnement du bannissement : si un admin met statut="banni" ou
+// session_active=false sur le profil d'un utilisateur, la règle
+// estUserActif() renvoie immédiatement false → toutes ses requêtes
+// sont refusées côté serveur, peu importe ce que fait l'app côté client.
+// =====================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Seuls les utilisateurs authentifiés (même anonymement) peuvent lire
-    // et écrire. L'authentification anonyme est activée automatiquement
-    // par l'application (voir js/firebase-config.js) : les 3 personnes
-    // de la ferme n'ont pas d'écran de connexion à remplir, mais un
-    // inconnu qui tomberait sur le lien sans jamais ouvrir l'app ne
-    // pourra pas lire ni modifier les données.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    // -----------------------------------------------------------------
+    // FONCTIONS UTILITAIRES
+    // -----------------------------------------------------------------
+
+    // Lit le profil de l'utilisateur courant. Retourne null si le
+    // document n'existe pas encore (ex : tout premier admin créé à la
+    // main dans la console).
+    function profilCourant() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
+
+    // Vrai si l'utilisateur est connecté ET que son profil existe.
+    function aProfil() {
+      return request.auth != null && request.auth.uid != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Vrai si l'utilisateur est un administrateur actif.
+    function estAdmin() {
+      return aProfil()
+        && profilCourant().role == "admin"
+        && profilCourant().statut == "actif";
+    }
+
+    // Vrai si l'utilisateur est actif (admin OU user), non banni, et
+    // que sa session n'a pas été interrompue par un admin.
+    function estActif() {
+      return aProfil()
+        && profilCourant().statut == "actif"
+        && profilCourant().session_active == true;
+    }
+
+    // Vrai si l'utilisateur est un utilisateur simple actif.
+    function estUserSimple() {
+      return estActif() && profilCourant().role == "user";
+    }
+
+    // -----------------------------------------------------------------
+    // COLLECTION "users" — profils utilisateurs
+    // -----------------------------------------------------------------
+    // Lecture :
+    //   - chacun peut lire son propre profil (nécessaire au login)
+    //   - un admin peut lire tous les profils (gestion d'équipe)
+    // Écriture :
+    //   - seul un admin peut créer/modifier/supprimer un profil
+    //   - exception : à la toute première connexion, un admin fraîchement
+    //     créé peut écrire son propre profil s'il n'existe pas encore
+    // -----------------------------------------------------------------
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow read: if estAdmin();
+
+      allow create: if estAdmin();
+      allow create: if request.auth != null && request.auth.uid == uid
+                    && !exists(/databases/$(database)/documents/users/$(uid));
+
+      allow update: if estAdmin();
+
+      allow delete: if estAdmin();
+    }
+
+    // -----------------------------------------------------------------
+    // COLLECTION "sessions_actives" — verrous de session temps réel
+    // -----------------------------------------------------------------
+    // Chaque utilisateur peut écrire son propre verrou. Un admin peut
+    // lire et supprimer n'importe quel verrou (pour interrompre une
+    // session à distance).
+    // -----------------------------------------------------------------
+    match /sessions_actives/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || estAdmin());
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if estAdmin();
+    }
+
+    // -----------------------------------------------------------------
+    // COLLECTION "taches" — tâches de la ferme
+    // -----------------------------------------------------------------
+    // Un admin voit et gère tout.
+    // Un utilisateur simple ne voit QUE les tâches qui lui sont
+    // assignées (champ "assigne_a" == son UID), et ne peut que :
+    //   - la lire
+    //   - la marquer comme effectuée (statut passe à "effectuee")
+    // Il ne peut jamais en créer, ni en supprimer, ni en modifier
+    // d'autres champs.
+    // -----------------------------------------------------------------
+    match /taches/{tacheId} {
+      allow read: if estAdmin();
+      allow read: if estUserSimple() && resource.data.assigne_a == request.auth.uid;
+
+      allow create, delete: if estAdmin();
+
+      // Un admin peut tout modifier.
+      allow update: if estAdmin();
+
+      // Un utilisateur simple peut uniquement marquer sa tâche comme
+      // effectuée — et rien d'autre. On vérifie que TOUS les autres
+      // champs restent identiques.
+      allow update: if estUserSimple()
+                    && resource.data.assigne_a == request.auth.uid
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys().hasOnly(['statut', 'effectue_par', 'effectue_le'])
+                    && request.resource.data.statut == "effectuee";
+    }
+
+    // -----------------------------------------------------------------
+    // TOUTES LES AUTRES COLLECTIONS MÉTIER
+    // -----------------------------------------------------------------
+    // Réservées exclusivement aux administrateurs actifs.
+    // Un utilisateur simple ne peut ni lire ni écrire ces données.
+    // -----------------------------------------------------------------
+    match /ducks/{doc}                { allow read, write: if estAdmin(); }
+    match /nests/{doc}                { allow read, write: if estAdmin(); }
+    match /nest_cycles/{doc}          { allow read, write: if estAdmin(); }
+    match /nest_cycles/{doc}/suivi/{s} { allow read, write: if estAdmin(); }
+    match /nest_history/{doc}         { allow read, write: if estAdmin(); }
+    match /pontes_journalieres/{doc}  { allow read, write: if estAdmin(); }
+    match /eclosions_journalieres/{doc} { allow read, write: if estAdmin(); }
+    match /pesees_journalieres/{doc}  { allow read, write: if estAdmin(); }
+    match /canetons_production/{doc}  { allow read, write: if estAdmin(); }
+    match /finance_transactions/{doc} { allow read, write: if estAdmin(); }
+    match /stock_items/{doc}          { allow read, write: if estAdmin(); }
+    match /stock_mouvements/{doc}     { allow read, write: if estAdmin(); }
+    match /formulations/{doc}         { allow read, write: if estAdmin(); }
+    match /accounts/{doc}             { allow read, write: if estAdmin(); }
+    match /exercises/{doc}            { allow read, write: if estAdmin(); }
+    match /journal_ecritures/{doc}    { allow read, write: if estAdmin(); }
+    match /write_dedup_guards/{doc}   { allow read, write: if estAdmin(); }
+    match /app_meta/{doc}             { allow read, write: if estAdmin(); }
+
+    // -----------------------------------------------------------------
+    // COLLECTION "invitations" — pour créer des utilisateurs
+    // -----------------------------------------------------------------
+    // Réservée aux admins. Utilisée par le module utilisateurs.js.
+    // -----------------------------------------------------------------
+    match /invitations/{doc} {
+      allow read, write: if estAdmin();
+    }
+
   }
 }
