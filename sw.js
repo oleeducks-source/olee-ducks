@@ -1,20 +1,30 @@
-// Service worker : stratégie "réseau en premier". Chaque fichier de
-// l'application est TOUJOURS récupéré en ligne quand une connexion est
-// disponible (donc toute mise à jour du code apparaît immédiatement à la
-// prochaine ouverture), et la version en cache ne sert que de secours en
-// cas de coupure réseau. Les données métier, elles, sont gérées par la
-// persistance hors-ligne de Firestore (voir firebase-config.js).
+// =====================================================================
+// SERVICE WORKER — Olee Ducks
+// =====================================================================
+// Stratégie "réseau en premier" : chaque fichier est TOUJOURS récupéré
+// en ligne quand une connexion est disponible (donc toute mise à jour
+// du code apparaît immédiatement à la prochaine ouverture), et la
+// version en cache ne sert que de secours en cas de coupure réseau.
 //
-// IMPORTANT : le numéro de version ci-dessous doit être incrémenté à
-// chaque mise à jour de ce fichier pour forcer le navigateur à détecter
+// Les données métier, elles, sont gérées par la persistance hors-ligne
+// de Firestore (voir firebase-config.js).
+//
+// ⚠️ IMPORTANT : le numéro de version ci-dessous doit être incrémenté à
+// CHAQUE mise à jour de ce fichier pour forcer le navigateur à détecter
 // un nouveau service worker et à vider l'ancien cache.
-const CACHE_NAME = "oleeducks-shell-v34";
+//
+// V35 : ajout de js/auth.js et js/utilisateurs.js (gestion des rôles).
+// =====================================================================
+
+const CACHE_NAME = "oleeducks-shell-v35";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./manifest.json",
   "./css/style.css",
   "./js/app.js",
+  "./js/auth.js",
+  "./js/utilisateurs.js",
   "./js/firebase-config.js",
   "./js/utils.js",
   "./js/inventaire.js",
@@ -59,8 +69,16 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   // Ne jamais intercepter les appels Firebase/Google : ils doivent
-  // toujours passer par le réseau (ou la persistance IndexedDB de Firestore).
-  if (url.hostname.includes("firestore") || url.hostname.includes("googleapis") || url.hostname.includes("google.com") || url.hostname.includes("gstatic.com") || url.hostname.includes("cdnjs.cloudflare.com")) {
+  // toujours passer par le réseau (ou la persistance IndexedDB de
+  // Firestore). Idem pour les CDN : on laisse le navigateur gérer.
+  if (
+    url.hostname.includes("firestore") ||
+    url.hostname.includes("googleapis") ||
+    url.hostname.includes("google.com") ||
+    url.hostname.includes("gstatic.com") ||
+    url.hostname.includes("cdnjs.cloudflare.com") ||
+    url.hostname.includes("identitytoolkit")
+  ) {
     return;
   }
   event.respondWith(
@@ -71,6 +89,6 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
         return response;
       })
-      .catch(() => caches.match(event.request)) // hors-ligne uniquement : repli sur le cache
+      .catch(() => caches.match(event.request)) // hors-ligne : repli sur le cache
   );
 });
