@@ -412,6 +412,10 @@ function initialiserModulesUser() {
 // Décision après chaque changement d'état d'authentification
 // ---------------------------------------------------------------------
 async function gererEtatAuth({ user, profil }) {
+    // Expose le profil courant à utils.js (getUserName) et aux autres modules.
+  // Mis à jour à chaque changement d'état d'authentification.
+  window.__oleeducks_profil_courant = profil || null;
+  
   // Cas 1 : personne connecté → écran de connexion
   if (!user) {
     roleCourant = null;
