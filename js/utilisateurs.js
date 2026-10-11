@@ -6,12 +6,15 @@
 //   - Créer un nouvel utilisateur (via l'API REST Firebase Auth)
 //   - Changer son rôle (admin / user)
 //   - Interrompre sa session à distance (session_active = false)
-//   - Le bannir (statut = "banni") — toutes ses requêtes sont refusées
-//   - Le débannir
+//   - Le bannir / débannir
 //   - Supprimer son profil Firestore
 //
-// Navigation : utilise window.__oleeducks_setPage("utilisateurs") exposé
-// par app.js, pour éviter que d'autres listeners ne re-masquent la page.
+// ⚠️ CORRECTIF (V35) : la fonction verifierSiUtilisateurCourantBanni()
+// déclenchait un force-logout en boucle sur l'utilisateur courant,
+// provoquant la fermeture automatique de la page Utilisateurs juste
+// après son ouverture. Cette vérification est désormais déléguée à
+// app.js (voir doitEtreDeconnecte() dans auth.js), qui est le SEUL
+// endroit légitime pour déconnecter un utilisateur.
 // =====================================================================
 
 import { db, firebaseApp } from "./firebase-config.js";
@@ -72,22 +75,30 @@ export function initUtilisateurs() {
   if (dejaInitialise) return;
   dejaInitialise = true;
 
-  // Écoute temps réel de la collection users (admin seulement)
+  // Écoute temps réel de la collection users (admin seulement).
+  // Le rendu n'est appliqué QUE si la page Utilisateurs est réellement
+  // affichée : sans ça, un snapshot Firestore (par exemple déclenché
+  // par une modification de tâche ou de finance) pouvait interrompre
+  // la navigation en cours et faire disparaître la page.
   onSnapshot(query(usersCol), (snap) => {
     tousLesUtilisateurs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // Tri côté client : plus fiable qu'orderBy Firestore si un document
-    // n'a pas le champ date_creation ou l'a dans un type différent.
-    tousLesUtilisateurs.sort((a, b) => (b.date_creation?.toMillis?.() || 0) - (a.date_creation?.toMillis?.() || 0));
-    if (estAdmin()) renderUtilisateursList();
-    verifierSiUtilisateurCourantBanni();
+    tousLesUtilisateurs.sort((a, b) =>
+      (b.date_creation?.toMillis?.() || 0) - (a.date_creation?.toMillis?.() || 0)
+    );
+    // Rafraîchit la liste UNIQUEMENT si la page Utilisateurs est visible
+    if (estAdmin() && estPageUtilisateursVisible()) {
+      renderUtilisateursList();
+    }
   }, err => {
     console.error("Erreur lecture utilisateurs :", err);
-    const el = document.getElementById("utilisateursList");
-    if (el && estAdmin()) {
-      el.innerHTML = `<div class="state-banner error"><span class="glyph">⚠️</span><span>
-        Erreur de chargement : ${err.code || err.message}.<br>
-        <small>Si le message dit "permission-denied", publiez les nouvelles règles Firestore.</small>
-      </span></div>`;
+    if (estAdmin() && estPageUtilisateursVisible()) {
+      const el = document.getElementById("utilisateursList");
+      if (el) {
+        el.innerHTML = `<div class="state-banner error"><span class="glyph">⚠️</span><span>
+          Erreur de chargement : ${err.code || err.message}.<br>
+          <small>Si le message dit "permission-denied", publiez les nouvelles règles Firestore.</small>
+        </span></div>`;
+      }
     }
   });
 
@@ -95,6 +106,8 @@ export function initUtilisateurs() {
   document.getElementById("openUtilisateursBtn")?.addEventListener("click", () => {
     if (typeof window.__oleeducks_setPage === "function") {
       window.__oleeducks_setPage("utilisateurs");
+      // Force un rendu immédiat au cas où aucun snapshot n'arrive
+      renderUtilisateursList();
     }
   });
 
@@ -110,17 +123,19 @@ export function initUtilisateurs() {
   document.getElementById("openAddUserBtn")?.addEventListener("click", openAddUserModal);
 }
 
-function verifierSiUtilisateurCourantBanni() {
-  const uid = getUid();
-  if (!uid) return;
-  const moi = tousLesUtilisateurs.find(u => u.id === uid);
-  if (!moi) return;
-  if (moi.statut === "banni" || moi.session_active === false) {
-    window.dispatchEvent(new CustomEvent("oleeducks:force-logout", {
-      detail: { raison: moi.statut === "banni" ? "banni" : "session_interrompue" }
-    }));
-  }
+// Vérifie si la page Utilisateurs est actuellement affichée à l'écran.
+// Sert de garde pour éviter de rafraîchir une page non visible — c'était
+// la cause principale de la disparition du bouton Utilisateurs.
+function estPageUtilisateursVisible() {
+  const el = document.getElementById("page-utilisateurs");
+  if (!el) return false;
+  return !el.classList.contains("hidden");
 }
+
+// ⚠️ SUPPRIMÉ : la vérification "utilisateur courant banni" est gérée
+// exclusivement par app.js via onAuthChange + doitEtreDeconnecte().
+// La dupliquer ici provoquait une boucle de force-logout qui fermait
+// la page Utilisateurs juste après son ouverture.
 
 // ---------------------------------------------------------------------
 // Rendu de la liste
