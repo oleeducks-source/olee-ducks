@@ -368,4 +368,366 @@
   <section id="page-canards" class="page hidden">
     <div class="section-title">
       <div><img class="section-icon" src="icons/features/mon-cheptel.png" alt=""><span class="eyebrow">Élevage</span><h2>Inventaire des canards</h2></div>
-      <div style="
+      <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+        <button class="btn secondary small" id="invLotModeBtn">🏷️ Regrouper en lot</button>
+        <button class="btn secondary small" id="openCanetonsArchiveBtn">Archive des canetons →</button>
+      </div>
+    </div>
+    <div class="kpi-grid" id="invKpis"></div>
+    <div class="spacer-m"></div>
+
+    <div class="filters-row">
+      <select id="invFilterType" class="filter-select"></select>
+      <select id="invFilterStatut" class="filter-select"></select>
+      <div id="invFilterLotWrap" class="hidden" style="flex:1 1 140px;">
+        <select id="invFilterLot" class="filter-select"></select>
+      </div>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="field"><input type="text" id="invSearch" placeholder="🔎 N° de bague, lot, intervenant…"></div>
+    <div class="spacer-m"></div>
+    <div class="card"><div id="invList"><div class="empty-state"><div class="glyph">🦆</div><p>Aucun enregistrement pour ce filtre.</p></div></div></div>
+    <div class="spacer-m"></div>
+    <div id="invSelectionBar" class="selection-bar hidden">
+      <span id="invSelectionCount">0 sélectionné(s)</span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn secondary small" id="invCancelSelectionBtn">Annuler</button>
+        <button class="btn yolk small" id="invAssignLotBtn">Assigner à un lot</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== NIDS ===================== -->
+  <section id="page-nids" class="page hidden">
+    <div class="section-title">
+      <div><img class="section-icon" src="icons/features/nids.png" alt=""><span class="eyebrow">Élevage</span><h2>Suivi des nids</h2></div>
+    </div>
+    <p class="subtle" style="margin:0 0 10px;">100 nids numérotés</p>
+    <div class="segmented" id="nidsView">
+      <button data-v="grille" class="active">Grille</button>
+      <button data-v="encours">En cours</button>
+      <button data-v="stats">Statistiques</button>
+      <button data-v="archives">Archives</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="nidsGrilleWrap">
+      <div class="card">
+        <div id="fullNestGrid" class="nest-grid"></div>
+        <div class="legend">
+          <span><svg width="14" height="14" style="color:#AEBDAF"><use href="#ic-nest-libre"/></svg> Libre</span>
+          <span><svg width="14" height="14" style="color:var(--yolk-600)"><use href="#ic-nest-ponte"/></svg> Ponte en cours</span>
+          <span><svg width="14" height="14" style="color:var(--pond-600)"><use href="#ic-nest-couvaison"/></svg> Couvaison</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="nidsEnCoursWrap" class="hidden">
+      <div class="filters-row">
+        <select id="nidsGroupBy" class="filter-select">
+          <option value="numero">Trier par n° de nid</option>
+          <option value="ponte">Grouper par date de ponte</option>
+          <option value="couvaison">Grouper par date de couvaison</option>
+          <option value="eclosion_prevue">Grouper par éclosion prévue</option>
+        </select>
+        <div id="nidsSortDirWrap" class="hidden" style="flex:1 1 140px;">
+          <select id="nidsSortDir" class="filter-select">
+            <option value="desc">Plus récent d'abord</option>
+            <option value="asc">Plus ancien d'abord</option>
+          </select>
+        </div>
+      </div>
+      <div class="spacer-s"></div>
+      <div class="field-row" style="align-items:flex-end;">
+        <div class="field" style="margin-bottom:0;"><label>Filtrer une date précise (optionnel)</label><input type="date" id="nidsFilterDate"></div>
+        <button class="btn secondary" id="nidsFilterDateClear" style="flex:0 0 auto; white-space:nowrap;">✕ Effacer</button>
+      </div>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="nidsEnCoursList"></div></div>
+    </div>
+
+    <div id="nidsStatsWrap" class="hidden">
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Moyennes quotidiennes</h3>
+        <div id="dailyAverageStats"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Nids les plus productifs</h3>
+        <div id="topNestsList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Taux d'éclosion global</h3>
+        <div id="globalHatchStats"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:4px;">📜 Historique brut des pontes</h3>
+        <p class="subtle" style="margin:0 0 10px;">Comptage purement historique : additionne uniquement les œufs enregistrés comme pondus sur la période choisie, sans tenir compte des éclosions ni des pertes. Sert à savoir combien d'œufs la ferme a produits entre deux dates.</p>
+        <div class="field-row">
+          <div class="field"><label>Du</label><input type="date" id="pHistFrom"></div>
+          <div class="field"><label>Au</label><input type="date" id="pHistTo"></div>
+        </div>
+        <div id="ponteHistorySummary"></div>
+        <div class="spacer-s"></div>
+        <div id="ponteHistoryBreakdown"></div>
+      </div>
+    </div>
+
+    <div id="nidsArchivesWrap" class="hidden">
+      <div class="card"><div id="nidsArchivesList"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================== FINANCES ===================== -->
+  <section id="page-finances" class="page hidden">
+    <div class="section-title">
+      <div><img class="section-icon" src="icons/features/finances.png" alt=""><span class="eyebrow">Recettes & dépenses</span><h2>Finances</h2></div>
+      <button class="btn secondary small" id="openComptaBtn">Comptabilité OHADA →</button>
+    </div>
+    <div class="balance-banner">
+      <div class="balance-banner-top">
+        <div class="kpi-label">Balance période</div>
+        <button class="eye-toggle" id="finBalanceEye" aria-label="Afficher/masquer les montants"></button>
+      </div>
+      <div class="amount" id="finBalance">—</div>
+      <div class="breakdown">
+        <div><span class="subtle" style="color:inherit; opacity:.8; font-size:11px;">Recettes</span><b id="finRecettes">—</b></div>
+        <div><span class="subtle" style="color:inherit; opacity:.8; font-size:11px;">Dépenses</span><b id="finDepenses">—</b></div>
+      </div>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="segmented" id="finFilterPeriode">
+      <button data-v="7">7 jours</button>
+      <button data-v="30" class="active">30 jours</button>
+      <button data-v="365">1 an</button>
+      <button data-v="all">Tout</button>
+    </div>
+    <div class="spacer-s"></div>
+    <div class="segmented" id="finFilterType">
+      <button data-v="all" class="active">Tout</button>
+      <button data-v="recette">Recettes</button>
+      <button data-v="depense">Dépenses</button>
+    </div>
+    <div class="spacer-m"></div>
+    <div class="field"><input type="text" id="finSearch" placeholder="🔎 Rechercher (description, catégorie, montant…)"></div>
+    <div class="spacer-m"></div>
+    <div class="card"><div id="finList"><div class="empty-state"><div class="glyph">💰</div><p>Aucune transaction sur cette période.</p></div></div></div>
+  </section>
+
+  <!-- ===================== STOCKS ===================== -->
+  <section id="page-stocks" class="page hidden">
+    <div class="section-title">
+      <div><img class="section-icon" src="icons/features/alertes-stock.png" alt=""><span class="eyebrow">Aliments & vétérinaire</span><h2>Stocks</h2></div>
+    </div>
+    <div class="segmented" id="stocksView">
+      <button data-v="articles" class="active">Articles</button>
+      <button data-v="formulations">Formulations</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="stocksArticlesWrap">
+      <div class="segmented" id="stockFilterType">
+        <button data-v="all" class="active">Tout</button>
+        <button data-v="aliment">Aliments</button>
+        <button data-v="veterinaire">Vétérinaire</button>
+      </div>
+      <div class="spacer-m"></div>
+      <div class="card" id="stockAlertsCard"></div>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="stockList"></div></div>
+    </div>
+
+    <div id="stocksFormulationsWrap" class="hidden">
+      <button class="btn yolk" id="openFormulationBtn">+ Nouvelle formulation</button>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="formulationsList"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================== TÂCHES ===================== -->
+  <section id="page-taches" class="page hidden">
+    <div class="section-title">
+      <div><img class="section-icon" src="icons/features/taches.png" alt=""><span class="eyebrow">Organisation</span><h2>Tâches à effectuer</h2></div>
+    </div>
+    <div class="segmented" id="tachesView">
+      <button data-v="a_faire" class="active">À faire</button>
+      <button data-v="historique">Historique</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="tachesAFaireWrap">
+      <div class="card"><div id="tachesAFaireList"><div class="empty-state"><div class="glyph">📋</div><p>Aucune tâche en attente. Utilisez le bouton + pour en ajouter une.</p></div></div></div>
+    </div>
+
+    <div id="tachesHistoriqueWrap" class="hidden">
+      <div class="card"><div id="tachesHistoriqueList"><div class="empty-state"><div class="glyph">🗂️</div><p>Aucune tâche effectuée pour l'instant.</p></div></div></div>
+    </div>
+  </section>
+
+  <!-- ===================== COMPTABILITÉ OHADA ===================== -->
+  <section id="page-compta" class="page hidden">
+    <div class="section-title">
+      <div><span class="eyebrow">SYSCOHADA révisé</span><h2>Comptabilité</h2></div>
+      <button class="btn secondary small" id="backToFinancesBtn">← Retour</button>
+    </div>
+
+    <div class="card" id="exerciceCard"></div>
+    <div class="spacer-m"></div>
+
+    <div class="segmented" id="comptaView">
+      <button data-v="brouillons" class="active">À valider</button>
+      <button data-v="comptes">Plan de comptes</button>
+      <button data-v="journal">Journal</button>
+      <button data-v="etats">États financiers</button>
+    </div>
+    <div class="spacer-m"></div>
+
+    <div id="comptaBrouillonsWrap">
+      <div class="card"><div id="brouillonsList"></div></div>
+    </div>
+
+    <div id="comptaComptesWrap" class="hidden">
+      <div class="card">
+        <h3 style="font-size:14px; margin-bottom:10px;">Ajouter un compte</h3>
+        <div class="field-row">
+          <div class="field"><label>Numéro</label><input type="text" id="fCompteNum" placeholder="ex : 606"></div>
+          <div class="field"><label>Classe</label>
+            <select id="fCompteClasse">
+              <option value="1">1 — Capitaux</option>
+              <option value="2">2 — Immobilisations</option>
+              <option value="3">3 — Stocks</option>
+              <option value="4">4 — Tiers</option>
+              <option value="5">5 — Trésorerie</option>
+              <option value="6">6 — Charges</option>
+              <option value="7">7 — Produits</option>
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>Libellé</label><input type="text" id="fCompteLibelle" placeholder="ex : Achats d'emballages"></div>
+        <div class="field"><label>Nature</label>
+          <select id="fCompteNature">
+            <option value="actif">Actif</option>
+            <option value="passif">Passif</option>
+            <option value="charge">Charge</option>
+            <option value="produit">Produit</option>
+          </select>
+        </div>
+        <button class="btn yolk" id="fCompteSave">Ajouter au plan de comptes</button>
+      </div>
+      <div class="spacer-m"></div>
+      <button class="btn secondary small" id="nettoyerDoublonsBtn">🧹 Nettoyer les comptes en double</button>
+      <div class="spacer-m"></div>
+      <div class="card"><div id="comptesList"></div></div>
+    </div>
+
+    <div id="comptaJournalWrap" class="hidden">
+      <div class="field"><input type="text" id="journalSearch" placeholder="🔎 Rechercher (n° pièce, libellé, compte…)"></div>
+      <div class="spacer-s"></div>
+      <button class="btn secondary small" id="renumeroterBtn">🔢 Renuméroter par ordre chronologique</button>
+      <div class="spacer-m"></div>
+      <div class="card" id="nettoyageCard"></div>
+      <div class="card"><div id="journalList"></div></div>
+    </div>
+
+    <div id="comptaEtatsWrap" class="hidden">
+      <div class="card">
+        <div class="field"><label>Exercice affiché</label><select id="exerciceSelector"></select></div>
+        <div class="field-row">
+          <button class="btn secondary small" id="exportFecBtn" style="flex:1;">Export FEC</button>
+          <button class="btn secondary small" id="exportExcelBtn" style="flex:1;">Export Excel</button>
+        </div>
+        <button class="btn yolk small" id="shareEtatsBtn" style="margin-top:8px;">📤 Partager en PDF</button>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Tableau de bord</h3>
+        <div id="tableauBordCompta"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Balance des comptes</h3>
+        <div id="balanceList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Compte de résultat</h3>
+        <div id="resultatList"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px; margin-bottom:10px;">Bilan</h3>
+        <div id="bilanList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== UTILISATEURS (admin uniquement) ===================== -->
+  <section id="page-utilisateurs" class="page hidden">
+    <div class="section-title">
+      <div>
+        <span class="eyebrow">Équipe</span>
+        <h2>Utilisateurs</h2>
+      </div>
+      <button class="btn secondary small" id="backFromUtilisateursBtn">← Retour</button>
+    </div>
+
+    <p class="subtle" style="margin:0 0 14px;">
+      Gérez les membres de votre équipe. Créez un utilisateur, changez son rôle, interrompez sa session ou bannissez-le.
+    </p>
+
+    <button class="btn yolk" id="openAddUserBtn">+ Ajouter un utilisateur</button>
+    <div class="spacer-m"></div>
+
+    <div class="card"><div id="utilisateursList">
+      <div class="empty-state"><div class="glyph">👥</div><p>Chargement des utilisateurs…</p></div>
+    </div></div>
+
+    <div class="spacer-l"></div>
+
+    <div class="card" style="background:var(--sage-100);border:none;">
+      <h3 style="font-size:14px;margin-bottom:8px;">ℹ️ Comment ça marche</h3>
+      <p class="subtle" style="margin:0 0 8px;line-height:1.5;">
+        <b>Administrateur</b> : accès total à l'application (tableau de bord, canards, nids, finances, stocks, comptabilité, tâches, rapports).
+      </p>
+      <p class="subtle" style="margin:0;line-height:1.5;">
+        <b>Utilisateur simple</b> : accès limité aux tâches qui lui sont assignées. Il peut les consulter et les marquer comme effectuées, mais ne peut rien modifier d'autre.
+      </p>
+    </div>
+  </section>
+
+  <!-- Bottom nav -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-page="dashboard">
+      <span class="nav-item-icon-wrap"><img class="nav-icon-tile" src="icons/nav/dashboard.png" alt=""></span>
+      Accueil
+    </button>
+    <button class="nav-item" data-page="canards">
+      <span class="nav-item-icon-wrap"><img class="nav-icon-tile" src="icons/nav/canards.png" alt=""></span>
+      Canards
+    </button>
+    <button class="nav-item" data-page="nids">
+      <span class="nav-item-icon-wrap"><img class="nav-icon-tile" src="icons/nav/nids.png" alt=""></span>
+      Nids
+    </button>
+    <button class="nav-item" data-page="finances">
+      <span class="nav-item-icon-wrap"><img class="nav-icon-tile" src="icons/nav/finances.png" alt=""></span>
+      Finances
+    </button>
+    <button class="nav-item" data-page="stocks">
+      <span class="nav-item-icon-wrap"><img class="nav-icon-tile" src="icons/nav/stocks.png" alt=""></span>
+      Stocks
+    </button>
+    <button class="nav-item" data-page="taches">
+      <span class="nav-item-icon-wrap">
+        <img class="nav-icon-tile" src="icons/nav/taches.png" alt="">
+        <span class="nav-badge hidden" id="tachesNavBadge"></span>
+      </span>
+      Tâches
+    </button>
+  </nav>
+
+  <button class="fab" id="fabAdd">+</button>
+</div>
+
+<div id="modalRoot"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
