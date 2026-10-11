@@ -886,3 +886,176 @@ select.filter-select:focus{border-color:var(--pond-400);}
   .eclosion-lot-choice-head { flex-direction:column; gap:6px; }
   .eclosion-lot-reco { align-self:flex-start; }
 }
+
+/* =====================================================================
+   V35 — AUTHENTIFICATION & RÔLES
+   =====================================================================
+   Styles pour :
+   - Écran de connexion (login-screen)
+   - Écran de chargement (loading-screen)
+   - Écran de déconnexion forcée (forceLogoutScreen)
+   - Page Utilisateurs (page-utilisateurs)
+   - Masquage des éléments admin uniquement (.admin-only)
+   ===================================================================== */
+
+/* ---------- Masquage des éléments réservés aux admins ---------- */
+.admin-only.hidden { display: none !important; }
+
+/* ---------- Écrans plein écran (login, loading, force logout) ---------- */
+.login-screen,
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(160deg, var(--sage-50) 0%, #ffffff 60%, #fff8ec 100%);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  animation: fadeIn 0.3s ease;
+}
+.login-screen.hidden,
+.loading-screen.hidden { display: none !important; }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---------- Carte centrale de connexion ---------- */
+.login-card {
+  background: var(--white);
+  border-radius: var(--radius-xl);
+  padding: 30px 24px 26px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 60px -20px rgba(14, 46, 44, 0.25), 0 4px 12px rgba(14, 46, 44, 0.06);
+  border: 1px solid var(--line-soft);
+  animation: slideUp 0.4s cubic-bezier(0.25, 0.8, 0.35, 1);
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.login-brand {
+  text-align: center;
+  margin-bottom: 22px;
+}
+.login-brand img {
+  display: block;
+  margin: 0 auto 12px;
+  filter: drop-shadow(0 6px 14px rgba(14, 46, 44, 0.18));
+}
+.login-brand h1 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+.login-brand p {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-600);
+}
+
+/* ---------- Sélecteur de rôle (Admin / User) ---------- */
+.login-role-switch {
+  margin-bottom: 4px;
+}
+.login-role-switch button {
+  font-size: 13px;
+  padding: 10px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+/* ---------- Formulaire de connexion ---------- */
+#loginForm .field label { font-weight: 600; }
+#loginForm input[type="email"],
+#loginForm input[type="password"] {
+  padding: 12px 14px;
+  font-size: 15px;
+}
+#loginSubmitBtn {
+  margin-top: 8px;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 700;
+}
+#loginSubmitBtn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+#forgotPasswordBtn {
+  font-size: 12.5px;
+  padding: 6px 8px;
+  transition: opacity 0.15s ease;
+}
+#forgotPasswordBtn:hover { opacity: 0.75; }
+
+/* ---------- Spinner de chargement ---------- */
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3.5px solid var(--sage-100);
+  border-top-color: var(--pond-600);
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Page Utilisateurs (admin) ---------- */
+#page-utilisateurs .user-row {
+  align-items: center;
+  padding: 14px 0;
+}
+#page-utilisateurs .user-row .row-icon.dark {
+  background: var(--pond-950);
+  color: var(--yolk-500);
+}
+#page-utilisateurs .user-row .row-title {
+  font-weight: 700;
+}
+#page-utilisateurs .userActionsBtn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ---------- Petit ajustement du chip utilisateur (rôle visible) ---------- */
+.user-chip {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Adaptation très petits écrans ---------- */
+@media (max-width: 380px) {
+  .login-card { padding: 24px 18px 22px; }
+  .login-brand h1 { font-size: 24px; }
+  .login-role-switch button { font-size: 12px; padding: 9px 6px; }
+  .user-chip { max-width: 90px; }
+}
+
+/* ---------- Mouvement réduit : coupe les animations ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .login-card,
+  .login-screen,
+  .loading-spinner {
+    animation: none;
+  }
+}
