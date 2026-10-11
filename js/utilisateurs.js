@@ -8,24 +8,17 @@
 //   - Interrompre sa session à distance (session_active = false)
 //   - Le bannir (statut = "banni") — toutes ses requêtes sont refusées
 //   - Le débannir
-//   - Supprimer son profil Firestore (le compte Firebase Auth reste, à
-//     supprimer manuellement dans la console si vraiment nécessaire)
+//   - Supprimer son profil Firestore
 //
-// ⚠️ La création de compte passe par l'API REST identitytoolkit, ce qui
-// évite de déconnecter l'admin courant (contrairement à createUserWithEmailAndPassword
-// du SDK client qui basculerait la session sur le nouveau compte).
-// ⚠️ Cela expose la clé API dans le réseau, mais c'est le fonctionnement
-// standard de Firebase : la clé API Firebase n'est PAS un secret (elle
-// est publique par design, protégée par les règles Firestore).
+// Navigation : utilise window.__oleeducks_setPage("utilisateurs") exposé
+// par app.js, pour éviter que d'autres listeners ne re-masquent la page.
 // =====================================================================
 
 import { db, firebaseApp } from "./firebase-config.js";
 import {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
-  onSnapshot, serverTimestamp, query, orderBy
+  onSnapshot, serverTimestamp, query
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { signInWithEmailAndPassword, signOut as fbSignOut } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   toast, openModal, closeModal, escapeHtml, formatDateTime, getUserName
 } from "./utils.js";
@@ -33,13 +26,10 @@ import { getUid, estAdmin } from "./auth.js";
 
 const usersCol = collection(db, "users");
 let tousLesUtilisateurs = [];
+let dejaInitialise = false;
 
 // ---------------------------------------------------------------------
 // Création d'un utilisateur via l'API REST Firebase Auth
-// ---------------------------------------------------------------------
-// L'endpoint accounts:signUp crée un compte email/mot de passe SANS
-// toucher à la session courante. Le nouvel utilisateur reçoit un UID
-// Firebase Auth qu'on réutilise comme ID de document dans "users".
 // ---------------------------------------------------------------------
 async function creerCompteAuthREST(email, password) {
   const apiKey = firebaseApp.options.apiKey;
@@ -62,7 +52,7 @@ function traduireErreurAuth(code) {
     "EMAIL_EXISTS": "Cet email est déjà utilisé par un autre compte.",
     "INVALID_EMAIL": "L'adresse email n'est pas valide.",
     "WEAK_PASSWORD": "Le mot de passe doit contenir au moins 6 caractères.",
-    "OPERATION_NOT_ALLOWED": "La connexion par email n'est pas activée dans Firebase Console (Authentication > Sign-in method > Email/Mot de passe).",
+    "OPERATION_NOT_ALLOWED": "La connexion par email n'est pas activée dans Firebase Console.",
     "TOO_MANY_ATTEMPTS_TRY_LATER": "Trop de tentatives. Réessayez dans quelques minutes."
   };
   return table[code] || `Erreur Firebase : ${code}`;
@@ -76,64 +66,64 @@ function genererMotDePasse() {
 }
 
 // ---------------------------------------------------------------------
-// Initialisation : écoute temps réel de la collection users
+// Initialisation
 // ---------------------------------------------------------------------
 export function initUtilisateurs() {
-  // Le rendu ne se fait que pour les admins : on évite aux users simples
-  // de déclencher des lectures Firestore inutiles.
-  onSnapshot(query(usersCol, orderBy("date_creation", "desc")), (snap) => {
+  if (dejaInitialise) return;
+  dejaInitialise = true;
+
+  // Écoute temps réel de la collection users (admin seulement)
+  onSnapshot(query(usersCol), (snap) => {
     tousLesUtilisateurs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Tri côté client : plus fiable qu'orderBy Firestore si un document
+    // n'a pas le champ date_creation ou l'a dans un type différent.
+    tousLesUtilisateurs.sort((a, b) => (b.date_creation?.toMillis?.() || 0) - (a.date_creation?.toMillis?.() || 0));
     if (estAdmin()) renderUtilisateursList();
     verifierSiUtilisateurCourantBanni();
   }, err => {
-    // Un user simple n'a pas le droit de lister tous les users : on ignore
-    // silencieusement l'erreur (les règles Firestore la refusent).
-    if (err.code !== "permission-denied") console.error("Erreur lecture utilisateurs :", err);
+    console.error("Erreur lecture utilisateurs :", err);
+    const el = document.getElementById("utilisateursList");
+    if (el && estAdmin()) {
+      el.innerHTML = `<div class="state-banner error"><span class="glyph">⚠️</span><span>
+        Erreur de chargement : ${err.code || err.message}.<br>
+        <small>Si le message dit "permission-denied", publiez les nouvelles règles Firestore.</small>
+      </span></div>`;
+    }
   });
 
+  // Bouton d'ouverture de la page Utilisateurs (admin)
   document.getElementById("openUtilisateursBtn")?.addEventListener("click", () => {
-    // Masque TOUTES les pages puis affiche uniquement Utilisateurs.
-    // Sans ça, la page Utilisateurs s'ouvrait derrière le dashboard
-    // resté visible, donnant l'impression que le bouton ne faisait rien.
-    document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
-    document.getElementById("page-utilisateurs").classList.remove("hidden");
-    // Aucun onglet de la bottom-nav ne doit rester actif
-    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
-    window.scrollTo(0, 0);
+    if (typeof window.__oleeducks_setPage === "function") {
+      window.__oleeducks_setPage("utilisateurs");
+    }
   });
+
+  // Bouton retour
   document.getElementById("backFromUtilisateursBtn")?.addEventListener("click", () => {
-    document.getElementById("page-utilisateurs").classList.add("hidden");
-    // Retour au dashboard en ré-affichant la bonne page selon le rôle
-    const home = (typeof window.__oleeducks_home_page === "string")
-      ? window.__oleeducks_home_page
-      : "dashboard";
-    document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
-    document.getElementById(`${"page-"}${home}`)?.classList.remove("hidden");
-    document.querySelectorAll(".nav-item").forEach(n => {
-      n.classList.toggle("active", n.dataset.page === home);
-    });
-    window.scrollTo(0, 0);
+    const home = estAdmin() ? "dashboard" : "taches";
+    if (typeof window.__oleeducks_setPage === "function") {
+      window.__oleeducks_setPage(home);
+    }
   });
+
+  // Bouton ajouter un utilisateur
   document.getElementById("openAddUserBtn")?.addEventListener("click", openAddUserModal);
 }
 
-// Certains utilisateurs peuvent avoir été bannis/suspendus pendant leur
-// session : on vérifie à chaque snapshot que ce n'est pas le cas de
-// l'utilisateur courant, et on force la déconnexion si nécessaire.
 function verifierSiUtilisateurCourantBanni() {
   const uid = getUid();
   if (!uid) return;
   const moi = tousLesUtilisateurs.find(u => u.id === uid);
   if (!moi) return;
   if (moi.statut === "banni" || moi.session_active === false) {
-    // L'écouteur principal dans app.js gère la déconnexion forcée.
-    // Ici on déclenche juste un événement custom que app.js peut écouter.
-    window.dispatchEvent(new CustomEvent("oleeducks:force-logout", { detail: { raison: moi.statut === "banni" ? "banni" : "session_interrompue" } }));
+    window.dispatchEvent(new CustomEvent("oleeducks:force-logout", {
+      detail: { raison: moi.statut === "banni" ? "banni" : "session_interrompue" }
+    }));
   }
 }
 
 // ---------------------------------------------------------------------
-// Rendu de la liste (admin uniquement)
+// Rendu de la liste
 // ---------------------------------------------------------------------
 function renderUtilisateursList() {
   const el = document.getElementById("utilisateursList");
@@ -188,7 +178,7 @@ function renderUtilisateursList() {
 function openAddUserModal() {
   const mdpPropose = genererMotDePasse();
   const body = `
-    <p class="subtle">Un compte Firebase sera créé immédiatement avec l'email et le mot de passe ci-dessous. Transmettez ces identifiants à la personne concernée (WhatsApp, SMS…) — elle pourra se connecter dès maintenant.</p>
+    <p class="subtle">Un compte Firebase sera créé immédiatement avec l'email et le mot de passe ci-dessous. Transmettez ces identifiants à la personne concernée — elle pourra se connecter dès maintenant.</p>
     <div class="spacer-s"></div>
     <div class="field"><label>Nom / Prénom</label><input type="text" id="fNewUserName" placeholder="ex : Aïcha"></div>
     <div class="field"><label>Email</label><input type="email" id="fNewUserEmail" placeholder="ex : aicha@olee.ci" autocomplete="off"></div>
@@ -229,10 +219,7 @@ function openAddUserModal() {
         btn.textContent = "Création en cours…";
 
         try {
-          // 1) Créer le compte Firebase Auth via l'API REST
           const uid = await creerCompteAuthREST(email, password);
-
-          // 2) Créer le profil Firestore associé
           await setDoc(doc(db, "users", uid), {
             email,
             nom,
@@ -244,9 +231,7 @@ function openAddUserModal() {
             cree_par_uid: getUid()
           });
 
-          toast(`Utilisateur créé ✓ Transmettez : ${email} / ${password}`);
           closeModal();
-          // Affiche les identifiants en grand pour faciliter la transmission
           openModal("Identifiants à transmettre", `
             <p class="subtle">Notez ou transmettez ces identifiants dès maintenant. Le mot de passe ne sera plus jamais affiché.</p>
             <div class="card" style="background:var(--sage-100);border:none;margin-top:10px;">
