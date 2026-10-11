@@ -92,11 +92,26 @@ export function initUtilisateurs() {
   });
 
   document.getElementById("openUtilisateursBtn")?.addEventListener("click", () => {
+    // Masque TOUTES les pages puis affiche uniquement Utilisateurs.
+    // Sans ça, la page Utilisateurs s'ouvrait derrière le dashboard
+    // resté visible, donnant l'impression que le bouton ne faisait rien.
+    document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
     document.getElementById("page-utilisateurs").classList.remove("hidden");
+    // Aucun onglet de la bottom-nav ne doit rester actif
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
     window.scrollTo(0, 0);
   });
   document.getElementById("backFromUtilisateursBtn")?.addEventListener("click", () => {
     document.getElementById("page-utilisateurs").classList.add("hidden");
+    // Retour au dashboard en ré-affichant la bonne page selon le rôle
+    const home = (typeof window.__oleeducks_home_page === "string")
+      ? window.__oleeducks_home_page
+      : "dashboard";
+    document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
+    document.getElementById(`${"page-"}${home}`)?.classList.remove("hidden");
+    document.querySelectorAll(".nav-item").forEach(n => {
+      n.classList.toggle("active", n.dataset.page === home);
+    });
     window.scrollTo(0, 0);
   });
   document.getElementById("openAddUserBtn")?.addEventListener("click", openAddUserModal);
