@@ -83,20 +83,11 @@ function appliquerRestrictionsRole() {
   document.querySelectorAll(".admin-only").forEach(el => {
     el.classList.toggle("hidden", !isAdmin);
   });
-
-  // Masque les pages HTML non autorisées
-  TOUTES_PAGES.forEach(p => {
-    const section = document.getElementById(`page-${p}`);
-    if (!section) return;
-    if (!autorisees.includes(p) && p !== "compta" && p !== "utilisateurs") {
-      section.classList.add("hidden");
-    }
-  });
 }
 
 function setPage(page) {
   // Sécurité : refuse une page non autorisée pour le rôle courant
-  if (!pagesAutorisees().includes(page) && page !== "compta" && page !== "utilisateurs") {
+  if (!pagesAutorisees().includes(page) && page !== "compta") {
     page = pagesAutorisees()[0] || "dashboard";
   }
   // Blocage absolu : user ne peut pas aller sur compta/utilisateurs
@@ -105,24 +96,32 @@ function setPage(page) {
   }
 
   currentPage = page;
+
+  // Masque TOUTES les pages
   TOUTES_PAGES.forEach(p => {
     const section = document.getElementById(`page-${p}`);
     if (section) section.classList.add("hidden");
   });
+  // Affiche uniquement la page demandée
   const section = document.getElementById(`page-${page}`);
   if (section) section.classList.remove("hidden");
 
+  // Met à jour l'onglet actif de la bottom-nav (aucun si page hors nav)
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === page);
   });
 
-  // Le "+" n'a aucun sens dans Nids (les nids se gèrent en touchant la grille)
-  document.getElementById("fabAdd").classList.toggle("hidden", page === "nids");
+  // Le "+" n'a aucun sens dans Nids ni dans Utilisateurs
+  const fab = document.getElementById("fabAdd");
+  if (fab) {
+    const cacherFab = (page === "nids" || page === "utilisateurs" || page === "compta");
+    fab.classList.toggle("hidden", cacherFab);
+  }
 
   if (page === "dashboard") {
     const d = new Date();
-    document.getElementById("dashDate").textContent =
-      "Bonjour — " + d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+    const el = document.getElementById("dashDate");
+    if (el) el.textContent = "Bonjour — " + d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
   }
   window.scrollTo(0, 0);
 }
@@ -138,7 +137,8 @@ function initNav() {
 // ---------------------------------------------------------------------
 function initUserChip() {
   const chip = document.getElementById("userChip");
-  if (!chip) return;
+  if (!chip || chip.dataset.bound === "1") return;
+  chip.dataset.bound = "1";
   chip.addEventListener("click", () => {
     const profil = getProfil();
     if (!profil) return;
@@ -220,7 +220,7 @@ function initFab() {
       case "taches": openAddTacheModal(); break;
       default:
         if (roleCourant === "admin") openAddFinanceModal();
-        else openAddTacheModal(); // un user simple ne peut créer que des tâches
+        else openAddTacheModal();
     }
   });
 }
@@ -235,8 +235,8 @@ function initConnectionStatus() {
   const update = () => {
     if (!firebaseOk) return;
     const online = navigator.onLine;
-    dot.classList.toggle("offline", !online);
-    label.textContent = online ? "Synchronisé" : "Hors ligne";
+    if (dot) dot.classList.toggle("offline", !online);
+    if (label) label.textContent = online ? "Synchronisé" : "Hors ligne";
   };
   window.addEventListener("online", update);
   window.addEventListener("offline", update);
@@ -244,7 +244,7 @@ function initConnectionStatus() {
 }
 
 // ---------------------------------------------------------------------
-// Erreurs de configuration Firebase (inchangé)
+// Erreurs de configuration Firebase
 // ---------------------------------------------------------------------
 function showConfigError(err) {
   const banner = document.getElementById("errorBanner");
@@ -284,9 +284,6 @@ function declencherDeconnexionForcee(raison) {
   afficherEcran("forceLogout");
 }
 
-// ---------------------------------------------------------------------
-// Écouteur de bannissement (via module utilisateurs.js)
-// ---------------------------------------------------------------------
 window.addEventListener("oleeducks:force-logout", async (e) => {
   const raison = e.detail?.raison || "session_interrompue";
   try { await authSignOut(); } catch (_) {}
@@ -294,7 +291,7 @@ window.addEventListener("oleeducks:force-logout", async (e) => {
 });
 
 // ---------------------------------------------------------------------
-// Écran de connexion : bascule admin/user + soumission
+// Écran de connexion
 // ---------------------------------------------------------------------
 function initLoginScreen() {
   let roleChoisi = "admin";
@@ -326,7 +323,6 @@ function initLoginScreen() {
     btn.textContent = "Connexion…";
     try {
       await signIn(email, password);
-      // La suite est gérée par onAuthChange (voir boot())
     } catch (err) {
       console.error(err);
       const code = err?.code || "";
@@ -373,7 +369,7 @@ function initLoginScreen() {
 }
 
 // ---------------------------------------------------------------------
-// Initialisation des modules métier (une seule fois, après connexion admin)
+// Initialisation des modules métier
 // ---------------------------------------------------------------------
 function initialiserModulesAdmin() {
   if (modulesInit) return;
@@ -391,18 +387,19 @@ function initialiserModulesAdmin() {
     initPesees();
     initValorisation();
     initActiviteAccueil();
+    initUtilisateurs();
   } catch (e) {
     console.error("Erreur initialisation modules admin :", e);
   }
 }
 
-// Pour un user simple : on n'initialise QUE le module tâches.
 let modulesUserInit = false;
 function initialiserModulesUser() {
   if (modulesUserInit) return;
   modulesUserInit = true;
   try {
-    initTaches(); // le module taches gère lui-même le filtrage par role
+    initTaches();
+    initUtilisateurs();
   } catch (e) {
     console.error("Erreur initialisation modules user :", e);
   }
@@ -412,15 +409,13 @@ function initialiserModulesUser() {
 // Décision après chaque changement d'état d'authentification
 // ---------------------------------------------------------------------
 async function gererEtatAuth({ user, profil }) {
-    // Expose le profil courant à utils.js (getUserName) et aux autres modules.
-  // Mis à jour à chaque changement d'état d'authentification.
+  // Expose le profil courant à utils.js (getUserName) et aux autres modules.
   window.__oleeducks_profil_courant = profil || null;
-  
+
   // Cas 1 : personne connecté → écran de connexion
   if (!user) {
     roleCourant = null;
     afficherEcran("login");
-    // Reset du bouton pour permettre une nouvelle tentative
     const btn = document.getElementById("loginSubmitBtn");
     if (btn) { btn.disabled = false; btn.textContent = "Se connecter"; }
     return;
@@ -441,7 +436,7 @@ async function gererEtatAuth({ user, profil }) {
     return;
   }
 
-  // Cas 4 : profil invalide (ni admin ni user)
+  // Cas 4 : profil invalide
   if (!estAdmin() && !estUser()) {
     afficherErreurLogin("Rôle non reconnu. Contactez un administrateur.");
     try { await authSignOut(); } catch (_) {}
@@ -450,11 +445,8 @@ async function gererEtatAuth({ user, profil }) {
 
   // Cas 5 : connexion valide
   roleCourant = estAdmin() ? "admin" : "user";
-
-  // Marque la session comme active (utile pour le suivi admin)
   try { await marquerSessionActive(); } catch (_) {}
 
-  // Affiche l'app
   afficherEcran("app");
   mettreAJourChip();
   appliquerRestrictionsRole();
@@ -462,11 +454,9 @@ async function gererEtatAuth({ user, profil }) {
 
   if (roleCourant === "admin") {
     initialiserModulesAdmin();
-    // Sur le dashboard par défaut
     setPage("dashboard");
   } else {
     initialiserModulesUser();
-    // Un user simple arrive directement sur ses tâches
     setPage("taches");
   }
 }
@@ -475,7 +465,6 @@ async function gererEtatAuth({ user, profil }) {
 // Démarrage général
 // ---------------------------------------------------------------------
 async function boot() {
-  // Affiche l'écran de chargement pendant qu'on détermine l'état d'auth
   afficherEcran("loading");
 
   initLoginScreen();
@@ -483,9 +472,8 @@ async function boot() {
   initFab();
   initQuickActions();
   initConnectionStatus();
-  initUtilisateurs(); // le module s'auto-protège (ne fait rien pour un user)
+  initUtilisateurs();
 
-  // On attend que Firebase soit prêt (config OK)
   try {
     await authReady;
     firebaseOk = true;
@@ -497,24 +485,16 @@ async function boot() {
     return;
   }
 
-  // Écoute les changements d'état d'authentification en continu.
-  // C'est CE mécanisme qui gère :
-  //   - la 1ère connexion
-  //   - la déconnexion volontaire
-  //   - le bannissement / l'interruption de session à distance
-  onAuthChange((etat) => {
-    gererEtatAuth(etat);
-  });
-
-  // Démarre le module auth (écoute Firebase Auth + charge le profil)
+  onAuthChange((etat) => { gererEtatAuth(etat); });
   await initAuth();
 
-  // Service worker PWA
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker :", err));
   }
 }
+
 // Expose setPage pour que les modules externes (utilisateurs.js) puissent
 // naviguer proprement via le système central au lieu de manipuler le DOM.
 window.__oleeducks_setPage = setPage;
+
 boot();
