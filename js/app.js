@@ -33,7 +33,7 @@ import { initUtilisateurs } from "./utilisateurs.js";
 // ---------------------------------------------------------------------
 // Pages accessibles selon le rôle
 // ---------------------------------------------------------------------
-const PAGES_ADMIN = ["dashboard", "canards", "nids", "finances", "stocks", "taches"];
+const PAGES_ADMIN = ["dashboard", "canards", "nids", "finances", "stocks", "taches", "utilisateurs"];
 const PAGES_USER  = ["taches"];  // un user simple ne voit QUE ses tâches
 const TOUTES_PAGES = ["dashboard", "canards", "nids", "finances", "stocks", "taches", "compta", "utilisateurs"];
 
