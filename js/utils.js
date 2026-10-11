@@ -1,6 +1,15 @@
 // =====================================================================
 // UTILITAIRES PARTAGÉS
 // =====================================================================
+// Ce module fournit toutes les fonctions communes (formatage, toasts,
+// modales, masquage des montants, compteurs animés…).
+//
+// CHANGEMENT (rôles) :
+// - getUserName() lit désormais le nom depuis le profil Firestore
+//   courant (voir auth.js) au lieu du localStorage.
+// - setUserName(), ensureUserProfile() et promptChangeUserName() sont
+//   supprimées : l'identité est maintenant fixée par le compte email.
+// =====================================================================
 
 export function formatFCFA(n) {
   const v = Number(n) || 0;
@@ -10,8 +19,7 @@ export function formatFCFA(n) {
 // Variante pour les PDF (jsPDF) : toLocaleString("fr-FR") insère une
 // espace fine insécable (U+202F) comme séparateur de milliers. Les
 // polices standard de jsPDF (Helvetica, encodage WinAnsi) ne savent pas
-// afficher ce caractère et produisent un texte corrompu ("&2&9 /&0&0&0&
-// &F&C&F&A" au lieu de "29 000 FCFA"). On utilise ici une espace normale.
+// afficher ce caractère et produisent un texte corrompu.
 export function formatFCFAPdf(n) {
   return formatFCFA(n).replace(/[\u202F\u00A0]/g, " ");
 }
@@ -43,6 +51,9 @@ export function todayInputValue() {
   return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
 }
 
+// ---------------------------------------------------------------------
+// Toast (notification éphémère en bas de l'écran)
+// ---------------------------------------------------------------------
 let toastTimer = null;
 export function toast(msg) {
   let el = document.getElementById("toastEl");
@@ -58,6 +69,9 @@ export function toast(msg) {
   toastTimer = setTimeout(() => { el.style.display = "none"; }, 2400);
 }
 
+// ---------------------------------------------------------------------
+// Modale (bottom-sheet)
+// ---------------------------------------------------------------------
 export function openModal(title, bodyHtml, { onMount, dismissible = true } = {}) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
@@ -83,75 +97,33 @@ export function closeModal() {
 }
 
 // ---------------------------------------------------------------------
-// Profil utilisateur local : associe un prénom à chaque action (ajout,
-// modification) pour savoir qui a fait quoi, à quel moment. Stocké
-// uniquement sur l'appareil (pas de compte à créer).
+// Identité utilisateur — branchée sur le profil Firestore (auth.js)
 // ---------------------------------------------------------------------
-const USER_KEY = "oleeducks_user_name";
-
+// Cette fonction est appelée par de nombreux modules métier pour
+// tracer "qui a fait quoi" (voir nids.js, inventaire.js, stocks.js…).
+// Elle lit maintenant le nom depuis le profil Firestore chargé par
+// auth.js, avec repli sur l'email si le nom n'est pas renseigné.
+//
+// Import dynamique pour éviter une dépendance circulaire : auth.js
+// n'importe pas utils.js, donc cet import est sans danger.
+// ---------------------------------------------------------------------
 export function getUserName() {
-  return localStorage.getItem(USER_KEY) || null;
-}
-
-export function setUserName(name) {
-  localStorage.setItem(USER_KEY, name);
-  const chip = document.getElementById("userChipLabel");
-  if (chip) chip.textContent = name;
-}
-
-export function ensureUserProfile() {
-  return new Promise((resolve) => {
-    const existing = getUserName();
-    if (existing) { resolve(existing); return; }
-    openModal("Bienvenue 👋", `
-      <p class="subtle">Indiquez votre prénom : il sera associé à vos ajouts et modifications, pour que toute l'équipe sache qui a fait quoi et évite les doublons.</p>
-      <div class="spacer-s"></div>
-      <div class="field"><label>Votre prénom</label><input type="text" id="fUserName" placeholder="ex : Aïcha"></div>
-      <button class="btn yolk" id="fUserNameSave">Continuer</button>
-    `, {
-      dismissible: false,
-      onMount: (body) => {
-        const input = document.getElementById("fUserName");
-        input.focus();
-        const save = () => {
-          const val = input.value.trim();
-          if (!val) { input.focus(); return; }
-          setUserName(val);
-          closeModal();
-          resolve(val);
-        };
-        document.getElementById("fUserNameSave").addEventListener("click", save);
-        input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
-      }
-    });
-  });
-}
-
-export function promptChangeUserName() {
-  const current = getUserName() || "";
-  openModal("Changer de prénom", `
-    <div class="field"><label>Votre prénom</label><input type="text" id="fUserNameEdit" value="${escapeHtml(current)}"></div>
-    <button class="btn yolk" id="fUserNameEditSave">Enregistrer</button>
-  `, {
-    onMount: () => {
-      const input = document.getElementById("fUserNameEdit");
-      input.focus();
-      document.getElementById("fUserNameEditSave").addEventListener("click", () => {
-        const val = input.value.trim();
-        if (!val) { input.focus(); return; }
-        setUserName(val);
-        toast("Prénom mis à jour ✓");
-        closeModal();
-      });
-    }
-  });
+  try {
+    // Accès au profil via le module auth (import dynamique synchrone
+    // impossible, donc on lit directement dans window, mis à jour par
+    // app.js après chaque connexion).
+    const profil = window.__oleeducks_profil_courant;
+    if (profil) return profil.nom || profil.email || null;
+    // Repli historique : si jamais le profil n'est pas encore chargé,
+    // on cherche une ancienne valeur dans localStorage (transition).
+    return localStorage.getItem("oleeducks_user_name") || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------
-// Masquage des montants (icône œil) — préférence purement locale à
-// l'appareil, stockée en localStorage. Ne modifie jamais les données ;
-// seuls les éléments marqués avec un attribut data-real (le texte réel à
-// afficher) sont concernés.
+// Masquage des montants (icône œil)
 // ---------------------------------------------------------------------
 const BALANCE_HIDDEN_KEY = "oleeducks_balance_hidden";
 
@@ -163,10 +135,6 @@ function maskText(text) {
   return String(text).replace(/[0-9]/g, "•");
 }
 
-// Affiche `text` dans l'élément #id, masqué (chiffres remplacés par des
-// points) si l'utilisateur a choisi de cacher les montants. Le texte
-// réel est conservé dans data-real pour pouvoir re-basculer sans
-// recalculer quoi que ce soit.
 export function setMaskableText(id, text) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -174,9 +142,6 @@ export function setMaskableText(id, text) {
   el.textContent = isBalanceHidden() ? maskText(text) : text;
 }
 
-// Réapplique le masquage/l'affichage sur tous les éléments marqués
-// data-real de la page (utile après un changement de page ou un
-// nouveau rendu Firestore).
 export function refreshMaskedAmounts() {
   const hidden = isBalanceHidden();
   document.querySelectorAll("[data-real]").forEach(el => {
@@ -184,9 +149,6 @@ export function refreshMaskedAmounts() {
   });
 }
 
-// Branche un bouton "œil" (id fourni) qui bascule l'affichage/masquage
-// de TOUS les montants marqués data-real sur la page, et persiste ce
-// choix pour les prochaines ouvertures de l'app.
 export function initEyeToggle(buttonId) {
   const btn = document.getElementById(buttonId);
   if (!btn) return;
@@ -204,10 +166,7 @@ export function initEyeToggle(buttonId) {
 }
 
 // ---------------------------------------------------------------------
-// Anime un nombre affiché dans #id de sa valeur précédente jusqu'à
-// `target` (effet "compteur", ease-out). Si la valeur est identique à la
-// précédente, ne réanime rien (évite un flash inutile à chaque re-rendu
-// Firestore). Utilisé pour les KPI du tableau de bord.
+// Compteurs animés
 // ---------------------------------------------------------------------
 export function animateCountUp(id, target, opts = {}) {
   const el = document.getElementById(id);
@@ -230,12 +189,6 @@ export function animateCountUp(id, target, opts = {}) {
   requestAnimationFrame(tick);
 }
 
-// ---------------------------------------------------------------------
-// Variante spécialisée pour la balance commerciale (FCFA) : anime le
-// montant en le formatant à chaque frame, respecte le masquage (icône
-// œil) en cours, et fait clignoter un badge +/- directionnel bref quand
-// le montant vient de changer (nouvelle transaction).
-// ---------------------------------------------------------------------
 export function animateBalanceCountUp(id, targetNumber) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -280,12 +233,7 @@ export function animateBalanceCountUp(id, targetNumber) {
 }
 
 // ---------------------------------------------------------------------
-// Suppression avec délai d'annulation (façon Gmail). Au lieu d'un
-// dialogue "Êtes-vous sûr ?" qui bloque puis supprime instantanément et
-// sans retour possible, l'élément disparaît tout de suite de la liste
-// (voir estEnAttenteSuppression, à appeler dans chaque fonction de rendu
-// concernée) et un bandeau propose 5 secondes pour annuler avant que la
-// suppression réelle ne soit envoyée à Firestore.
+// Suppression avec délai d'annulation (undo toast)
 // ---------------------------------------------------------------------
 const idsEnSuppression = new Set();
 
@@ -294,7 +242,7 @@ export function estEnAttenteSuppression(id) {
 }
 
 export function confirmerSuppression(id, libelle, executerSuppression, rerender) {
-  if (idsEnSuppression.has(id)) return; // déjà en cours d'annulation possible
+  if (idsEnSuppression.has(id)) return;
   idsEnSuppression.add(id);
   if (rerender) rerender();
 
