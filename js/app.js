@@ -514,5 +514,7 @@ async function boot() {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker :", err));
   }
 }
-
+// Expose setPage pour que les modules externes (utilisateurs.js) puissent
+// naviguer proprement via le système central au lieu de manipuler le DOM.
+window.__oleeducks_setPage = setPage;
 boot();
