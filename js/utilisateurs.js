@@ -15,6 +15,12 @@
 // après son ouverture. Cette vérification est désormais déléguée à
 // app.js (voir doitEtreDeconnecte() dans auth.js), qui est le SEUL
 // endroit légitime pour déconnecter un utilisateur.
+//
+// ⚠️ CORRECTIF 2 (V35) : renderUtilisateursList() n'est plus appelée
+// que si la page Utilisateurs est réellement VISIBLE à l'écran. Sans
+// cette garde, un snapshot Firestore (déclenché par n'importe quelle
+// modification ailleurs dans l'app) pouvait réécrire le contenu et
+// interrompre la navigation en cours.
 // =====================================================================
 
 import { db, firebaseApp } from "./firebase-config.js";
@@ -33,6 +39,10 @@ let dejaInitialise = false;
 
 // ---------------------------------------------------------------------
 // Création d'un utilisateur via l'API REST Firebase Auth
+// ---------------------------------------------------------------------
+// L'endpoint accounts:signUp crée un compte email/mot de passe SANS
+// toucher à la session courante. Le nouvel utilisateur reçoit un UID
+// Firebase Auth qu'on réutilise comme ID de document dans "users".
 // ---------------------------------------------------------------------
 async function creerCompteAuthREST(email, password) {
   const apiKey = firebaseApp.options.apiKey;
@@ -69,6 +79,17 @@ function genererMotDePasse() {
 }
 
 // ---------------------------------------------------------------------
+// Vérifie si la page Utilisateurs est actuellement VISIBLE à l'écran.
+// Sert de garde pour éviter de rafraîchir une page non visible — c'était
+// la cause principale de la disparition du bouton Utilisateurs.
+// ---------------------------------------------------------------------
+function estPageUtilisateursVisible() {
+  const el = document.getElementById("page-utilisateurs");
+  if (!el) return false;
+  return !el.classList.contains("hidden");
+}
+
+// ---------------------------------------------------------------------
 // Initialisation
 // ---------------------------------------------------------------------
 export function initUtilisateurs() {
@@ -77,15 +98,12 @@ export function initUtilisateurs() {
 
   // Écoute temps réel de la collection users (admin seulement).
   // Le rendu n'est appliqué QUE si la page Utilisateurs est réellement
-  // affichée : sans ça, un snapshot Firestore (par exemple déclenché
-  // par une modification de tâche ou de finance) pouvait interrompre
-  // la navigation en cours et faire disparaître la page.
+  // affichée.
   onSnapshot(query(usersCol), (snap) => {
     tousLesUtilisateurs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     tousLesUtilisateurs.sort((a, b) =>
       (b.date_creation?.toMillis?.() || 0) - (a.date_creation?.toMillis?.() || 0)
     );
-    // Rafraîchit la liste UNIQUEMENT si la page Utilisateurs est visible
     if (estAdmin() && estPageUtilisateursVisible()) {
       renderUtilisateursList();
     }
@@ -107,6 +125,7 @@ export function initUtilisateurs() {
     if (typeof window.__oleeducks_setPage === "function") {
       window.__oleeducks_setPage("utilisateurs");
       // Force un rendu immédiat au cas où aucun snapshot n'arrive
+      // après l'ouverture (le snapshot initial est peut-être déjà passé).
       renderUtilisateursList();
     }
   });
@@ -122,20 +141,6 @@ export function initUtilisateurs() {
   // Bouton ajouter un utilisateur
   document.getElementById("openAddUserBtn")?.addEventListener("click", openAddUserModal);
 }
-
-// Vérifie si la page Utilisateurs est actuellement affichée à l'écran.
-// Sert de garde pour éviter de rafraîchir une page non visible — c'était
-// la cause principale de la disparition du bouton Utilisateurs.
-function estPageUtilisateursVisible() {
-  const el = document.getElementById("page-utilisateurs");
-  if (!el) return false;
-  return !el.classList.contains("hidden");
-}
-
-// ⚠️ SUPPRIMÉ : la vérification "utilisateur courant banni" est gérée
-// exclusivement par app.js via onAuthChange + doitEtreDeconnecte().
-// La dupliquer ici provoquait une boucle de force-logout qui fermait
-// la page Utilisateurs juste après son ouverture.
 
 // ---------------------------------------------------------------------
 // Rendu de la liste
