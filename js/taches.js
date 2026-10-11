@@ -4,22 +4,29 @@
 // générales (réparation, nettoyage…), ravitaillement (récupération
 // d'aliments au moulin, achats divers…), et tout autre rappel.
 //
-// Une tâche a un statut "à faire" ou "effectuée" (jamais supprimée par
-// défaut — l'historique des tâches effectuées reste consultable). Un
-// voyant clignote (tableau de bord + barre de navigation) de plus en
-// plus vite à mesure que l'échéance de la tâche la plus urgente
-// approche ou est dépassée.
+// NOUVEAU (rôles) :
+// - Un admin peut ASSIGNER une tâche à un utilisateur précis.
+// - Un user simple ne voit QUE les tâches qui lui sont assignées, et
+//   ne peut que les marquer comme effectuées.
+// - Un admin peut créer/modifier/supprimer librement.
 // =====================================================================
 import { db } from "./firebase-config.js";
 import {
   collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDoc, getDocs,
   serverTimestamp, query, orderBy, where
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import { formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue, getUserName, confirmerSuppression, estEnAttenteSuppression } from "./utils.js";
+import {
+  formatDate, toast, openModal, closeModal, escapeHtml, todayInputValue,
+  getUserName, confirmerSuppression, estEnAttenteSuppression
+} from "./utils.js";
 import { addDocGuarded, formatDoublonMessage } from "./doublons.js";
+import { estAdmin, estUser, getProfil, getUid } from "./auth.js";
 
 const tachesCol = collection(db, "taches");
+const usersCol = collection(db, "users");
+
 let allTaches = [];
+let allUsers = []; // uniquement rempli côté admin (permission Firestore)
 let filterView = "a_faire";
 
 export const CATEGORIES_TACHES = {
@@ -30,18 +37,12 @@ export const CATEGORIES_TACHES = {
   autre: { label: "Autre", icon: "ic-cat-autre" }
 };
 
-// Catégories que l'utilisateur peut choisir à la main dans le formulaire
-// d'ajout — "sauvegarde" est réservée au rappel automatique généré par
-// l'app elle-même (voir verifierRappelSauvegardeMensuelle), pour éviter
-// toute confusion avec une tâche "Autre" ordinaire.
 const CATEGORIES_TACHES_SELECTIONNABLES = Object.fromEntries(
   Object.entries(CATEGORIES_TACHES).filter(([k]) => k !== "sauvegarde")
 );
 
 // ---------------------------------------------------------------------
-// Urgence — basée sur le nombre de jours restants avant l'échéance.
-// Une tâche sans échéance n'est jamais "urgente" au sens du clignotant
-// (elle reste listée normalement, simplement sans compte à rebours).
+// Urgence — identique à avant
 // ---------------------------------------------------------------------
 function joursRestants(t) {
   if (!t.date_echeance) return null;
@@ -52,15 +53,13 @@ function joursRestants(t) {
   return Math.round((d - today) / 86400000);
 }
 
-// Vitesse de clignotement (secondes) : plus la valeur est petite, plus
-// le clignotement est rapide. null = pas de clignotement (pas urgent).
 function vitesseClignotement(j) {
   if (j === null) return null;
-  if (j < 0) return 0.5;   // en retard — le plus rapide
-  if (j === 0) return 0.8; // aujourd'hui
-  if (j <= 2) return 1.3;  // demain / après-demain
-  if (j <= 7) return 2.2;  // cette semaine
-  return null;             // pas urgent pour l'instant
+  if (j < 0) return 0.5;
+  if (j === 0) return 0.8;
+  if (j <= 2) return 1.3;
+  if (j <= 7) return 2.2;
+  return null;
 }
 
 function urgenceTag(j) {
@@ -71,25 +70,49 @@ function urgenceTag(j) {
   return { cls: "ok", label: `Dans ${j} j` };
 }
 
-// Affiche " à HHhMM" quand l'échéance porte une heure précise (ex : le
-// rappel de sauvegarde du samedi 10h) — rien pour une échéance "journée"
-// classique saisie via un simple champ date (donc à minuit).
 function heureEcheance(dateEcheance) {
   const d = dateEcheance?.toDate ? dateEcheance.toDate() : new Date(dateEcheance);
   if (isNaN(d.getTime()) || (d.getHours() === 0 && d.getMinutes() === 0)) return "";
   return ` à ${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+// ---------------------------------------------------------------------
+// INITIALISATION
+// ---------------------------------------------------------------------
 export function initTaches() {
-  onSnapshot(query(tachesCol, orderBy("createdAt", "desc")), (snap) => {
-    allTaches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderAFaireList();
-    renderHistoriqueList();
-    updateVoyantEtBadge();
-  }, err => console.error("Erreur lecture tâches :", err));
+  // L'abonnement aux tâches dépend du rôle :
+  //   - admin  → toutes les tâches
+  //   - user   → uniquement celles qui lui sont assignées
+  // Les règles Firestore appliquent la même restriction de leur côté :
+  // même si le code client était modifié, le serveur refuserait.
 
-  verifierRappelSauvegardeMensuelle();
+  if (estAdmin()) {
+    onSnapshot(query(tachesCol, orderBy("createdAt", "desc")), (snap) => {
+      allTaches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderAFaireList();
+      renderHistoriqueList();
+      updateVoyantEtBadge();
+    }, err => console.error("Erreur lecture tâches (admin) :", err));
 
+    // Charger la liste des utilisateurs pour l'assignation
+    onSnapshot(query(usersCol, orderBy("nom")), (snap) => {
+      allUsers = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.statut === "actif");
+    }, err => {
+      if (err.code !== "permission-denied") console.error("Erreur lecture utilisateurs (taches) :", err);
+    });
+
+    verifierRappelSauvegardeMensuelle();
+  } else if (estUser()) {
+    const uid = getUid();
+    onSnapshot(query(tachesCol, where("assigne_a", "==", uid)), (snap) => {
+      allTaches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderAFaireList();
+      renderHistoriqueList();
+      updateVoyantEtBadge();
+    }, err => console.error("Erreur lecture tâches (user) :", err));
+  }
+
+  // Bascule À faire / Historique
   document.querySelectorAll("#tachesView button").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll("#tachesView button").forEach(b => b.classList.remove("active"));
@@ -100,21 +123,13 @@ export function initTaches() {
     });
   });
 
-  // Depuis le tableau de bord, "Voir tout →" ouvre la page Tâches en
-  // réutilisant le bouton de navigation existant (pas de dépendance
-  // croisée avec app.js).
   document.getElementById("openTachesBtn")?.addEventListener("click", () => {
     document.querySelector('.nav-item[data-page="taches"]')?.click();
   });
 }
 
 // ---------------------------------------------------------------------
-// Rappel calendrier (.ics) — solution gratuite pour être averti même si
-// l'app n'est jamais rouverte : le fichier généré, une fois ajouté au
-// calendrier natif du téléphone (Google Calendar, Calendrier iOS…),
-// déclenche une vraie notification système à l'heure prévue. Aucune
-// donnée n'est envoyée nulle part — le fichier est créé et téléchargé
-// localement dans le navigateur.
+// Rappel calendrier .ics (inchangé)
 // ---------------------------------------------------------------------
 function pad(n) { return String(n).padStart(2, "0"); }
 
@@ -122,14 +137,6 @@ function genererRappelCalendrier(t) {
   if (!t.date_echeance) { toast("Ajoutez d'abord une date d'échéance à cette tâche"); return; }
   const d = t.date_echeance?.toDate ? t.date_echeance.toDate() : new Date(t.date_echeance);
   if (isNaN(d.getTime())) { toast("Date d'échéance invalide"); return; }
-
-  // Événement à 8h du matin le jour de l'échéance, avec une alarme au
-  // moment même de l'événement — la plupart des calendriers mobiles
-  // déclenchent alors une notification système à cette heure précise.
-  // Événement à l'heure précise de l'échéance si une heure a été fixée
-  // (ex : le rappel de sauvegarde du samedi à 10h) ; à défaut (tâche
-  // saisie via un simple champ date, donc à minuit), on garde 8h du matin
-  // comme heure par défaut raisonnable.
   const heure = (d.getHours() || d.getMinutes()) ? d.getHours() : 8;
   const minute = (d.getHours() || d.getMinutes()) ? d.getMinutes() : 0;
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), heure, minute, 0);
@@ -137,12 +144,9 @@ function genererRappelCalendrier(t) {
   const toIcsUtc = (date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}00Z`;
   const cat = CATEGORIES_TACHES[t.categorie] || CATEGORIES_TACHES.autre;
   const description = [cat.label, t.notes].filter(Boolean).join(" — ").replace(/\n/g, "\\n");
-
   const ics = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Olee Ducks//Taches//FR",
-    "CALSCALE:GREGORIAN",
+    "BEGIN:VCALENDAR", "VERSION:2.0",
+    "PRODID:-//Olee Ducks//Taches//FR", "CALSCALE:GREGORIAN",
     "BEGIN:VEVENT",
     `UID:tache-${t.id}@oleeducks`,
     `DTSTAMP:${toIcsUtc(new Date())}`,
@@ -150,15 +154,9 @@ function genererRappelCalendrier(t) {
     `DTEND:${toIcsUtc(end)}`,
     `SUMMARY:🦆 ${t.titre}`,
     description ? `DESCRIPTION:${description}` : "",
-    "BEGIN:VALARM",
-    "ACTION:DISPLAY",
-    "DESCRIPTION:Rappel Olee Ducks",
-    "TRIGGER:PT0M",
-    "END:VALARM",
-    "END:VEVENT",
-    "END:VCALENDAR"
+    "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Rappel Olee Ducks", "TRIGGER:PT0M", "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR"
   ].filter(Boolean).join("\r\n");
-
   const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -172,41 +170,33 @@ function genererRappelCalendrier(t) {
 }
 
 // ---------------------------------------------------------------------
-// Rappel automatique de sauvegarde HEBDOMADAIRE, ancré sur le cycle
-// samedi 12h → samedi 12h suivant (et non plus lundi → dimanche, pour
-// coller exactement à la règle "sauvegarde chaque samedi à 12h"). Ne crée
-// une tâche que si aucune sauvegarde n'a été faite depuis le début du
-// cycle en cours (par n'importe lequel des 3 téléphones — voir
-// "app_meta/sauvegarde", écrit par sauvegarde.js à chaque export réussi)
-// ET qu'aucun rappel n'est déjà en attente. Ne relance jamais un doublon.
+// Rappel automatique de sauvegarde hebdomadaire (admin uniquement)
 // ---------------------------------------------------------------------
 function prochainSamedi12h(date) {
   const d = new Date(date);
-  const jour = d.getDay(); // 0 = dimanche, ..., 6 = samedi
+  const jour = d.getDay();
   const joursAvant = (6 - jour + 7) % 7;
   d.setDate(d.getDate() + joursAvant);
   d.setHours(12, 0, 0, 0);
-  if (d.getTime() < date.getTime()) d.setDate(d.getDate() + 7); // samedi après 12h passé -> viser le samedi suivant
+  if (d.getTime() < date.getTime()) d.setDate(d.getDate() + 7);
   return d;
 }
 
 async function verifierRappelSauvegardeMensuelle() {
+  if (!estAdmin()) return;
   try {
     const now = new Date();
     const prochainSamedi = prochainSamedi12h(now);
     const debutCycle = new Date(prochainSamedi);
     debutCycle.setDate(debutCycle.getDate() - 7);
-
     const metaSnap = await getDoc(doc(db, "app_meta", "sauvegarde"));
     if (metaSnap.exists()) {
       const derniere = metaSnap.data().date;
       const derniereDate = derniere?.toDate ? derniere.toDate() : new Date(derniere);
-      if (derniereDate >= debutCycle) return; // déjà sauvegardé dans le cycle en cours
+      if (derniereDate >= debutCycle) return;
     }
-
     const existanteSnap = await getDocs(query(tachesCol, where("categorie", "==", "sauvegarde"), where("statut", "==", "a_faire")));
-    if (!existanteSnap.empty) return; // rappel déjà en attente, pas de doublon
-
+    if (!existanteSnap.empty) return;
     await addDocGuarded("taches",
       { titre: "Sauvegarder les données de la ferme", categorie: "sauvegarde", cycle_samedi: debutCycle },
       {
@@ -227,9 +217,19 @@ async function verifierRappelSauvegardeMensuelle() {
 }
 
 // ---------------------------------------------------------------------
-// Ajout
+// Ajout (admin : assignation possible / user : interdit)
 // ---------------------------------------------------------------------
 export function openAddTacheModal() {
+  // Un user simple ne peut pas créer de tâche
+  if (!estAdmin()) {
+    toast("Seul un administrateur peut créer des tâches");
+    return;
+  }
+
+  const usersOptions = allUsers.length
+    ? allUsers.map(u => `<option value="${u.id}">${escapeHtml(u.nom || u.email)}${u.role === "admin" ? " (admin)" : ""}</option>`).join("")
+    : `<option value="">(Aucun utilisateur disponible)</option>`;
+
   const body = `
     <div class="field"><label>Titre</label><input type="text" id="fTacheTitre" placeholder="ex : Récupérer les aliments au moulin"></div>
     <div class="field"><label>Catégorie</label>
@@ -238,9 +238,17 @@ export function openAddTacheModal() {
       </select>
     </div>
     <div class="field"><label>Date d'échéance (optionnel)</label><input type="date" id="fTacheEcheance"></div>
+    <div class="field"><label>Assigner à (optionnel)</label>
+      <select id="fTacheAssigne">
+        <option value="">— Personne (visible par les admins) —</option>
+        ${usersOptions}
+      </select>
+      <p class="subtle" style="margin:6px 0 0;">Si vous assignez cette tâche à un utilisateur simple, il la verra dans son espace et pourra la marquer comme effectuée.</p>
+    </div>
     <div class="field"><label>Notes (optionnel)</label><textarea id="fTacheNotes" rows="3" placeholder="Détails, référence de commande, quantité à récupérer…"></textarea></div>
     <button class="btn yolk" id="fTacheSave">Ajouter la tâche</button>
   `;
+
   openModal("Nouvelle tâche", body, {
     onMount: () => {
       document.getElementById("fTacheSave").addEventListener("click", async () => {
@@ -249,19 +257,27 @@ export function openAddTacheModal() {
         const categorie = document.getElementById("fTacheCategorie").value;
         const echeanceVal = document.getElementById("fTacheEcheance").value;
         const notes = document.getElementById("fTacheNotes").value.trim() || null;
+        const assigne_a = document.getElementById("fTacheAssigne").value || null;
+
         try {
           const dateEcheance = echeanceVal ? new Date(echeanceVal) : null;
           const ref = await addDocGuarded("taches",
-            { titre, categorie, date_echeance: dateEcheance, notes, statut: "a_faire" },
-            { titre, categorie, date_echeance: dateEcheance, notes, statut: "a_faire", cree_par: getUserName() || "Inconnu", createdAt: serverTimestamp() },
+            { titre, categorie, date_echeance: dateEcheance, notes, statut: "a_faire", assigne_a },
+            {
+              titre, categorie, date_echeance: dateEcheance, notes,
+              statut: "a_faire", assigne_a,
+              cree_par: getUserName() || getProfil()?.nom || "Inconnu",
+              createdAt: serverTimestamp()
+            },
             "cette tâche"
           );
           toast("Tâche ajoutée ✓");
           if (echeanceVal) {
-            // Échéance renseignée : on rouvre directement la fiche pour
-            // proposer le rappel calendrier, plutôt que de fermer le modal
-            // et laisser l'utilisateur chercher où le trouver.
-            openTacheDetail({ id: ref.id, titre, categorie, date_echeance: new Date(echeanceVal), notes, statut: "a_faire", cree_par: getUserName() || "Inconnu" });
+            openTacheDetail({
+              id: ref.id, titre, categorie, date_echeance: new Date(echeanceVal),
+              notes, statut: "a_faire", assigne_a,
+              cree_par: getUserName() || getProfil()?.nom || "Inconnu"
+            });
           } else {
             closeModal();
           }
@@ -282,32 +298,64 @@ function openTacheDetail(t) {
   const j = joursRestants(t);
   const tag = urgenceTag(j);
   const estEffectuee = t.statut === "effectuee";
+  const isAdmin = estAdmin();
+  const utilisateurAssigne = t.assigne_a ? allUsers.find(u => u.id === t.assigne_a) : null;
+
   const body = `
     <div class="row"><div class="row-main"><span class="row-title">Catégorie</span></div><span class="row-value">${escapeHtml(cat.label)}</span></div>
     ${t.date_echeance ? `<div class="row"><div class="row-main"><span class="row-title">Échéance</span></div><span class="tag ${tag.cls}">${formatDate(t.date_echeance)}${heureEcheance(t.date_echeance)} · ${tag.label}</span></div>` : ""}
+    ${utilisateurAssigne ? `<div class="row"><div class="row-main"><span class="row-title">Assignée à</span></div><span class="row-value">${escapeHtml(utilisateurAssigne.nom || utilisateurAssigne.email)}</span></div>` : ""}
     <div class="row"><div class="row-main"><span class="row-title">Créée par</span></div><span class="row-value">${escapeHtml(t.cree_par || "Inconnu")}</span></div>
     ${estEffectuee ? `<div class="row"><div class="row-main"><span class="row-title">Effectuée par</span></div><span class="row-value">${escapeHtml(t.effectue_par || "")} · ${formatDate(t.effectue_le)}</span></div>` : ""}
     ${t.notes ? `<div class="spacer-s"></div><p class="subtle" style="white-space:pre-wrap;">${escapeHtml(t.notes)}</p>` : ""}
     <div class="spacer-m"></div>
     ${(!estEffectuee && t.date_echeance) ? `<button class="btn secondary" id="fTacheRappel">📅 Ajouter un rappel au calendrier du téléphone</button><div class="spacer-s"></div>` : ""}
     ${!estEffectuee ? `<button class="btn yolk" id="fTacheDone">✓ Marquer comme effectuée</button><div class="spacer-s"></div>` : ""}
-    <button class="btn danger" id="fTacheDelete">Supprimer cette tâche</button>
+    ${isAdmin && !estEffectuee ? `<button class="btn secondary" id="fTacheReassign">🔁 Réassigner</button><div class="spacer-s"></div>` : ""}
+    ${isAdmin ? `<button class="btn danger" id="fTacheDelete">Supprimer cette tâche</button>` : ""}
   `;
+
   openModal(t.titre, body, {
     onMount: () => {
       document.getElementById("fTacheRappel")?.addEventListener("click", () => genererRappelCalendrier(t));
+
       document.getElementById("fTacheDone")?.addEventListener("click", async () => {
         try {
           await updateDoc(doc(db, "taches", t.id), {
             statut: "effectuee",
-            effectue_par: getUserName() || "Inconnu",
+            effectue_par: getProfil()?.nom || getUserName() || "Inconnu",
             effectue_le: serverTimestamp()
           });
           toast("Tâche marquée comme effectuée ✓");
           closeModal();
         } catch (e) { toast("Erreur : " + e.message); }
       });
-      document.getElementById("fTacheDelete").addEventListener("click", () => {
+
+      document.getElementById("fTacheReassign")?.addEventListener("click", () => {
+        if (!allUsers.length) { toast("Aucun utilisateur disponible"); return; }
+        openModal("Réassigner la tâche", `
+          <div class="field"><label>Nouvel assigné</label>
+            <select id="fReassign">
+              <option value="">— Personne —</option>
+              ${allUsers.map(u => `<option value="${u.id}" ${u.id === t.assigne_a ? "selected" : ""}>${escapeHtml(u.nom || u.email)}</option>`).join("")}
+            </select>
+          </div>
+          <button class="btn yolk" id="fReassignSave">Enregistrer</button>
+        `, {
+          onMount: () => {
+            document.getElementById("fReassignSave").addEventListener("click", async () => {
+              const val = document.getElementById("fReassign").value || null;
+              try {
+                await updateDoc(doc(db, "taches", t.id), { assigne_a: val, reassigne_par: getProfil()?.nom || "Admin", reassigne_le: serverTimestamp() });
+                toast("Réassignation enregistrée ✓");
+                closeModal();
+              } catch (e) { toast("Erreur : " + e.message); }
+            });
+          }
+        });
+      });
+
+      document.getElementById("fTacheDelete")?.addEventListener("click", () => {
         closeModal();
         confirmerSuppression(t.id, `Tâche "${t.titre}"`, () => deleteDoc(doc(db, "taches", t.id)), () => { renderAFaireList(); renderHistoriqueList(); });
       });
@@ -329,17 +377,19 @@ function renderAFaireList() {
     return ja - jb;
   });
   if (!ouvertes.length) {
-    el.innerHTML = `<div class="empty-state"><div class="glyph">📋</div><p>Aucune tâche en attente. Utilisez le bouton + pour en ajouter une.</p></div>`;
+    el.innerHTML = `<div class="empty-state"><div class="glyph">📋</div><p>${estAdmin() ? "Aucune tâche en attente. Utilisez le bouton + pour en ajouter une." : "Aucune tâche ne vous est assignée pour le moment. ✓"}</p></div>`;
     return;
   }
   el.innerHTML = ouvertes.map(t => {
     const cat = CATEGORIES_TACHES[t.categorie] || CATEGORIES_TACHES.autre;
     const tag = urgenceTag(joursRestants(t));
+    const assigne = t.assigne_a ? allUsers.find(u => u.id === t.assigne_a) : null;
+    const assigneLabel = assigne ? `<span class="lot-chip">👤 ${escapeHtml(assigne.nom || assigne.email)}</span>` : "";
     return `
     <div class="row with-icon tache-row" data-id="${t.id}" style="cursor:pointer;">
       <div class="row-icon ${tag.cls === 'danger' ? 'neg' : tag.cls === 'warn' ? 'warn' : ''}"><svg><use href="#${cat.icon}"/></svg></div>
       <div class="row-main">
-        <span class="row-title">${escapeHtml(t.titre)}</span>
+        <span class="row-title">${escapeHtml(t.titre)} ${assigneLabel}</span>
         <span class="row-sub">${escapeHtml(cat.label)}${t.notes ? " · " + escapeHtml(t.notes.slice(0, 60)) : ""}</span>
       </div>
       <span class="tag ${tag.cls}">${tag.label}</span>
@@ -383,7 +433,7 @@ function renderHistoriqueList() {
 }
 
 // ---------------------------------------------------------------------
-// Voyant clignotant (tableau de bord + barre de navigation) et résumé
+// Voyant clignotant (dashboard + bottom nav)
 // ---------------------------------------------------------------------
 function updateVoyantEtBadge() {
   const ouvertes = allTaches.filter(t => t.statut === "a_faire");
